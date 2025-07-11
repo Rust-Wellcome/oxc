@@ -164,6 +164,7 @@ mod eslint {
     pub mod no_useless_rename;
     pub mod no_var;
     pub mod no_void;
+    pub mod no_warning_comments;
     pub mod no_with;
     pub mod operator_assignment;
     pub mod prefer_exponentiation_operator;
@@ -598,6 +599,7 @@ oxc_macros::declare_all_lint_rules! {
     eslint::max_nested_callbacks,
     eslint::max_params,
     eslint::new_cap,
+    eslint::no_warning_comments,
     eslint::no_extra_bind,
     eslint::no_alert,
     eslint::no_array_constructor,
