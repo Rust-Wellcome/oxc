@@ -3,11 +3,25 @@
 use lazy_regex::regex;
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
+use oxc_span::CompactStr;
 
-use crate::{AstNode, context::LintContext, rule::Rule};
+use crate::{context::LintContext, rule::Rule};
 
 #[derive(Debug, Default, Clone)]
-pub struct NoWarningComments;
+pub struct NoWarningComments(Box<NoWarningCommentsConfig>);
+
+#[derive(Debug, Default, Clone)]
+pub struct NoWarningCommentsConfig {
+    terms: Vec<CompactStr>,
+}
+
+impl std::ops::Deref for NoWarningComments {
+    type Target = NoWarningCommentsConfig;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 // See <https://github.com/oxc-project/oxc/issues/6050> for documentation details.
 declare_oxc_lint!(
@@ -39,9 +53,6 @@ declare_oxc_lint!(
              // Options are 'fix', 'fix_dangerous', 'suggestion', and 'conditional_fix_suggestion'
 );
 
-// TODO: This needs to be loaded through config
-const WARNING_TERMS: [&str; 3] = ["FIXME", "TODO", "xxx"];
-
 /// <https://github.com/eslint/eslint/blob/main/lib/rules/no-warning-comments.js#L84>
 fn convert_to_regexp(term: &str) -> regex::Regex {
     // Decorators are hard-coded here. Read them from config.
@@ -68,19 +79,19 @@ fn convert_to_regexp(term: &str) -> regex::Regex {
 }
 
 /// <https://github.com/eslint/eslint/blob/main/lib/rules/no-warning-comments.js#L142>
-fn comment_contains_warning_term(comment: &str) -> Vec<&str> {
-    let mut matches: Vec<&str> = vec![];
-    for (index, term) in WARNING_TERMS.iter().enumerate() {
+fn comment_contains_warning_term(terms: &[CompactStr], comment: &str) -> Vec<CompactStr> {
+    let mut matches: Vec<CompactStr> = vec![];
+    for (index, term) in terms.iter().enumerate() {
         let re = convert_to_regexp(term);
         if re.is_match(comment) {
-            matches.push(WARNING_TERMS[index]);
+            matches.push(terms[index].clone()); // FIXME: Fix this clone
         }
     }
     matches
 }
 
-fn check_comment(ctx: &LintContext, comment: &str) {
-    let matches = comment_contains_warning_term(comment);
+fn check_comment(ctx: &LintContext, comment: &str, terms: &[CompactStr]) {
+    let matches = comment_contains_warning_term(terms, comment);
     for _matched_term in &matches {
         ctx.diagnostic(
             OxcDiagnostic::warn("Warning comments shou`ld be avoided")
@@ -90,14 +101,39 @@ fn check_comment(ctx: &LintContext, comment: &str) {
 }
 
 impl Rule for NoWarningComments {
-    fn run<'a>(&self, _node: &AstNode<'a>, ctx: &LintContext<'a>) {
+    fn from_configuration(value: serde_json::Value) -> Self {
+        // Reading the config { "terms": ["fixme"] }
+        // References: crates/oxc_linter/src/rules/eslint/max_lines_per_function.rs and crates/oxc_linter/src/rules/eslint/no_bitwise.rs
+        let config = value.get(0);
+        Self(Box::new(NoWarningCommentsConfig {
+            terms: config
+                .and_then(|config| config.get("terms"))
+                .and_then(serde_json::Value::as_array)
+                .map(|v| {
+                    v.iter().filter_map(serde_json::Value::as_str).map(CompactStr::from).collect()
+                })
+                .unwrap_or(vec![
+                    CompactStr::new("FIXME"),
+                    CompactStr::new("TODO"),
+                    CompactStr::new("xxx"),
+                ]),
+        }))
+    }
+
+    // See <https://github.com/Rust-Wellcome/oxc/blob/rule-implementation-no-warning-comments/crates/oxc_linter/src/rule.rs#L38-L40>
+    // We are not using `AstNode`` as the comments aren't attached to the tree.
+    // Therefore, we do not need to implement the `run` function.
+    // We can hence implement `run_once`` and read the comments using the context.
+    fn run_once(&self, ctx: &LintContext) {
         ctx.comments().iter().for_each(|comment| {
             let span = comment.span;
-            if let Some(source_comment) =
+            // Recommended in the docs to use let-else over if-let
+            let Some(source_comment) =
                 ctx.source_text().get((span.start as usize)..(span.end as usize))
-            {
-                check_comment(ctx, source_comment);
-            }
+            else {
+                return;
+            };
+            check_comment(ctx, source_comment, &self.terms);
         });
     }
 }
