@@ -40,7 +40,7 @@ declare_oxc_lint!(
 
 const WARNING_TERMS: [&str; 3] = ["FIXME", "TODO", "xxx"];
 
-/// https://github.com/eslint/eslint/blob/main/lib/rules/no-warning-comments.js#L84
+/// <https://github.com/eslint/eslint/blob/main/lib/rules/no-warning-comments.js#L84>
 fn convert_to_regexp(term: &str) -> regex::Regex {
     // Decorators are hard-coded here. Read them from config.
     let escaped_decoration = regex::escape(&["*", "/"].join(""));
@@ -65,7 +65,7 @@ fn convert_to_regexp(term: &str) -> regex::Regex {
         .unwrap()
 }
 
-/// https://github.com/eslint/eslint/blob/main/lib/rules/no-warning-comments.js#L142
+/// <https://github.com/eslint/eslint/blob/main/lib/rules/no-warning-comments.js#L142>
 fn _comment_contains_warning_term(comment: &str) -> Vec<&str> {
     let mut matches: Vec<&str> = vec![];
     for (index, term) in WARNING_TERMS.iter().enumerate() {
