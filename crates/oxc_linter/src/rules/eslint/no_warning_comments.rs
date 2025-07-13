@@ -40,6 +40,7 @@ declare_oxc_lint!(
 
 const WARNING_TERMS: [&str; 3] = ["FIXME", "TODO", "xxx"];
 
+/// https://github.com/eslint/eslint/blob/main/lib/rules/no-warning-comments.js#L84
 fn convert_to_regexp(term: &str) -> regex::Regex {
     // Decorators are hard-coded here. Read them from config.
     let escaped_decoration = regex::escape(&["*", "/"].join(""));
@@ -51,24 +52,12 @@ fn convert_to_regexp(term: &str) -> regex::Regex {
     // The start is from the first non-decorative character, ignoring whitespace,
     // new lines and characters specified in decoration.
     // The other value is match anywhere in comments.
-    // TODO: We need to check the location here and assign the prefix conditionally. I've omitted it here for now.
+    // TODO: We need to check the location (from config) here and assign the prefix conditionally. I've omitted it here for now.
 
     let prefix = format!("^[\\s{escaped_decoration}]*");
     // The regex crate does not support inline flags like /u, so we use RegexBuilder below.
     let re = regex::RegexBuilder::new(r"/\\w$/").unicode(true).build().unwrap();
     let suffix = if re.is_match(term) { word_boundary } else { "" };
-    /*
-     * For location "start", the typical regex is:
-     *   /^[\s]*ESCAPED_TERM\b/iu.
-     * Or if decoration characters are specified (e.g. "*"), then any of
-     * those characters may appear in any order at the start:
-     *   /^[\s\*]*ESCAPED_TERM\b/iu.
-     *
-     * For location "anywhere" the typical regex is
-     *   /\bESCAPED_TERM\b/iu
-     *
-     * If it starts or ends with non-word character, the prefix and suffix are empty, respectively.
-     */
     regex::RegexBuilder::new(&format!("{prefix}{escaped}{suffix}"))
         .case_insensitive(true) // for 'i'
         .unicode(true) // for 'u'
@@ -76,6 +65,7 @@ fn convert_to_regexp(term: &str) -> regex::Regex {
         .unwrap()
 }
 
+/// https://github.com/eslint/eslint/blob/main/lib/rules/no-warning-comments.js#L142
 fn _comment_contains_warning_term(comment: &str) -> Vec<&str> {
     let mut matches: Vec<&str> = vec![];
     for (index, term) in WARNING_TERMS.iter().enumerate() {
