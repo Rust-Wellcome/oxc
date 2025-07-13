@@ -79,14 +79,14 @@ fn comment_contains_warning_term(comment: &str) -> Vec<&str> {
     matches
 }
 
-fn check_comment<'a>(ctx: &LintContext<'a>, _comment: &str) {
-    let matches = comment_contains_warning_term(_comment);
-    matches.iter().for_each(|_matched_term| {
+fn check_comment(ctx: &LintContext, comment: &str) {
+    let matches = comment_contains_warning_term(comment);
+    for _matched_term in &matches {
         ctx.diagnostic(
             OxcDiagnostic::warn("Warning comments shou`ld be avoided")
                 .with_help("Use a command-like statement that tells the user how to fix the issue"),
-        )
-    });
+        );
+    }
 }
 
 impl Rule for NoWarningComments {
