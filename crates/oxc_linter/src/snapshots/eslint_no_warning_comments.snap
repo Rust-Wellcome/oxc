@@ -1,0 +1,5 @@
+---
+source: crates/oxc_linter/src/tester.rs
+---
+  ⚠ eslint(no-warning-comments): Warning comments shou`ld be avoided
+  help: Use a command-like statement that tells the user how to fix the issue
