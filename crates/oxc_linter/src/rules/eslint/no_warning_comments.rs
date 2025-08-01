@@ -41,6 +41,33 @@ impl Rule for NoWarningComments {
         //     OxcDiagnostic::warn("Warning comments should be avoided")
         //         .with_help("Use a command-like statement that tells the user how to fix the issue")
         // )
+
+        // 1. create a copy of the source code
+        // 2. create a copy of the decoration, location and terms. We can get these from the configuration using the from_config function
+        // 3. escape the decoration special characters. Decoration can be a string or an array of strings.
+        // 4. creates a constant of /\bno-warning-comments\b/u
+        // 5. for each of the warning terms it converts the term to a regular expression:
+        //   - escape the term special characters
+        //   - create a constant of the word boundary which is \\b
+        //   - create a variable for the prefix
+        //   - if the location is "start" then it sets prefix to the escaped decoration `^[\\s${escapedDecoration}]*`
+        //   - tests /^\w/u against the term and if they match sets the prefix to the word boundary
+        //   - sets a constant for the suffix by running a test /\w$/u against the term if true sets suffix to word boundary otherwise sets suffix to an empty string
+        //   - creates a constant for flag of "iu"
+        //   - returns a regular expression with the prefix, term, and suffix passing in the flags
+        // 6. creates a constant comments which gets all of the comments from the source code using the ast comments. Gets all of the tree nodes that are comments.
+        // 7. for each comment:
+        //   - filters out any comments which start with shebang #!
+        //   - runs the check comment function.
+        // 8. check comment function:
+        //   - sets a constant for the comment text which is node.value
+        //   - if it is a directive comment e.g. eslint-disable-next-line or selfConfigRegEx it returns early
+        //   - creates a constant of the matches containing the warning terms. Which is a list of warning terms.
+        //   - for each match:
+        //     - takes the comment and splits it by spaces
+        //     - adds the comment to the comment that will be displayed
+        //     - if the line is longer than 40 characters it will be truncated with an ellipsis
+        //     - it will report the message to the context with messageId unexpectedCooment with the data being the matched term and the comment but if it is too long it is truncated to 40 characters with an ellipsis
     }
 }
 
