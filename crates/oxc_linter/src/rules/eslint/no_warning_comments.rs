@@ -3,11 +3,13 @@ use oxc_macros::declare_oxc_lint;
 use crate::{AstNode, context::LintContext, rule::Rule};
 
 #[derive(Debug, Default, Clone)]
-pub struct NoWarningComments {
+pub struct NoWarningCommentsConfig {
     terms: Option<Vec<String>>,
     decorations: Option<Vec<String>>,
     location: Option<String>,
 }
+#[derive(Debug, Default, Clone)]
+pub struct NoWarningComments(Box<NoWarningCommentsConfig>);
 
 // See <https://github.com/oxc-project/oxc/issues/6050> for documentation details.
 declare_oxc_lint!(
@@ -80,13 +82,12 @@ impl Rule for NoWarningComments {
 
         // TODO: Create. NoWarningCommentsConfig struct and box it inside the return struct NoWarningCommentsConfig
         // See crates/oxc_linter/src/rules/eslint/default_case.rs.
-        let mut terms: Option<Vec<String>> = None;
-        let mut decorations: Option<Vec<String>> = None;
-        let mut location: Option<String> = None;
+
+        let mut cfg = NoWarningCommentsConfig::default();
 
         if let Some(config) = value.get(0) {
             if let Some(terms_config) = config.get("terms") {
-                terms = terms_config.as_array().map(|arr| {
+                cfg.terms = terms_config.as_array().map(|arr| {
                     arr.iter()
                         .filter_map(|v| v.as_str().map(|s| s.to_string()))
                         .collect::<Vec<String>>()
@@ -94,7 +95,7 @@ impl Rule for NoWarningComments {
             }
 
             if let Some(decorations_config) = config.get("decorations") {
-                decorations = decorations_config.as_array().map(|arr| {
+                cfg.decorations = decorations_config.as_array().map(|arr| {
                     arr.iter()
                         .filter_map(|v| v.as_str().map(|s| s.to_string()))
                         .collect::<Vec<String>>()
@@ -102,15 +103,15 @@ impl Rule for NoWarningComments {
             }
 
             if let Some(location_config) = config.get("location") {
-                location = location_config.as_str().map(|s| s.to_string());
+                cfg.location = location_config.as_str().map(|s| s.to_string());
             }
         }
 
-        return Self { terms, decorations, location };
+        return Self(Box::new(cfg));
     }
 }
 
-#[ignore]
+// cargo test -p oxc_linter -- no_warning_comments
 #[test]
 fn test() {
     use crate::tester::Tester;
