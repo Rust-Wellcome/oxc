@@ -42,7 +42,11 @@ declare_oxc_lint!(
 );
 
 impl Rule for NoWarningComments {
-    fn run<'a>(&self, _node: &AstNode<'a>, _ctx: &LintContext<'a>) {
+    fn run_once(&self, ctx: &LintContext) {
+        ctx.semantic().comments().iter().for_each(|comment| {
+            println!("Comment: {:?}", comment);
+        });
+
         // ctx.diagnostic(
         //     OxcDiagnostic::warn("Warning comments should be avoided")
         //         .with_help("Use a command-like statement that tells the user how to fix the issue")
