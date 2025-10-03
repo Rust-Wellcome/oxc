@@ -46,11 +46,9 @@ declare_oxc_lint!(
 impl Rule for NoWarningComments {
     fn run_once(&self, ctx: &LintContext) {
         ctx.semantic().comments().iter().for_each(|comment| {
-            
             println!("&self: {:?}", &self.0);
             let mut source_text = ctx.source_text();
             match &self.0.location {
-
                 Some(loc) if loc != "anywhere" => {
                     // why do we need to use 0?
                     let decorations = &self.0.decorations;
@@ -67,12 +65,12 @@ impl Rule for NoWarningComments {
                 _ => {}
             }
 
-            // let kind = comment.kind;
-            // println!("Kind: {:?}", kind);
-            // let span = comment.span;
-            // let source_text = ctx.source_text().get((span.start as usize)..(span.end as usize));
-            // // println!("Span: {:?}", span);
-            // println!("Source Text: {:?}", source_text);
+            let kind = comment.kind;
+            println!("Kind: {:?}", kind);
+            let span = comment.span;
+            let source_text = ctx.source_text().get((span.start as usize)..(span.end as usize));
+            println!("Span: {:?}", span);
+            println!("Source Text: {:?}", source_text);
         });
 
         // println!("Source Text: {:?}", ctx.source_text());
@@ -87,6 +85,9 @@ impl Rule for NoWarningComments {
         // 1. create a copy of the source code x
         // 2. create a copy of the decoration, location and terms. We can get these from the configuration using the from_config function x
         // 3. escape the decoration special characters. Decoration can be a string or an array of strings.
+        //    if it is a line comment, skip // first
+        //    if it is a block comment, skip /* first: we are not there yet.
+        //    escape each decoration character until you reach a non-decoration character or the term itself, e.g. *todo
         // 4. creates a constant of /\bno-warning-comments\b/u
         // 5. for each of the warning terms it converts the term to a regular expression:
         //   - escape the term special characters
@@ -131,7 +132,7 @@ impl Rule for NoWarningComments {
             }
 
             // this is not working, decorations is always None
-            if let Some(decorations_config) = config.get("decorations") {
+            if let Some(decorations_config) = config.get("decoration") {
                 cfg.decorations = decorations_config.as_array().map(|arr| {
                     arr.iter()
                         .filter_map(|v| v.as_str().map(|s| s.to_string()))
@@ -184,24 +185,24 @@ fn test() {
         // (
         //     r#"/*eslint no-warning-comments: [2, { "terms": ["todo", "fixme", "any other term"], "location": "anywhere" }]*/
 
-		// 	var x = 10;
-		// 	"#,
+        // 	var x = 10;
+        // 	"#,
         //     None,
         // ),
         // (
         //     r#"/*eslint no-warning-comments: [2, { "terms": ["todo", "fixme", "any other term"], "location": "anywhere" }]*/
 
-		// 	var x = 10;
-		// 	"#,
+        // 	var x = 10;
+        // 	"#,
         //     Some(serde_json::json!([{ "location": "anywhere" }])),
         // ),
         // ("// foo", Some(serde_json::json!([{ "terms": ["foo-bar"] }]))),
         // (
         //     "/** multi-line block comment with lines starting with
-		// 	TODO
-		// 	FIXME or
-		// 	XXX
-		// 	*/",
+        // 	TODO
+        // 	FIXME or
+        // 	XXX
+        // 	*/",
         //     None,
         // ),
         ("//!TODO ", Some(serde_json::json!([{ "decoration": ["*"] }]))),
@@ -257,8 +258,8 @@ fn test() {
         // ),
         // (
         //     "/**
-		// 	 *any block comment
-		// 	*with (TODO, FIXME's or XXX!) **/",
+        // 	 *any block comment
+        // 	*with (TODO, FIXME's or XXX!) **/",
         //     Some(serde_json::json!([{ "location": "anywhere" }])),
         // ),
         // (
@@ -272,8 +273,8 @@ fn test() {
         // ),
         // (
         //     "/* TODO: something
-		// 	 really longer than 40 characters
-		// 	 and also a new line */",
+        // 	 really longer than 40 characters
+        // 	 and also a new line */",
         //     Some(serde_json::json!([{ "location": "anywhere" }])),
         // ),
         // ("// TODO: small", Some(serde_json::json!([{ "location": "anywhere" }]))),
@@ -323,8 +324,8 @@ fn test() {
         // ),
         // (
         //     "/*
-		// 	TODO undecorated multi-line block comment (start)
-		// 	*/",
+        // 	TODO undecorated multi-line block comment (start)
+        // 	*/",
         //     Some(serde_json::json!([{ "terms": ["todo"], "location": "start" }])),
         // ),
         (
