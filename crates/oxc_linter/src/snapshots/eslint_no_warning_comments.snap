@@ -1,5 +1,10 @@
 ---
 source: crates/oxc_linter/src/tester.rs
 ---
-  ⚠ eslint(no-warning-comments): Warning comments shou`ld be avoided
-  help: Use a command-like statement that tells the user how to fix the issue
+  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+   ╭─[no_warning_comments.tsx:1:1]
+ 1 │ ///// TODO decorated single-line comment with decoration array
+   · ──────────────────────────────────────────────────────────────
+ 2 │              /////
+   ╰────
+  help: Do not use the `with` statement.
