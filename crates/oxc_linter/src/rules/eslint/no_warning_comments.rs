@@ -91,6 +91,10 @@ impl Rule for NoWarningComments {
             //     _ => {}
             // }
             println!("Source Text: {:?}", comment_text);
+            // Date: 10/10/2025
+            // 1. Loop through the terms using &self.0.terms and use each term inside
+            // contains().
+            // 2. Remove the decorators from the comment in question.
             if comment_text.unwrap().to_string().to_lowercase().contains("todo") {
                 ctx.diagnostic(no_with_diagnostic(span));
             }
@@ -359,19 +363,19 @@ fn test() {
                 serde_json::json!([				{ "terms": ["todo"], "location": "start", "decoration": ["*", "/"] },			]),
             ),
         ),
-        // (
-        //     "///*/*/ TODO decorated single-line comment with multiple decoration characters (start)
-        // 	 /////",
-        //     Some(
-        //         serde_json::json!([				{ "terms": ["todo"], "location": "start", "decoration": ["*", "/"] },			]),
-        //     ),
-        // ),
-        // (
-        //     "//**TODO term starts with a decoration character",
-        //     Some(
-        //         serde_json::json!([				{ "terms": ["*todo"], "location": "start", "decoration": ["*"] },			]),
-        //     ),
-        // ),
+        (
+            "///*/*/ TODO decorated single-line comment with multiple decoration characters (start)
+        	 /////",
+            Some(
+                serde_json::json!([				{ "terms": ["todo"], "location": "start", "decoration": ["*", "/"] },			]),
+            ),
+        ),
+        (
+            "//**TODO term starts with a decoration character",
+            Some(
+                serde_json::json!([				{ "terms": ["*todo"], "location": "start", "decoration": ["*"] },			]),
+            ),
+        ),
     ];
 
     Tester::new(NoWarningComments::NAME, NoWarningComments::PLUGIN, pass, fail).test_and_snapshot();

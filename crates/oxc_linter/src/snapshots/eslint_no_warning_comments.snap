@@ -8,3 +8,18 @@ source: crates/oxc_linter/src/tester.rs
  2 │              /////
    ╰────
   help: Do not use the `with` statement.
+
+  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+   ╭─[no_warning_comments.tsx:1:1]
+ 1 │ ///*/*/ TODO decorated single-line comment with multiple decoration characters (start)
+   · ──────────────────────────────────────────────────────────────────────────────────────
+ 2 │              /////
+   ╰────
+  help: Do not use the `with` statement.
+
+  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+   ╭─[no_warning_comments.tsx:1:1]
+ 1 │ //**TODO term starts with a decoration character
+   · ────────────────────────────────────────────────
+   ╰────
+  help: Do not use the `with` statement.
