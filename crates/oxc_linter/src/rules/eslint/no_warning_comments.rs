@@ -50,6 +50,29 @@ declare_oxc_lint!(
              // Options are 'fix', 'fix_dangerous', 'suggestion', and 'conditional_fix_suggestion'
 );
 
+// Refactor this function to make it more Rusty
+fn trim_decorations_until_terms<'a>(
+    s: &'a str,                // can accept string slice as input; not an owned String
+    decorations: &Vec<String>, // slice of string slices
+    terms: &Vec<String>,       // slice of string slices
+) -> &'a str {
+    // return a slice of the original string (&'a str) without copying
+    let mut i = 0;
+    let s_len = s.len();
+    while i < s_len {
+        if terms.iter().any(|term| s[i..].starts_with(term)) {
+            break; // stop if a term matches
+        }
+        let c = s[i..].chars().next().unwrap();
+        if decorations.iter().any(|d| *d == c.to_string()) {
+            i += c.len_utf8(); // keep going with the loop
+        } else {
+            break; // stop if non-decoration
+        }
+    }
+    &s[i..] // new slice from position i
+}
+
 // https://eslint.org/docs/latest/rules/no-warning-comments#options
 // if location is "start" then ignore decorators, if "anywhere" then do not ignore decorators. If location is not provided then default to "start".
 impl Rule for NoWarningComments {
@@ -82,8 +105,11 @@ impl Rule for NoWarningComments {
                 CommentKind::Block => (span.start, span.end),
                 _ => (span.start, span.end),
             };
-            let comment_text =
-                ctx.source_text().get((span_pointers.0 as usize)..(span_pointers.1 as usize));
+            let comment_text = ctx
+                .source_text()
+                .get((span_pointers.0 as usize)..(span_pointers.1 as usize))
+                .unwrap()
+                .to_lowercase();
             // match comment_text {
             //     Some(text) => {
 
@@ -91,11 +117,18 @@ impl Rule for NoWarningComments {
             //     _ => {}
             // }
             println!("Source Text: {:?}", comment_text);
-            // Date: 10/10/2025
-            // 1. Loop through the terms using &self.0.terms and use each term inside
-            // contains().
-            // 2. Remove the decorators from the comment in question.
-            if comment_text.unwrap().to_string().to_lowercase().contains("todo") {
+
+            let cleaned_text = trim_decorations_until_terms(
+                &comment_text,
+                &self.0.decorations.as_ref().unwrap(),
+                &self.0.terms.as_ref().unwrap(),
+            );
+            println!("Cleaned Text: {:?}", cleaned_text);
+
+            // Date: 17/10/2025
+            // Next time, uncomment the test from the bottom and work from there.
+            // Understand uniform handling of strings in Rust (Patterns).
+            if comment_text.to_string().to_lowercase().contains("todo") {
                 ctx.diagnostic(no_with_diagnostic(span));
             }
             // println!("Span: {:?}", span);
@@ -177,7 +210,8 @@ impl Rule for NoWarningComments {
     }
 }
 
-// cargo test -p oxc_linter -- no_warning_comments
+// cargo insta accept
+// cargo test -p oxc_linter -- --nocapture no_warning_comments
 #[test]
 fn test() {
     use crate::tester::Tester;
@@ -365,7 +399,7 @@ fn test() {
         ),
         (
             "///*/*/ TODO decorated single-line comment with multiple decoration characters (start)
-        	 /////",
+         	 /////",
             Some(
                 serde_json::json!([				{ "terms": ["todo"], "location": "start", "decoration": ["*", "/"] },			]),
             ),
