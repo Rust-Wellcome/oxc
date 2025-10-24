@@ -138,6 +138,10 @@ impl Rule for NoWarningComments {
                     }
                 }
             }
+
+            // 24/10/25 there is an issue with the location
+            // if you do not have location set to anywhere it will use the default of start
+            // if the location is start we should start with rather than contains
         });
 
         // 1. create a copy of the source code x
@@ -264,7 +268,7 @@ fn test() {
         // 	*/",
         //     None,
         // ),
-        // ("//!TODO ", Some(serde_json::json!([{ "decoration": ["*"] }]))),
+        ("//!TODO ", Some(serde_json::json!([{ "decoration": ["*"] }]))),
     ];
 
     let fail = vec![
