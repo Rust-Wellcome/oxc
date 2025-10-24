@@ -85,14 +85,6 @@ impl Rule for NoWarningComments {
                     // why do we need to use 0?
                     let decorations = &self.0.decorations;
                     println!("Decorations: {:?}", decorations);
-                    // if let Some(decorations) = &self.decorations {
-                    //     for decoration in decorations {
-                    //         let escaped_decoration = regex::escape(decoration);
-                    //         let pattern = format!(r"^[\s{escaped_decoration}]*");
-                    //         let re = regex::Regex::new(&pattern).unwrap();
-                    //         source_text = re.replace(&source_text, "").to_string();
-                    //     }
-                    // }
                 }
                 _ => {}
             }
@@ -179,6 +171,7 @@ impl Rule for NoWarningComments {
         //     - it will report the message to the context with messageId unexpectedCooment with the data being the matched term and the comment but if it is too long it is truncated to 40 characters with an ellipsis
     }
 
+    // this could do with a tidy up.
     fn from_configuration(value: serde_json::Value) -> Self {
         // Read the configuration for term, decoration and location from _value and then
         // return NoWarningComments {} struct with the attributes terms, decoration and locations.
@@ -197,7 +190,6 @@ impl Rule for NoWarningComments {
                 });
             }
 
-            // this is not working, decorations is always None
             if let Some(decorations_config) = config.get("decoration") {
                 cfg.decorations = decorations_config.as_array().map(|arr| {
                     arr.iter()
