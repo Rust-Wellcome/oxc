@@ -92,6 +92,8 @@ impl Rule for NoWarningComments {
             let kind = comment.kind;
             println!("Kind: {:?}", kind);
             let span = comment.span;
+
+            // ctx.source_range(comment.content_span());
             let span_pointers: (u32, u32) = match kind {
                 CommentKind::Line => ((span.start + 2) as u32, span.end),
                 CommentKind::Block => (span.start, span.end),
