@@ -60,6 +60,9 @@ fn trim_decorations_until_terms<'a>(
     let mut i = 0;
     let s_len = s.len();
     while i < s_len {
+        if terms.len() == 0 {
+            break;
+        }
         if terms.iter().any(|term| s[i..].starts_with(term)) {
             break; // stop if a term matches
         }
@@ -96,7 +99,7 @@ impl Rule for NoWarningComments {
             // ctx.source_range(comment.content_span());
             let span_pointers: (u32, u32) = match kind {
                 CommentKind::Line => ((span.start + 2) as u32, span.end),
-                CommentKind::Block => (span.start, span.end),
+                CommentKind::Block => (span.start + 2, span.end),
                 _ => (span.start, span.end),
             };
             let comment_text = ctx
@@ -109,11 +112,14 @@ impl Rule for NoWarningComments {
 
             // If there are no decorations it returns none so we need to match it otherwise it panics
             let cleaned_text = match &self.0.decorations {
-                Some(decorations) => trim_decorations_until_terms(
-                    &comment_text,
-                    decorations,
-                    self.0.terms.as_ref().unwrap(),
-                ),
+                Some(decorations) => {
+                    let empty_vec: Vec<String> = Vec::new();
+                    trim_decorations_until_terms(
+                        &comment_text,
+                        decorations,
+                        self.0.terms.as_ref().unwrap_or(&empty_vec),
+                    )
+                }
                 None => &comment_text,
             };
 
@@ -134,8 +140,23 @@ impl Rule for NoWarningComments {
                 None => {
                     let default_terms = vec!["todo", "fixme", "xxx"];
                     for term in default_terms {
-                        if cleaned_text.to_lowercase().contains(&term) {
-                            ctx.diagnostic(no_with_diagnostic(span));
+                        match &self.0.location {
+                            Some(location) => {
+                                if location == "start" {
+                                    if !cleaned_text.to_lowercase().starts_with(&term) {}
+                                } else {
+                                    if cleaned_text.to_lowercase().contains(&term) {
+                                        ctx.diagnostic(no_with_diagnostic(span));
+                                    }
+                                }
+                            }
+                            None => {
+                                // If location=None that means, location="start"
+                                if cleaned_text.to_lowercase().trim().starts_with(&term) {
+                                    ctx.diagnostic(no_with_diagnostic(span));
+                                } else {
+                                }
+                            }
                         }
                     }
                 }
