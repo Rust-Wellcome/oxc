@@ -275,22 +275,23 @@ fn test() {
         // 	"#,
         //     None,
         // ),
-        // (
-        //     r#"/*eslint no-warning-comments: [2, { "terms": ["todo", "fixme", "any other term"], "location": "anywhere" }]*/
+        // TODO: 7/11/12 (Stopped here; we need to fix this in the next session)
+        (
+            r#"/*eslint no-warning-comments: [2, { "terms": ["todo", "fixme", "any other term"], "location": "anywhere" }]*/
 
-        // 	var x = 10;
-        // 	"#,
-        //     Some(serde_json::json!([{ "location": "anywhere" }])),
-        // ),
-        // ("// foo", Some(serde_json::json!([{ "terms": ["foo-bar"] }]))),
-        // (
-        //     "/** multi-line block comment with lines starting with
-        // 	TODO
-        // 	FIXME or
-        // 	XXX
-        // 	*/",
-        //     None,
-        // ),
+        	var x = 10;
+        	"#,
+            Some(serde_json::json!([{ "location": "anywhere" }])),
+        ),
+        ("// foo", Some(serde_json::json!([{ "terms": ["foo-bar"] }]))),
+        (
+            "/** multi-line block comment with lines starting with
+        	TODO
+        	FIXME or
+        	XXX
+        	*/",
+            None,
+        ),
         ("//!TODO ", Some(serde_json::json!([{ "decoration": ["*"] }]))),
     ];
 
