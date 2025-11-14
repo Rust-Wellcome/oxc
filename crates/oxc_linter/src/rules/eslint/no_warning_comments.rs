@@ -96,7 +96,6 @@ impl Rule for NoWarningComments {
             println!("Kind: {:?}", kind);
             let span = comment.span;
 
-            // ctx.source_range(comment.content_span());
             let span_pointers: (u32, u32) = match kind {
                 CommentKind::Line => ((span.start + 2) as u32, span.end),
                 CommentKind::Block => (span.start + 2, span.end),
@@ -107,6 +106,11 @@ impl Rule for NoWarningComments {
                 .get((span_pointers.0 as usize)..(span_pointers.1 as usize))
                 .unwrap()
                 .to_lowercase();
+
+            // it would be better to strip comments with no-warning-comments
+            if comment_text.contains("no-warning-comments") {
+                return;
+            }
 
             println!("Source Text: {:?}", comment_text);
 
@@ -125,6 +129,12 @@ impl Rule for NoWarningComments {
 
             println!("Cleaned Text: {:?}", cleaned_text);
 
+            let words = cleaned_text
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w| !w.is_empty())
+                .map(|w| w.to_lowercase())
+                .collect::<Vec<String>>();
+
             // performance might be an issue here with nested loops. Look at refactoring not with regex.
 
             // if the terms exist in the comment text then report a diagnostic
@@ -132,7 +142,7 @@ impl Rule for NoWarningComments {
             match &self.0.terms {
                 Some(terms) => {
                     for term in terms {
-                        if cleaned_text.to_lowercase().contains(&term.to_lowercase()) {
+                        if words.contains(&term.to_lowercase()) {
                             ctx.diagnostic(no_with_diagnostic(span));
                         }
                     }
@@ -143,16 +153,15 @@ impl Rule for NoWarningComments {
                         match &self.0.location {
                             Some(location) => {
                                 if location == "start" {
-                                    if !cleaned_text.to_lowercase().starts_with(&term) {}
+                                    if !(words[0] == term.to_lowercase()) {}
                                 } else {
-                                    if cleaned_text.to_lowercase().contains(&term) {
+                                    if words.contains(&term.to_lowercase()) {
                                         ctx.diagnostic(no_with_diagnostic(span));
                                     }
                                 }
                             }
                             None => {
-                                // If location=None that means, location="start"
-                                if cleaned_text.to_lowercase().trim().starts_with(&term) {
+                                if (words[0] == term.to_lowercase()) {
                                     ctx.diagnostic(no_with_diagnostic(span));
                                 } else {
                                 }
@@ -260,22 +269,21 @@ fn test() {
         // ),
         // ("/* any block comment with TODO, FIXME or XXX */", None),
         // ("/* any block comment with (TODO, FIXME's or XXX!) */", None),
-        // (
-        //     "// comments containing terms as substrings like TodoMVC",
-        //     Some(serde_json::json!([{ "terms": ["todo"], "location": "anywhere" }])),
-        // ),
-        // (
-        //     "// special regex characters don't cause a problem",
-        //     Some(serde_json::json!([{ "terms": ["[aeiou]"], "location": "anywhere" }])),
-        // ),
-        // (
-        //     r#"/*eslint no-warning-comments: [2, { "terms": ["todo", "fixme", "any other term"], "location": "anywhere" }]*/
+        (
+            "// comments containing terms as substrings like TodoMVC",
+            Some(serde_json::json!([{ "terms": ["todo"], "location": "anywhere" }])),
+        ),
+        (
+            "// special regex characters don't cause a problem",
+            Some(serde_json::json!([{ "terms": ["[aeiou]"], "location": "anywhere" }])),
+        ),
+        (
+            r#"/*eslint no-warning-comments: [2, { "terms": ["todo", "fixme", "any other term"], "location": "anywhere" }]*/
 
-        // 	var x = 10;
-        // 	"#,
-        //     None,
-        // ),
-        // TODO: 7/11/12 (Stopped here; we need to fix this in the next session)
+        	var x = 10;
+        	"#,
+            None,
+        ),
         (
             r#"/*eslint no-warning-comments: [2, { "terms": ["todo", "fixme", "any other term"], "location": "anywhere" }]*/
 
@@ -292,6 +300,7 @@ fn test() {
         	*/",
             None,
         ),
+        // This test is now failing ...
         ("//!TODO ", Some(serde_json::json!([{ "decoration": ["*"] }]))),
     ];
 
