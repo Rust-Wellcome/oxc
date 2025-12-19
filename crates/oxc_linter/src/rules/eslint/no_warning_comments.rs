@@ -129,6 +129,8 @@ impl Rule for NoWarningComments {
 
             println!("Cleaned Text: {:?}", cleaned_text);
 
+            // We have handled ("//!TODO ", Some(serde_json::json!([{ "decoration": ["*"] }])))
+            // But it made the following to fail: Some(serde_json::json!([{ "terms": ["[litera|$]"], "location": "anywhere" }])),
             let words = cleaned_text
                 .split(|c: char| !c.is_alphanumeric())
                 .filter(|w| !w.is_empty())
@@ -139,9 +141,13 @@ impl Rule for NoWarningComments {
 
             // if the terms exist in the comment text then report a diagnostic
             // if there are no terms then use default terms
+            println!("Terms: {:?}", self.0.terms);
+            println!("Location: {:?}", self.0.location);
             match &self.0.terms {
                 Some(terms) => {
                     for term in terms {
+                        println!("Condition: {:?}", words.contains(&term.to_lowercase()));
+                        println!("Words: {:?}", words);
                         if words.contains(&term.to_lowercase()) {
                             ctx.diagnostic(no_with_diagnostic(span));
                         }
@@ -163,7 +169,6 @@ impl Rule for NoWarningComments {
                             None => {
                                 if (words[0] == term.to_lowercase()) {
                                     ctx.diagnostic(no_with_diagnostic(span));
-                                } else {
                                 }
                             }
                         }
@@ -236,6 +241,9 @@ impl Rule for NoWarningComments {
 
             if let Some(location_config) = config.get("location") {
                 cfg.location = location_config.as_str().map(|s| s.to_string());
+            } else {
+                // Default to "start" if location is not provided
+                cfg.location = Some("start".to_string());
             }
         }
 
