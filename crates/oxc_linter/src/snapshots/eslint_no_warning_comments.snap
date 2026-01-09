@@ -136,13 +136,6 @@ source: crates/oxc_linter/src/tester.rs
 
   ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
    ╭─[no_warning_comments.tsx:1:1]
- 1 │ // regex [litera|$]
-   · ───────────────────
-   ╰────
-  help: Do not use the `with` statement.
-
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
-   ╭─[no_warning_comments.tsx:1:1]
  1 │ /* eslint one-var: 2 */
    · ───────────────────────
    ╰────
@@ -282,99 +275,5 @@ source: crates/oxc_linter/src/tester.rs
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // Comment ending with term followed by punctuation TODO!
    · ─────────────────────────────────────────────────────────
-   ╰────
-  help: Do not use the `with` statement.
-
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
-   ╭─[no_warning_comments.tsx:1:1]
- 1 │ // Comment ending with term including punctuation TODO!
-   · ───────────────────────────────────────────────────────
-   ╰────
-  help: Do not use the `with` statement.
-
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
-   ╭─[no_warning_comments.tsx:1:1]
- 1 │ // Comment ending with term including punctuation followed by more TODO!!!
-   · ──────────────────────────────────────────────────────────────────────────
-   ╰────
-  help: Do not use the `with` statement.
-
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
-   ╭─[no_warning_comments.tsx:1:1]
- 1 │ // !TODO comment starting with term preceded by punctuation
-   · ───────────────────────────────────────────────────────────
-   ╰────
-  help: Do not use the `with` statement.
-
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
-   ╭─[no_warning_comments.tsx:1:1]
- 1 │ // !TODO comment starting with term including punctuation
-   · ─────────────────────────────────────────────────────────
-   ╰────
-  help: Do not use the `with` statement.
-
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
-   ╭─[no_warning_comments.tsx:1:1]
- 1 │ // !!!TODO comment starting with term including punctuation preceded by more
-   · ────────────────────────────────────────────────────────────────────────────
-   ╰────
-  help: Do not use the `with` statement.
-
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
-   ╭─[no_warning_comments.tsx:1:1]
- 1 │ // FIX!term ending with punctuation followed word character
-   · ───────────────────────────────────────────────────────────
-   ╰────
-  help: Do not use the `with` statement.
-
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
-   ╭─[no_warning_comments.tsx:1:1]
- 1 │ // Term starting with punctuation preceded word character!FIX
-   · ─────────────────────────────────────────────────────────────
-   ╰────
-  help: Do not use the `with` statement.
-
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
-   ╭─[no_warning_comments.tsx:1:1]
- 1 │ //!XXX comment starting with no spaces (anywhere)
-   · ─────────────────────────────────────────────────
-   ╰────
-  help: Do not use the `with` statement.
-
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
-   ╭─[no_warning_comments.tsx:1:1]
- 1 │ //!XXX comment starting with no spaces (start)
-   · ──────────────────────────────────────────────
-   ╰────
-  help: Do not use the `with` statement.
-
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
-   ╭─[no_warning_comments.tsx:1:1]
- 1 │ ╭─▶ /*
- 2 │ │               TODO undecorated multi-line block comment (start)
- 3 │ ╰─▶             */
-   ╰────
-  help: Do not use the `with` statement.
-
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
-   ╭─[no_warning_comments.tsx:1:1]
- 1 │ ///// TODO decorated single-line comment with decoration array
-   · ──────────────────────────────────────────────────────────────
- 2 │              /////
-   ╰────
-  help: Do not use the `with` statement.
-
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
-   ╭─[no_warning_comments.tsx:1:1]
- 1 │ ///*/*/ TODO decorated single-line comment with multiple decoration characters (start)
-   · ──────────────────────────────────────────────────────────────────────────────────────
- 2 │              /////
-   ╰────
-  help: Do not use the `with` statement.
-
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
-   ╭─[no_warning_comments.tsx:1:1]
- 1 │ //**TODO term starts with a decoration character
-   · ────────────────────────────────────────────────
    ╰────
   help: Do not use the `with` statement.
