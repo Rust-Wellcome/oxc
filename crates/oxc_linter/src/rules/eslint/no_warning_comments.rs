@@ -100,7 +100,7 @@ fn any_word_matches_term(words: &[String], term: &str) -> bool {
 impl Rule for NoWarningComments {
     fn run_once(&self, ctx: &LintContext) {
         ctx.semantic().comments().iter().for_each(|comment| {
-            let mut source_text = ctx.source_text();
+            let source_text = ctx.source_text();
             match &self.0.location {
                 Some(loc) if loc != "anywhere" => {
                     // why do we need to use 0?
@@ -154,8 +154,6 @@ impl Rule for NoWarningComments {
 
             // if the terms exist in the comment text then report a diagnostic
             // if there are no terms then use default terms
-            // println!("Terms: {:?}", self.0.terms);
-            // println!("Location: {:?}", self.0.location);
             match &self.0.terms {
                 Some(terms) => {
                     for term in terms {
