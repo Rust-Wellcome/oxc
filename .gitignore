@@ -27,6 +27,8 @@ target/
 /editors/vscode/test_workspace_second/
 /editors/vscode/*.test.code-workspace
 
+.vscode/settings.json
+
 # Cloned conformance repos
 tasks/coverage/babel/
 tasks/coverage/test262/

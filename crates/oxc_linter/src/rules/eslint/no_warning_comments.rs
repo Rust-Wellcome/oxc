@@ -84,15 +84,14 @@ fn trim_decorations_until_terms<'a>(
 /// --- "/* eslint one-var: 2 */" ---
 fn any_word_matches_term(words: &[String], term: &str) -> bool {
     let term_lower = term.to_lowercase();
-    let is_term_alnum = term_lower.chars().all(|c| c.is_alphanumeric());
+    // let is_term_alnum = term_lower.chars().all(|c| c.is_alphanumeric());
     let x = words.iter().any(|word| {
-        if is_term_alnum {
-            // If the word starts with the term and the rest is non-alphanumeric or empty, it's a match
-            word.contains(&term_lower)
-        } else {
-            word.contains(&term_lower)
-            // word == &term_lower
-        }
+        // term is alphanumeric, word is alphanumeric, check for exact match ; todo && todoMVC => todo == todoMVC
+        // term is alphanumeric, word is not alphanumeric, check for contains ; todo && todo! => todo! contains todo
+
+        let word_lower = word.to_lowercase();
+        let is_word_alnum = word_lower.chars().all(|c| c.is_alphanumeric());
+        if is_word_alnum { word_lower == term_lower } else { word_lower.contains(&term_lower) }
     });
     println!("x = {:?}", x);
     x
@@ -282,58 +281,57 @@ fn test() {
     use crate::tester::Tester;
 
     let pass = vec![
-        // ("// any comment", Some(serde_json::json!([{ "terms": ["fixme"] }]))),
-        // ("// any comment", Some(serde_json::json!([{ "terms": ["fixme", "todo"] }]))),
-        // ("// any comment", None),
-        // ("// any comment", Some(serde_json::json!([{ "location": "anywhere" }]))),
-        // (
-        //     "// any comment with TODO, FIXME or XXX",
-        //     Some(serde_json::json!([{ "location": "start" }])),
-        // ),
-        // ("// any comment with TODO, FIXME or XXX", None),
-        // ("/* any block comment */", Some(serde_json::json!([{ "terms": ["fixme"] }]))),
-        // ("/* any block comment */", Some(serde_json::json!([{ "terms": ["fixme", "todo"] }]))),
-        // ("/* any block comment */", None),
-        // ("/* any block comment */", Some(serde_json::json!([{ "location": "anywhere" }]))),
-        // (
-        //     "/* any block comment with TODO, FIXME or XXX */",
-        //     Some(serde_json::json!([{ "location": "start" }])),
-        // ),
-        // ("/* any block comment with TODO, FIXME or XXX */", None),
-        // ("/* any block comment with (TODO, FIXME's or XXX!) */", None),
-        // (
-        //     "// comments containing terms as substrings like TodoMVC",
-        //     Some(serde_json::json!([{ "terms": ["todo"], "location": "anywhere" }])),
-        // ),
-        // (
-        //     "// special regex characters don't cause a problem",
-        //     Some(serde_json::json!([{ "terms": ["[aeiou]"], "location": "anywhere" }])),
-        // ),
-        // (
-        //     r#"/*eslint no-warning-comments: [2, { "terms": ["todo", "fixme", "any other term"], "location": "anywhere" }]*/
+        ("// any comment", Some(serde_json::json!([{ "terms": ["fixme"] }]))),
+        ("// any comment", Some(serde_json::json!([{ "terms": ["fixme", "todo"] }]))),
+        ("// any comment", None),
+        ("// any comment", Some(serde_json::json!([{ "location": "anywhere" }]))),
+        (
+            "// any comment with TODO, FIXME or XXX",
+            Some(serde_json::json!([{ "location": "start" }])),
+        ),
+        ("// any comment with TODO, FIXME or XXX", None),
+        ("/* any block comment */", Some(serde_json::json!([{ "terms": ["fixme"] }]))),
+        ("/* any block comment */", Some(serde_json::json!([{ "terms": ["fixme", "todo"] }]))),
+        ("/* any block comment */", None),
+        ("/* any block comment */", Some(serde_json::json!([{ "location": "anywhere" }]))),
+        (
+            "/* any block comment with TODO, FIXME or XXX */",
+            Some(serde_json::json!([{ "location": "start" }])),
+        ),
+        ("/* any block comment with TODO, FIXME or XXX */", None),
+        ("/* any block comment with (TODO, FIXME's or XXX!) */", None),
+        (
+            "// comments containing terms as substrings like TodoMVC",
+            Some(serde_json::json!([{ "terms": ["todo"], "location": "anywhere" }])),
+        ),
+        (
+            "// special regex characters don't cause a problem",
+            Some(serde_json::json!([{ "terms": ["[aeiou]"], "location": "anywhere" }])),
+        ),
+        (
+            r#"/*eslint no-warning-comments: [2, { "terms": ["todo", "fixme", "any other term"], "location": "anywhere" }]*/
 
-        // 	var x = 10;
-        // 	"#,
-        //     None,
-        // ),
-        // (
-        //     r#"/*eslint no-warning-comments: [2, { "terms": ["todo", "fixme", "any other term"], "location": "anywhere" }]*/
+        	var x = 10;
+        	"#,
+            None,
+        ),
+        (
+            r#"/*eslint no-warning-comments: [2, { "terms": ["todo", "fixme", "any other term"], "location": "anywhere" }]*/
 
-        // 	var x = 10;
-        // 	"#,
-        //     Some(serde_json::json!([{ "location": "anywhere" }])),
-        // ),
-        // ("// foo", Some(serde_json::json!([{ "terms": ["foo-bar"] }]))),
-        // (
-        //     "/** multi-line block comment with lines starting with
-        // 	TODO
-        // 	FIXME or
-        // 	XXX
-        // 	*/",
-        //     None,
-        // ),
-        // // This test is now failing ...
-        // ("//!TODO ", Some(serde_json::json!([{ "decoration": ["*"] }]))),
+        	var x = 10;
+        	"#,
+            Some(serde_json::json!([{ "location": "anywhere" }])),
+        ),
+        ("// foo", Some(serde_json::json!([{ "terms": ["foo-bar"] }]))),
+        (
+            "/** multi-line block comment with lines starting with
+        	TODO
+        	FIXME or
+        	XXX
+        	*/",
+            None,
+        ),
+        ("//!TODO ", Some(serde_json::json!([{ "decoration": ["*"] }]))),
     ];
 
     let fail = vec![
