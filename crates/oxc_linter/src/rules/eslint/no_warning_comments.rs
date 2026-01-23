@@ -100,22 +100,13 @@ fn any_word_matches_term(words: &[String], term: &str) -> bool {
 impl Rule for NoWarningComments {
     fn run_once(&self, ctx: &LintContext) {
         ctx.semantic().comments().iter().for_each(|comment| {
-            let source_text = ctx.source_text();
-            match &self.0.location {
-                Some(loc) if loc != "anywhere" => {
-                    // why do we need to use 0?
-                    let decorations = &self.0.decorations;
-                }
-                _ => {}
-            }
-
             let kind = comment.kind;
             let span = comment.span;
 
             let span_pointers: (u32, u32) = match kind {
                 CommentKind::Line => ((span.start + 2) as u32, span.end),
                 CommentKind::Block => (span.start + 2, span.end),
-                _ => (span.start, span.end),
+                // _ => (span.start, span.end),
             };
             let comment_text = ctx
                 .source_text()
