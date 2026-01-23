@@ -85,16 +85,14 @@ fn trim_decorations_until_terms<'a>(
 fn any_word_matches_term(words: &[String], term: &str) -> bool {
     let term_lower = term.to_lowercase();
     // let is_term_alnum = term_lower.chars().all(|c| c.is_alphanumeric());
-    let x = words.iter().any(|word| {
+    words.iter().any(|word| {
         // term is alphanumeric, word is alphanumeric, check for exact match ; todo && todoMVC => todo == todoMVC
         // term is alphanumeric, word is not alphanumeric, check for contains ; todo && todo! => todo! contains todo
 
         let word_lower = word.to_lowercase();
         let is_word_alnum = word_lower.chars().all(|c| c.is_alphanumeric());
         if is_word_alnum { word_lower == term_lower } else { word_lower.contains(&term_lower) }
-    });
-    println!("x = {:?}", x);
-    x
+    })
 }
 
 // https://eslint.org/docs/latest/rules/no-warning-comments#options
@@ -102,19 +100,16 @@ fn any_word_matches_term(words: &[String], term: &str) -> bool {
 impl Rule for NoWarningComments {
     fn run_once(&self, ctx: &LintContext) {
         ctx.semantic().comments().iter().for_each(|comment| {
-            println!("&self: {:?}", &self.0);
             let mut source_text = ctx.source_text();
             match &self.0.location {
                 Some(loc) if loc != "anywhere" => {
                     // why do we need to use 0?
                     let decorations = &self.0.decorations;
-                    println!("Decorations: {:?}", decorations);
                 }
                 _ => {}
             }
 
             let kind = comment.kind;
-            println!("Kind: {:?}", kind);
             let span = comment.span;
 
             let span_pointers: (u32, u32) = match kind {
@@ -133,8 +128,6 @@ impl Rule for NoWarningComments {
                 return;
             }
 
-            println!("Source Text: {:?}", comment_text);
-
             // If there are no decorations it returns none so we need to match it otherwise it panics
             let cleaned_text = match &self.0.decorations {
                 Some(decorations) => {
@@ -147,8 +140,6 @@ impl Rule for NoWarningComments {
                 }
                 None => &comment_text,
             };
-
-            println!("Cleaned Text: {:?}", cleaned_text);
 
             // We have handled ("//!TODO ", Some(serde_json::json!([{ "decoration": ["*"] }])))
             // But it made the following to fail: Some(serde_json::json!([{ "terms": ["[litera|$]"], "location": "anywhere" }])),
@@ -165,12 +156,9 @@ impl Rule for NoWarningComments {
             // if there are no terms then use default terms
             // println!("Terms: {:?}", self.0.terms);
             // println!("Location: {:?}", self.0.location);
-            println!("Words: {:?}", words);
             match &self.0.terms {
                 Some(terms) => {
                     for term in terms {
-                        println!("Condition: {:?}", any_word_matches_term(&words, term));
-                        println!("Words: {:?}", words);
                         if any_word_matches_term(&words, term) {
                             ctx.diagnostic(no_with_diagnostic(span));
                         }
