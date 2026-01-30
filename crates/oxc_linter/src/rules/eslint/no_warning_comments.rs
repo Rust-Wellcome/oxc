@@ -1,9 +1,9 @@
-use oxc_ast::CommentKind;
+use cow_utils::CowUtils;
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
 
-use crate::{AstNode, context::LintContext, rule::Rule};
+use crate::{context::LintContext, rule::Rule};
 
 fn no_with_diagnostic(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Unexpected use of `with` statement.")
@@ -52,15 +52,15 @@ declare_oxc_lint!(
 
 // Refactor this function to make it more Rusty
 fn trim_decorations_until_terms<'a>(
-    s: &'a str,                // can accept string slice as input; not an owned String
-    decorations: &Vec<String>, // slice of string slices
-    terms: &Vec<String>,       // slice of string slices
+    s: &'a str,             // can accept string slice as input; not an owned String
+    decorations: &[String], // slice of string slices
+    terms: &[String],       // slice of string slices
 ) -> &'a str {
     // return a slice of the original string (&'a str) without copying
     let mut i = 0;
     let s_len = s.len();
     while i < s_len {
-        if terms.len() == 0 {
+        if terms.is_empty() {
             break;
         }
         if terms.iter().any(|term| s[i..].starts_with(term)) {
@@ -83,15 +83,15 @@ fn trim_decorations_until_terms<'a>(
 /// This function is not working correctly so we need to go through the various options.
 /// --- "/* eslint one-var: 2 */" ---
 fn any_word_matches_term(words: &[String], term: &str) -> bool {
-    let term_lower = term.to_lowercase();
+    let term_lower = term.cow_to_lowercase();
     // let is_term_alnum = term_lower.chars().all(|c| c.is_alphanumeric());
     words.iter().any(|word| {
         // term is alphanumeric, word is alphanumeric, check for exact match ; todo && todoMVC => todo == todoMVC
         // term is alphanumeric, word is not alphanumeric, check for contains ; todo && todo! => todo! contains todo
 
-        let word_lower = word.to_lowercase();
-        let is_word_alnum = word_lower.chars().all(|c| c.is_alphanumeric());
-        if is_word_alnum { word_lower == term_lower } else { word_lower.contains(&term_lower) }
+        let word_lower = word.cow_to_lowercase();
+        let is_word_alnum = word_lower.chars().all(char::is_alphanumeric);
+        if is_word_alnum { word_lower == term_lower } else { word_lower.contains(&*term_lower) }
     })
 }
 
@@ -100,19 +100,14 @@ fn any_word_matches_term(words: &[String], term: &str) -> bool {
 impl Rule for NoWarningComments {
     fn run_once(&self, ctx: &LintContext) {
         ctx.semantic().comments().iter().for_each(|comment| {
-            let kind = comment.kind;
             let span = comment.span;
 
-            let span_pointers: (u32, u32) = match kind {
-                CommentKind::Line => ((span.start + 2) as u32, span.end),
-                CommentKind::Block => (span.start + 2, span.end),
-                // _ => (span.start, span.end),
-            };
+            let span_pointers: (u32, u32) = (span.start + 2, span.end);
             let comment_text = ctx
                 .source_text()
                 .get((span_pointers.0 as usize)..(span_pointers.1 as usize))
                 .unwrap()
-                .to_lowercase();
+                .cow_to_lowercase();
 
             // it would be better to strip comments with no-warning-comments
             if comment_text.contains("no-warning-comments") {
@@ -138,44 +133,38 @@ impl Rule for NoWarningComments {
                 .split_whitespace()
                 // .split(|c: char| !c.is_alphanumeric())
                 .filter(|w| !w.is_empty())
-                .map(|w| w.to_lowercase())
+                .map(|w| cow_utils::CowUtils::cow_to_lowercase(w).into_owned())
                 .collect::<Vec<String>>();
 
             // performance might be an issue here with nested loops. Look at refactoring not with regex.
 
             // if the terms exist in the comment text then report a diagnostic
             // if there are no terms then use default terms
-            match &self.0.terms {
-                Some(terms) => {
-                    for term in terms {
-                        if any_word_matches_term(&words, term) {
-                            ctx.diagnostic(no_with_diagnostic(span));
-                        }
+            if let Some(terms) = &self.0.terms {
+                for term in terms {
+                    if any_word_matches_term(&words, term) {
+                        ctx.diagnostic(no_with_diagnostic(span));
                     }
                 }
-                None => {
-                    let default_terms = vec!["todo", "fixme", "xxx"];
-                    for term in default_terms {
-                        match &self.0.location {
-                            Some(location) => {
-                                if location == "start" {
-                                    if !(words[0] == term.to_lowercase()) {}
-                                } else {
-                                    if any_word_matches_term(&words, term) {
-                                        ctx.diagnostic(no_with_diagnostic(span));
-                                    }
-                                }
+            } else {
+                let default_terms = vec!["todo", "fixme", "xxx"];
+                for term in default_terms {
+                    match &self.0.location {
+                        Some(location) => {
+                            if location == "start" {
+                                if words[0] != term.cow_to_lowercase() {}
+                            } else if any_word_matches_term(&words, term) {
+                                ctx.diagnostic(no_with_diagnostic(span));
                             }
-                            None => {
-                                if words[0] == term.to_lowercase() {
-                                    ctx.diagnostic(no_with_diagnostic(span));
-                                }
+                        }
+                        None => {
+                            if words[0] == term.cow_to_lowercase() {
+                                ctx.diagnostic(no_with_diagnostic(span));
                             }
                         }
                     }
                 }
             }
-
             // 24/10/25 there is an issue with the location
             // if you do not have location set to anywhere it will use the default of start
             // if the location is start we should start with rather than contains
@@ -226,7 +215,7 @@ impl Rule for NoWarningComments {
             if let Some(terms_config) = config.get("terms") {
                 cfg.terms = terms_config.as_array().map(|arr| {
                     arr.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
                         .collect::<Vec<String>>()
                 });
             }
@@ -234,20 +223,20 @@ impl Rule for NoWarningComments {
             if let Some(decorations_config) = config.get("decoration") {
                 cfg.decorations = decorations_config.as_array().map(|arr| {
                     arr.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
                         .collect::<Vec<String>>()
                 });
             }
 
             if let Some(location_config) = config.get("location") {
-                cfg.location = location_config.as_str().map(|s| s.to_string());
+                cfg.location = location_config.as_str().map(std::string::ToString::to_string);
             } else {
                 // Default to "start" if location is not provided
                 cfg.location = Some("start".to_string());
             }
         }
 
-        return Self(Box::new(cfg));
+        Self(Box::new(cfg))
     }
 }
 
