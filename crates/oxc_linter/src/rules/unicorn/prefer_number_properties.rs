@@ -1,14 +1,19 @@
 use oxc_ast::{
     AstKind,
-    ast::{Expression, match_member_expression},
+    ast::{Expression, UnaryExpression, UnaryOperator, match_member_expression},
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, Span};
-use serde_json::Value;
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 use crate::{
-    AstNode, context::LintContext, fixer::RuleFixer, globals::GLOBAL_OBJECT_NAMES, rule::Rule,
+    AstNode,
+    context::LintContext,
+    fixer::RuleFixer,
+    globals::GLOBAL_OBJECT_NAMES,
+    rule::{DefaultRuleConfig, Rule},
 };
 
 fn prefer_number_properties_diagnostic(span: Span, method_name: &str) -> OxcDiagnostic {
@@ -17,7 +22,7 @@ fn prefer_number_properties_diagnostic(span: Span, method_name: &str) -> OxcDiag
         .with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct PreferNumberProperties(Box<PreferNumberPropertiesConfig>);
 
 impl std::ops::Deref for PreferNumberProperties {
@@ -28,11 +33,13 @@ impl std::ops::Deref for PreferNumberProperties {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct PreferNumberPropertiesConfig {
-    // default is true
+    /// If set to `true`, checks for usage of `Infinity` and `-Infinity` as global variables.
     check_infinity: bool,
-    // default is true
+    /// If set to `true`, checks for usage of `NaN` as a global variable.
+    #[serde(rename = "checkNaN")]
     check_nan: bool,
 }
 
@@ -75,23 +82,13 @@ declare_oxc_lint!(
     PreferNumberProperties,
     unicorn,
     restriction,
-    dangerous_fix
+    dangerous_fix,
+    config = PreferNumberPropertiesConfig,
 );
 
 impl Rule for PreferNumberProperties {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let mut config = PreferNumberPropertiesConfig::default();
-
-        if let Some(value) = value.get(0) {
-            if let Some(Value::Bool(val)) = value.get("checkInfinity") {
-                config.check_infinity = *val;
-            }
-            if let Some(Value::Bool(val)) = value.get("checkNaN") {
-                config.check_nan = *val;
-            }
-        }
-
-        Self(Box::new(config))
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -121,31 +118,44 @@ impl Rule for PreferNumberProperties {
             AstKind::IdentifierReference(ident_ref)
                 if ctx.is_reference_to_global_variable(ident_ref) =>
             {
-                if (ident_ref.name.as_str() == "NaN" && self.check_nan)
-                    || (ident_ref.name.as_str() == "Infinity" && self.check_infinity)
-                    || (matches!(
-                        ident_ref.name.as_str(),
-                        "isNaN" | "isFinite" | "parseFloat" | "parseInt"
-                    ) && matches!(
-                        ctx.nodes().parent_kind(node.id()),
-                        Some(AstKind::ObjectProperty(_))
-                    ))
+                let ident_name = ident_ref.name.as_str();
+                if (ident_name == "NaN" && self.check_nan)
+                    || (ident_name == "Infinity" && self.check_infinity)
+                    || (matches!(ident_name, "isNaN" | "isFinite" | "parseFloat" | "parseInt")
+                        && matches!(ctx.nodes().parent_kind(node.id()), AstKind::ObjectProperty(_)))
                 {
-                    let fixer = |fixer: RuleFixer<'_, 'a>| match ctx.nodes().parent_kind(node.id())
-                    {
-                        Some(AstKind::ObjectProperty(object_property))
-                            if object_property.shorthand =>
-                        {
-                            fixer.insert_text_before(
-                                &ident_ref.span,
-                                format!("{}: Number.", ident_ref.name.as_str()),
-                            )
+                    let (replacement_span, replacement_text) = if ident_name == "Infinity" {
+                        if let Some(unary) = find_ancestor_unary(node, ctx) {
+                            match unary.operator {
+                                UnaryOperator::UnaryNegation => {
+                                    (unary.span, "Number.NEGATIVE_INFINITY")
+                                }
+                                _ => (ident_ref.span, "Number.POSITIVE_INFINITY"),
+                            }
+                        } else {
+                            (ident_ref.span, "Number.POSITIVE_INFINITY")
                         }
-                        Some(_) => fixer.insert_text_before(&ident_ref.span, "Number."),
-                        None => unreachable!(),
+                    } else {
+                        (ident_ref.span, "")
                     };
 
-                    if ident_ref.name.as_str() == "isNaN" || ident_ref.name.as_str() == "isFinite" {
+                    let fixer = |fixer: RuleFixer<'_, 'a>| match ctx.nodes().parent_kind(node.id())
+                    {
+                        AstKind::ObjectProperty(prop)
+                            if prop.shorthand && ident_name == "Infinity" =>
+                        {
+                            fixer
+                                .insert_text_after(&ident_ref.span, format!(": {replacement_text}"))
+                        }
+                        AstKind::ObjectProperty(prop) if prop.shorthand => fixer
+                            .insert_text_before(&ident_ref.span, format!("{ident_name}: Number.")),
+                        _ if ident_name == "Infinity" => {
+                            fixer.replace(replacement_span, replacement_text)
+                        }
+                        _ => fixer.insert_text_before(&ident_ref.span, "Number."),
+                    };
+
+                    if ident_name == "isNaN" || ident_name == "isFinite" {
                         ctx.diagnostic_with_dangerous_fix(
                             prefer_number_properties_diagnostic(ident_ref.span, &ident_ref.name),
                             fixer,
@@ -164,20 +174,32 @@ impl Rule for PreferNumberProperties {
                 };
 
                 if matches!(ident_name, "isNaN" | "isFinite" | "parseFloat" | "parseInt") {
-                    if let Expression::Identifier(ident) = &call_expr.callee {
-                        if !ctx.is_reference_to_global_variable(ident) {
-                            return;
-                        }
+                    if let Expression::Identifier(ident) = &call_expr.callee
+                        && !ctx.is_reference_to_global_variable(ident)
+                    {
+                        return;
                     }
 
                     let fixer = |fixer: RuleFixer<'_, 'a>| match &call_expr.callee {
                         Expression::Identifier(ident) => {
-                            fixer.insert_text_before(&ident.span, "Number.")
+                            // Use replace on the full call expression span instead of insert_text_before.
+                            // This ensures the fix span overlaps with prefer_numeric_literals fixes,
+                            // so the fixer's conflict resolution will skip one of them instead of
+                            // applying both and producing invalid code like `Number.0o111`.
+                            let args_span = Span::new(ident.span.end, call_expr.span.end);
+                            let args_text = ctx.source_range(args_span);
+                            fixer.replace(call_expr.span, format!("Number.{ident_name}{args_text}"))
                         }
                         match_member_expression!(Expression) => {
                             let member_expr = call_expr.callee.to_member_expression();
+                            let mut args_span =
+                                Span::new(member_expr.span().end, call_expr.span.end);
+                            if let Some(s) = &call_expr.type_arguments {
+                                args_span = args_span.merge(s.span());
+                            }
+                            let args_text = ctx.source_range(args_span);
 
-                            fixer.replace(member_expr.object().span(), "Number")
+                            fixer.replace(call_expr.span, format!("Number.{ident_name}{args_text}"))
                         }
                         _ => unreachable!(),
                     };
@@ -204,6 +226,16 @@ impl Rule for PreferNumberProperties {
             _ => {}
         }
     }
+}
+
+/// Finds the nearest enclosing unary expression ancestor for `node`.
+fn find_ancestor_unary<'a>(
+    node: &AstNode<'a>,
+    ctx: &LintContext<'a>,
+) -> Option<&'a UnaryExpression<'a>> {
+    ctx.nodes().ancestor_kinds(node.id()).find_map(|ancestor| {
+        if let AstKind::UnaryExpression(unary_expr) = ancestor { Some(unary_expr) } else { None }
+    })
 }
 
 fn extract_ident_from_expression<'b>(expr: &'b Expression<'_>) -> Option<&'b str> {
@@ -470,7 +502,7 @@ function inner() {
 			const b = Number.parseFloat("10.5");
 			const c = Number.isNaN(10);
 			const d = Number.isFinite(10);"#,
-            None::<Value>,
+            None::<serde_json::Value>,
         ),
         ("const foo = NaN;", "const foo = Number.NaN;", None),
         ("if (Number.isNaN(NaN)) {}", "if (Number.isNaN(Number.NaN)) {}", None),
@@ -483,6 +515,42 @@ function inner() {
         ("class Foo3 {[NaN] = 1}", "class Foo3 {[Number.NaN] = 1}", None),
         ("class Foo2 {[NaN] = 1}", "class Foo2 {[Number.NaN] = 1}", None),
         ("class Foo {[NaN] = 1}", "class Foo {[Number.NaN] = 1}", None),
+        (
+            "const foo = Infinity;",
+            "const foo = Number.POSITIVE_INFINITY;",
+            Some(json!([{"checkInfinity":true}])),
+        ),
+        (
+            "const foo = -Infinity;",
+            "const foo = Number.NEGATIVE_INFINITY;",
+            Some(json!([{"checkInfinity":true}])),
+        ),
+        (
+            "const foo = -(Infinity);",
+            "const foo = Number.NEGATIVE_INFINITY;",
+            Some(json!([{"checkInfinity":true}])),
+        ),
+        (
+            "const foo = -((Infinity));",
+            "const foo = Number.NEGATIVE_INFINITY;",
+            Some(json!([{"checkInfinity":true}])),
+        ),
+        (
+            "let a = { Infinity, }",
+            "let a = { Infinity: Number.POSITIVE_INFINITY, }",
+            Some(json!([{"checkInfinity":true}])),
+        ),
+        (
+            "let a = (Infinity)",
+            "let a = (Number.POSITIVE_INFINITY)",
+            Some(json!([{"checkInfinity":true}])),
+        ),
+        (
+            "let a = +(Infinity)",
+            "let a = +(Number.POSITIVE_INFINITY)",
+            Some(json!([{"checkInfinity":true}])),
+        ),
+        (r#"parseInt("111", 8)"#, r#"Number.parseInt("111", 8)"#, None),
     ];
 
     Tester::new(PreferNumberProperties::NAME, PreferNumberProperties::PLUGIN, pass, fail)

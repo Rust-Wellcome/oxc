@@ -9,6 +9,8 @@ use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, Span};
 use oxc_syntax::precedence::GetPrecedence;
+use schemars::JsonSchema;
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::{AstNode, context::LintContext, rule::Rule, utils::is_same_member_expression};
@@ -22,10 +24,13 @@ fn operator_assignment_diagnostic(mode: Mode, span: Span, operator: &str) -> Oxc
     OxcDiagnostic::warn(msg).with_label(span)
 }
 
-#[derive(Debug, Default, PartialEq, Clone, Copy)]
+#[derive(Debug, Default, PartialEq, Clone, Copy, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
 enum Mode {
+    /// Requires assignment operator shorthand where possible.
     #[default]
     Always,
+    /// Disallows assignment operator shorthand.
     Never,
 }
 
@@ -35,7 +40,7 @@ impl Mode {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize)]
 pub struct OperatorAssignment {
     mode: Mode,
 }
@@ -85,31 +90,16 @@ declare_oxc_lint!(
     /// x = x + y;
     /// x.y = x.y / a.b;
     /// ```
-    ///
-    /// ### Options
-    ///
-    /// This rule has a single string option:
-    ///
-    /// `{ type: string, default: "always" }`
-    ///
-    /// * `always` requires assignment operator shorthand where possible
-    /// * `never` disallows assignment operator shorthand
-    ///
-    /// Example:
-    /// ```json
-    /// "eslint/max-nested-callbacks": ["error", "always"]
-    ///
-    /// "eslint/max-nested-callbacks": ["error", "never"]
-    /// ```
     OperatorAssignment,
     eslint,
     style,
-    fix_dangerous
+    fix_dangerous,
+    config = Mode,
 );
 
 impl Rule for OperatorAssignment {
-    fn from_configuration(value: Value) -> Self {
-        Self { mode: value.get(0).and_then(Value::as_str).map(Mode::from).unwrap_or_default() }
+    fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
+        Ok(Self { mode: value.get(0).and_then(Value::as_str).map(Mode::from).unwrap_or_default() })
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

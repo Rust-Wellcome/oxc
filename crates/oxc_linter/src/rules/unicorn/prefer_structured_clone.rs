@@ -7,13 +7,15 @@ use oxc_ast::{
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 use crate::{
     AstNode,
     ast_util::is_method_call,
     context::LintContext,
     fixer::{RuleFix, RuleFixer},
-    rule::Rule,
+    rule::{DefaultRuleConfig, Rule},
 };
 
 fn prefer_structured_clone_diagnostic(span: Span) -> OxcDiagnostic {
@@ -22,12 +24,20 @@ fn prefer_structured_clone_diagnostic(span: Span) -> OxcDiagnostic {
         .with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct PreferStructuredClone(Box<PreferStructuredCloneConfig>);
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct PreferStructuredCloneConfig {
-    allowed_functions: Vec<String>,
+    /// List of functions that are allowed to be used for deep cloning instead of structuredClone.
+    functions: Vec<String>,
+}
+
+impl Default for PreferStructuredCloneConfig {
+    fn default() -> Self {
+        Self { functions: vec!["cloneDeep".to_string(), "utils.clone".to_string()] }
+    }
 }
 
 impl Deref for PreferStructuredClone {
@@ -64,21 +74,12 @@ declare_oxc_lint!(
     unicorn,
     style,
     suggestion,
+    config = PreferStructuredCloneConfig,
 );
 
 impl Rule for PreferStructuredClone {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let config = value.get(0);
-
-        let allowed_functions = config
-            .and_then(|config| config.get("functions"))
-            .and_then(serde_json::Value::as_array)
-            .map(|v| {
-                v.iter().filter_map(serde_json::Value::as_str).map(ToString::to_string).collect()
-            })
-            .unwrap_or(vec![String::from("cloneDeep"), String::from("utils.clone")]);
-
-        Self(Box::new(PreferStructuredCloneConfig { allowed_functions }))
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -127,7 +128,7 @@ impl Rule for PreferStructuredClone {
                 |fixer| replace_with_structured_clone(fixer, call_expr, first_argument),
             );
         } else if let Some(first_argument) = call_expr.arguments[0].as_expression() {
-            for function in &self.allowed_functions {
+            for function in &self.functions {
                 if let Some((object, method)) = function.split_once('.') {
                     if is_method_call(call_expr, Some(&[object]), Some(&[method]), None, None) {
                         ctx.diagnostic_with_suggestion(
@@ -149,16 +150,16 @@ impl Rule for PreferStructuredClone {
     }
 }
 
-fn replace_with_structured_clone<'a>(
-    fixer: RuleFixer<'_, 'a>,
+fn replace_with_structured_clone(
+    fixer: RuleFixer<'_, '_>,
     call_expr: &CallExpression<'_>,
     first_argument: &Expression<'_>,
-) -> RuleFix<'a> {
+) -> RuleFix {
     let mut codegen = fixer.codegen();
     codegen.print_str("structuredClone(");
     codegen.print_expression(first_argument);
     codegen.print_str(")");
-    fixer.replace(call_expr.span, codegen)
+    fixer.replace(call_expr.span, codegen.into_source_text())
 }
 
 #[test]

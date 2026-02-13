@@ -2,9 +2,15 @@ use oxc_ast::AstKind;
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, Span};
+use schemars::JsonSchema;
+use serde::Deserialize;
 use serde_json::Value;
 
-use crate::{AstNode, context::LintContext, rule::Rule};
+use crate::{
+    AstNode,
+    context::LintContext,
+    rule::{DefaultRuleConfig, Rule},
+};
 
 fn no_return_assign_diagnostic(span: Span, message: &'static str) -> OxcDiagnostic {
     OxcDiagnostic::warn(message)
@@ -12,15 +18,24 @@ fn no_return_assign_diagnostic(span: Span, message: &'static str) -> OxcDiagnost
         .with_help("Did you mean to use `==` instead of `=`?")
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct NoReturnAssign {
-    always_disallow_assignment_in_return: bool,
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct NoReturnAssign(NoReturnAssignMode);
+
+#[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NoReturnAssignMode {
+    /// Disallow all assignments in return statements.
+    Always,
+    /// Allow assignments in return statements only if they are enclosed in parentheses.
+    /// This is the default mode.
+    #[default]
+    ExceptParens,
 }
 
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// Disallows assignment operators in return statements
+    /// Disallows assignment operators in return statements.
     ///
     /// ### Why is this bad?
     ///
@@ -44,7 +59,8 @@ declare_oxc_lint!(
     NoReturnAssign,
     eslint,
     style,
-    pending // TODO: add a suggestion
+    pending, // TODO: add a suggestion
+    config = NoReturnAssignMode,
 );
 
 fn is_sentinel_node(ast_kind: AstKind) -> bool {
@@ -56,49 +72,46 @@ fn is_sentinel_node(ast_kind: AstKind) -> bool {
 }
 
 impl Rule for NoReturnAssign {
-    fn from_configuration(value: Value) -> Self {
-        let always_disallow_assignment_in_return = value
-            .get(0)
-            .and_then(Value::as_str)
-            .map_or_else(|| false, |value| value != "except-parens");
-        Self { always_disallow_assignment_in_return }
+    fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
         let AstKind::AssignmentExpression(assign) = node.kind() else {
             return;
         };
-        if !self.always_disallow_assignment_in_return
-            && ctx
-                .nodes()
-                .parent_node(node.id())
-                .is_some_and(|node| node.kind().as_parenthesized_expression().is_some())
+
+        // Skip if mode is ExceptParens and the assignment is parenthesized
+        if matches!(self.0, NoReturnAssignMode::ExceptParens)
+            && ctx.nodes().parent_kind(node.id()).as_parenthesized_expression().is_some()
         {
             return;
         }
 
         let mut parent_node = ctx.nodes().parent_node(node.id());
-        while parent_node.is_some_and(|parent| !is_sentinel_node(parent.kind())) {
-            parent_node = ctx.nodes().parent_node(parent_node.unwrap().id());
+        while !is_sentinel_node(parent_node.kind()) {
+            if matches!(parent_node.kind(), AstKind::Program(_)) {
+                break;
+            }
+            parent_node = ctx.nodes().parent_node(parent_node.id());
         }
-        if let Some(parent) = parent_node {
-            match parent.kind() {
-                AstKind::ReturnStatement(_) => {
+
+        match parent_node.kind() {
+            AstKind::ReturnStatement(_) => {
+                ctx.diagnostic(no_return_assign_diagnostic(
+                    assign.span(),
+                    "Return statements should not contain an assignment.",
+                ));
+            }
+            AstKind::ArrowFunctionExpression(arrow) => {
+                if arrow.expression {
                     ctx.diagnostic(no_return_assign_diagnostic(
                         assign.span(),
-                        "Return statements should not contain an assignment.",
+                        "Arrow functions should not return an assignment.",
                     ));
                 }
-                AstKind::ArrowFunctionExpression(arrow) => {
-                    if arrow.expression {
-                        ctx.diagnostic(no_return_assign_diagnostic(
-                            assign.span(),
-                            "Arrow functions should not return an assignment.",
-                        ));
-                    }
-                }
-                _ => (),
             }
+            _ => (),
         }
     }
 }
@@ -206,4 +219,23 @@ fn test() {
     ];
 
     Tester::new(NoReturnAssign::NAME, NoReturnAssign::PLUGIN, pass, fail).test_and_snapshot();
+}
+
+#[test]
+fn invalid_configs_error_in_from_configuration() {
+    // An array with an object should produce an error, since the rule only accepts a string.
+    let invalid = serde_json::json!([{ "foo": "bar" }]);
+    assert!(NoReturnAssign::from_configuration(invalid).is_err());
+
+    // String that isn't one of the allowed options should produce an error
+    let invalid = serde_json::json!(["foobar"]);
+    assert!(NoReturnAssign::from_configuration(invalid).is_err());
+    let invalid = serde_json::json!(["ExceptParens"]);
+    assert!(NoReturnAssign::from_configuration(invalid).is_err());
+    let invalid = serde_json::json!(["Always"]);
+    assert!(NoReturnAssign::from_configuration(invalid).is_err());
+
+    // Valid configs should not produce an error
+    let valid = serde_json::json!(["except-parens"]);
+    assert!(NoReturnAssign::from_configuration(valid).is_ok());
 }

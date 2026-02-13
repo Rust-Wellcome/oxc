@@ -1,6 +1,7 @@
 ---
 source: crates/oxc_linter/src/tester.rs
 ---
+
   ⚠ typescript-eslint(no-empty-interface): an empty interface is equivalent to `{}`
    ╭─[no_empty_interface.tsx:1:1]
  1 │ interface Foo {}
@@ -10,6 +11,14 @@ source: crates/oxc_linter/src/tester.rs
   × Expected `{` but found `EOF`
    ╭─[no_empty_interface.tsx:1:25]
  1 │ interface Foo extends {}
+   ╰────
+
+  ⚠ typescript-eslint(no-empty-interface): an interface declaring no members is equivalent to its supertype
+   ╭─[no_empty_interface.tsx:6:4]
+ 5 │ 
+ 6 │             interface Bar extends Foo {}
+   ·             ────────────────────────────
+ 7 │ 
    ╰────
 
   ⚠ typescript-eslint(no-empty-interface): an interface declaring no members is equivalent to its supertype

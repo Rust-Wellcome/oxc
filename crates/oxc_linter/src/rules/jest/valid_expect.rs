@@ -4,6 +4,7 @@ use oxc_ast::{AstKind, ast::Expression};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, Span};
+use schemars::JsonSchema;
 
 use crate::{
     AstNode,
@@ -23,11 +24,16 @@ fn valid_expect_diagnostic<S: Into<Cow<'static, str>>>(
 #[derive(Debug, Default, Clone)]
 pub struct ValidExpect(Box<ValidExpectConfig>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
 pub struct ValidExpectConfig {
+    /// List of matchers that are considered async and therefore require awaiting (e.g. `toResolve`, `toReject`).
     async_matchers: Vec<String>,
+    /// Minimum number of arguments `expect` should be called with.
     min_args: usize,
+    /// Maximum number of arguments `expect` should be called with.
     max_args: usize,
+    /// When `true`, async assertions must be awaited in all contexts (not just return statements).
     always_await: bool,
 }
 
@@ -78,8 +84,8 @@ declare_oxc_lint!(
     /// expect(Promise.resolve('Hi!')).resolves.toBe('Hi!');
     /// ```
     ///
-    /// This rule is compatible with [eslint-plugin-vitest](https://github.com/veritem/eslint-plugin-vitest/blob/v1.1.9/docs/rules/valid-expect.md),
-    /// to use it, add the following configuration to your `.eslintrc.json`:
+    /// This rule is compatible with [eslint-plugin-vitest](https://github.com/vitest-dev/eslint-plugin-vitest/blob/v1.1.9/docs/rules/valid-expect.md),
+    /// to use it, add the following configuration to your `.oxlintrc.json`:
     ///
     /// ```json
     /// {
@@ -90,11 +96,12 @@ declare_oxc_lint!(
     /// ```
     ValidExpect,
     jest,
-    correctness
+    correctness,
+    config = ValidExpectConfig,
 );
 
 impl Rule for ValidExpect {
-    fn from_configuration(value: serde_json::Value) -> Self {
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
         let default_async_matchers = vec![String::from("toResolve"), String::from("toReject")];
         let config = value.get(0);
 
@@ -121,7 +128,7 @@ impl Rule for ValidExpect {
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
 
-        Self(Box::new(ValidExpectConfig { async_matchers, min_args, max_args, always_await }))
+        Ok(Self(Box::new(ValidExpectConfig { async_matchers, min_args, max_args, always_await })))
     }
 
     fn run_on_jest_node<'a, 'b>(
@@ -199,15 +206,13 @@ impl ValidExpect {
             return;
         };
 
-        let Some(parent) = ctx.nodes().parent_node(node.id()) else {
-            return;
-        };
+        let parent = ctx.nodes().parent_node(node.id());
 
         let should_be_awaited =
             jest_fn_call.modifiers().iter().any(|modifier| modifier.is_name_unequal("not"))
                 || self.async_matchers.contains(&matcher_name.to_string());
 
-        if ctx.nodes().parent_node(parent.id()).is_none() || !should_be_awaited {
+        if matches!(parent.kind(), AstKind::Program(_)) || !should_be_awaited {
             return;
         }
 
@@ -218,9 +223,7 @@ impl ValidExpect {
         let Some(final_node) = find_promise_call_expression_node(node, ctx, target_node) else {
             return;
         };
-        let Some(parent) = ctx.nodes().parent_node(final_node.id()) else {
-            return;
-        };
+        let parent = ctx.nodes().parent_node(final_node.id());
         if !is_acceptable_return_node(parent, !self.always_await, ctx) {
             let span;
             let (error, help) = if target_node.id() == final_node.id() {
@@ -249,7 +252,7 @@ fn find_top_most_member_expression<'a, 'b>(
     let mut node = node;
 
     loop {
-        let parent = ctx.nodes().parent_node(node.id())?;
+        let parent = ctx.nodes().parent_node(node.id());
         match node.kind() {
             member_expr if member_expr.is_member_expression_kind() => {
                 top_most_member_expression = Some(member_expr);
@@ -279,13 +282,9 @@ fn is_acceptable_return_node<'a, 'b>(
 
         match node.kind() {
             AstKind::ConditionalExpression(_)
-            | AstKind::Argument(_)
             | AstKind::ExpressionStatement(_)
             | AstKind::FunctionBody(_) => {
-                let Some(parent) = ctx.nodes().parent_node(node.id()) else {
-                    return false;
-                };
-                node = parent;
+                node = ctx.nodes().parent_node(node.id());
             }
             AstKind::ArrowFunctionExpression(arrow_expr) => return arrow_expr.expression,
             AstKind::AwaitExpression(_) => return true,
@@ -296,6 +295,29 @@ fn is_acceptable_return_node<'a, 'b>(
 
 type ParentAndIsFirstItem<'a, 'b> = (&'b AstNode<'a>, bool);
 
+/// Checks if a node should be skipped during parent traversal
+fn should_skip_parent_node(node: &AstNode, parent: &AstNode) -> bool {
+    match parent.kind() {
+        AstKind::CallExpression(call) => {
+            // Don't skip arguments to Promise methods - they're semantically important for await detection
+            if let Some(member_expr) = call.callee.as_member_expression()
+                && let Expression::Identifier(ident) = member_expr.object()
+                && ident.name == "Promise"
+            {
+                return false; // Never skip Promise method arguments
+            }
+
+            // For other call expressions, skip if this node is one of the arguments
+            call.arguments.iter().any(|arg| arg.span() == node.span())
+        }
+        AstKind::NewExpression(new_expr) => {
+            // Skip if this node is one of the new expression arguments
+            new_expr.arguments.iter().any(|arg| arg.span() == node.span())
+        }
+        _ => false,
+    }
+}
+
 // Returns the parent node of the given node, ignoring some nodes,
 // and return whether the first item if parent is an array.
 fn get_parent_with_ignore<'a, 'b>(
@@ -304,8 +326,8 @@ fn get_parent_with_ignore<'a, 'b>(
 ) -> Option<ParentAndIsFirstItem<'a, 'b>> {
     let mut node = node;
     loop {
-        let parent = ctx.nodes().parent_node(node.id())?;
-        if !matches!(parent.kind(), AstKind::Argument(_)) {
+        let parent = ctx.nodes().parent_node(node.id());
+        if !should_skip_parent_node(node, parent) {
             // we don't want to report `Promise.all([invalidExpectCall_1, invalidExpectCall_2])` twice.
             // so we need mark whether the node is the first item of an array.
             // if it not the first item, we ignore it in `find_promise_call_expression_node`.
@@ -343,19 +365,16 @@ fn find_promise_call_expression_node<'a, 'b>(
         parent = grandparent;
     }
 
-    if let AstKind::CallExpression(call_expr) = parent.kind() {
-        if let Some(member_expr) = call_expr.callee.as_member_expression() {
-            if let Expression::Identifier(ident) = member_expr.object() {
-                if matches!(ident.name.as_str(), "Promise")
-                    && ctx.nodes().parent_node(parent.id()).is_some()
-                {
-                    if is_first_array_item {
-                        return Some(parent);
-                    }
-                    return None;
-                }
-            }
+    if let AstKind::CallExpression(call_expr) = parent.kind()
+        && let Some(member_expr) = call_expr.callee.as_member_expression()
+        && let Expression::Identifier(ident) = member_expr.object()
+        && matches!(ident.name.as_str(), "Promise")
+        && !matches!(parent.kind(), AstKind::Program(_))
+    {
+        if is_first_array_item {
+            return Some(parent);
         }
+        return None;
     }
 
     Some(default_node)
@@ -365,12 +384,7 @@ fn get_parent_if_thenable<'a, 'b>(
     node: &'b AstNode<'a>,
     ctx: &'b LintContext<'a>,
 ) -> &'b AstNode<'a> {
-    let grandparent =
-        ctx.nodes().parent_node(node.id()).and_then(|node| ctx.nodes().parent_node(node.id()));
-
-    let Some(grandparent) = grandparent else {
-        return node;
-    };
+    let grandparent = ctx.nodes().parent_node(ctx.nodes().parent_id(node.id()));
     let AstKind::CallExpression(call_expr) = grandparent.kind() else {
         return node;
     };
@@ -564,6 +578,9 @@ fn test() {
         ("test('valid-expect', () => { expect(Promise.reject(2)).toRejectWith(2); });", Some(serde_json::json!([{ "asyncMatchers": ["toResolveWith"] }]))),
         ("test('valid-expect', async () => { await expect(Promise.resolve(2)).toResolve(); });", Some(serde_json::json!([{ "asyncMatchers": ["toResolveWith"] }]))),
         ("test('valid-expect', async () => { expect(Promise.resolve(2)).toResolve(); });", Some(serde_json::json!([{ "asyncMatchers": ["toResolveWith"] }]))),
+        (
+        "import { describe, expect, it } from 'vitest'; async function runCaseInWorker(type, props) { await runCase({ type, props }, expect); }", None
+        )
     ];
 
     let mut fail = vec![

@@ -5,7 +5,7 @@ use oxc_ast::ast::Program;
 use oxc_codegen::{Codegen, CodegenOptions, CodegenReturn};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_isolated_declarations::{IsolatedDeclarations, IsolatedDeclarationsOptions};
-use oxc_mangler::{MangleOptions, Mangler};
+use oxc_mangler::{MangleOptions, Mangler, ManglerReturn};
 use oxc_minifier::{CompressOptions, Compressor};
 use oxc_parser::{ParseOptions, Parser, ParserReturn};
 use oxc_semantic::{Scoping, SemanticBuilder, SemanticBuilderReturn};
@@ -92,10 +92,6 @@ pub trait CompilerInterface {
 
     fn check_semantic_error(&self) -> bool {
         true
-    }
-
-    fn semantic_child_scope_ids(&self) -> bool {
-        false
     }
 
     fn after_parse(&mut self, _parser_return: &mut ParserReturn) -> ControlFlow<()> {
@@ -185,18 +181,15 @@ pub trait CompilerInterface {
         }
 
         if let Some(options) = define_options {
-            let _ret = ReplaceGlobalDefines::new(&allocator, options).build(scoping, &mut program);
+            let ret = ReplaceGlobalDefines::new(&allocator, options).build(scoping, &mut program);
+            scoping = ret.scoping;
             // Run DCE if minification is disabled.
             if self.compress_options().is_none() {
-                // Rebuild semantic because define plugin changed the AST.
-                // DCE assumes semantic data to be correct, it will crash otherwise.
-                scoping = SemanticBuilder::new()
-                    .with_stats(stats)
-                    .build(&program)
-                    .semantic
-                    .into_scoping();
-                Compressor::new(&allocator, CompressOptions::default())
-                    .dead_code_elimination_with_scoping(scoping, &mut program);
+                Compressor::new(&allocator).dead_code_elimination_with_scoping(
+                    &mut program,
+                    scoping,
+                    CompressOptions::dce(),
+                );
             }
         }
 
@@ -235,10 +228,7 @@ pub trait CompilerInterface {
             builder = builder.with_excess_capacity(2.0);
         }
 
-        builder
-            .with_check_syntax_error(self.check_semantic_error())
-            .with_scope_tree_child_ids(self.semantic_child_scope_ids())
-            .build(program)
+        builder.with_check_syntax_error(self.check_semantic_error()).build(program)
     }
 
     fn isolated_declaration<'a>(
@@ -276,10 +266,10 @@ pub trait CompilerInterface {
         program: &mut Program<'a>,
         options: CompressOptions,
     ) {
-        Compressor::new(allocator, options).build(program);
+        Compressor::new(allocator).build(program, options);
     }
 
-    fn mangle(&self, program: &mut Program<'_>, options: MangleOptions) -> Scoping {
+    fn mangle(&self, program: &mut Program<'_>, options: MangleOptions) -> ManglerReturn {
         Mangler::new().with_options(options).build(program)
     }
 
@@ -287,13 +277,20 @@ pub trait CompilerInterface {
         &self,
         program: &Program<'_>,
         source_path: &Path,
-        scoping: Option<Scoping>,
+        mangler_return: Option<ManglerReturn>,
         options: CodegenOptions,
     ) -> CodegenReturn {
         let mut options = options;
         if self.enable_sourcemap() {
             options.source_map_path = Some(source_path.to_path_buf());
         }
-        Codegen::new().with_options(options).with_scoping(scoping).build(program)
+        let (scoping, class_private_mappings) = mangler_return
+            .map(|m| (Some(m.scoping), Some(m.class_private_mappings)))
+            .unwrap_or_default();
+        Codegen::new()
+            .with_options(options)
+            .with_scoping(scoping)
+            .with_private_member_mappings(class_private_mappings)
+            .build(program)
     }
 }

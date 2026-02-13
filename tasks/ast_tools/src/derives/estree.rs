@@ -87,7 +87,6 @@ impl Derive for DeriveESTree {
 
 /// Parse `#[estree]` attr.
 fn parse_estree_attr(location: AttrLocation, part: AttrPart) -> Result<()> {
-    // No need to check attr name is `estree`, because that's the only attribute this derive handles
     match location {
         // `#[estree]` attr on struct
         AttrLocation::Struct(struct_def) => match part {
@@ -95,6 +94,7 @@ fn parse_estree_attr(location: AttrLocation, part: AttrPart) -> Result<()> {
             AttrPart::Tag("flatten") => struct_def.estree.flatten = true,
             AttrPart::Tag("no_type") => struct_def.estree.no_type = true,
             AttrPart::Tag("no_ts_def") => struct_def.estree.no_ts_def = true,
+            AttrPart::Tag("no_parent") => struct_def.estree.no_parent = true,
             AttrPart::List("add_fields", list) => {
                 for list_element in list {
                     let (name, value) = list_element.try_into_string()?;
@@ -263,9 +263,9 @@ fn prepare_field_orders(schema: &mut Schema, estree_derive_id: DeriveId) {
             // No field order specified with `#[estree(field_order(...))]`.
             // Default field order is:
             // 1. `type` field (if present)
-            // 2. `span` field (if present)
-            // 3. Struct fields, in definition order.
-            // 4. Extra fields (`#[estree(add_fields(...)]`), in order.
+            // 2. Struct fields, in definition order.
+            // 3. Extra fields (`#[estree(add_fields(...)]`), in order.
+            // 4. `span` field (if present)
             let mut field_indices = vec![];
             let mut type_field_index = None;
             let mut span_field_index = None;
@@ -280,9 +280,6 @@ fn prepare_field_orders(schema: &mut Schema, estree_derive_id: DeriveId) {
                 }
             }
 
-            if let Some(span_field_index) = span_field_index {
-                field_indices.insert(0, span_field_index);
-            }
             if let Some(type_field_index) = type_field_index {
                 field_indices.insert(0, type_field_index);
             }
@@ -293,6 +290,10 @@ fn prepare_field_orders(schema: &mut Schema, estree_derive_id: DeriveId) {
                     u8::try_from(struct_def.fields.len() + struct_def.estree.add_fields.len() - 1)
                         .unwrap();
                 field_indices.extend(first_index..=last_index);
+            }
+
+            if let Some(span_field_index) = span_field_index {
+                field_indices.push(span_field_index);
             }
 
             let struct_def = schema.struct_def_mut(type_id);
@@ -375,28 +376,11 @@ fn generate_body_for_struct(struct_def: &StructDef, schema: &Schema) -> TokenStr
         quote!()
     };
 
-    // Check if struct has a span field for range support
-    let has_span_field = struct_def.fields.iter().any(|field| field.name() == "span");
-    let (range_declaration, range_field) = if has_span_field {
-        (
-            quote!( let ranges = serializer.ranges(); ),
-            quote! {
-                if ranges {
-                    state.serialize_field("range", &[self.span.start, self.span.end]);
-                }
-            },
-        )
-    } else {
-        (quote!(), quote!())
-    };
-
     let stmts = g.stmts;
     quote! {
-        #range_declaration
         let mut state = serializer.serialize_struct();
         #type_field
         #stmts
-        #range_field
         state.end();
     }
 }
@@ -447,6 +431,13 @@ impl<'s> StructSerializerGenerator<'s> {
         self_path: &TokenStream,
     ) {
         if should_skip_field(field, self.schema) {
+            return;
+        }
+
+        if field.name() == "span" {
+            self.stmts.extend(quote! {
+                state.serialize_span(#self_path.span);
+            });
             return;
         }
 
@@ -507,7 +498,9 @@ impl<'s> StructSerializerGenerator<'s> {
             let value = match field.type_def(self.schema) {
                 TypeDef::Primitive(primitive_def) => match primitive_def.name() {
                     "&str" => Some(quote!( JsonSafeString(#self_path.#field_name_ident) )),
-                    "Atom" => Some(quote!( JsonSafeString(#self_path.#field_name_ident.as_str()) )),
+                    "Atom" | "Ident" => {
+                        Some(quote!( JsonSafeString(#self_path.#field_name_ident.as_str()) ))
+                    }
                     _ => None,
                 },
                 TypeDef::Option(option_def) => option_def
@@ -517,7 +510,7 @@ impl<'s> StructSerializerGenerator<'s> {
                         "&str" => Some(quote! {
                             #self_path.#field_name_ident.map(|s| JsonSafeString(s))
                         }),
-                        "Atom" => Some(quote! {
+                        "Atom" | "Ident" => Some(quote! {
                             #self_path.#field_name_ident.map(|s| JsonSafeString(s.as_str()))
                         }),
                         _ => None,
@@ -527,7 +520,7 @@ impl<'s> StructSerializerGenerator<'s> {
 
             value.unwrap_or_else(|| {
                 panic!(
-                    "`#[estree(json_safe)]` is only valid on struct fields containing a `&str` or `Atom`: {}::{}",
+                    "`#[estree(json_safe)]` is only valid on struct fields containing a `&str`, `Atom`, or `Ident`: {}::{}",
                     struct_def.name(),
                     field.name(),
                 )

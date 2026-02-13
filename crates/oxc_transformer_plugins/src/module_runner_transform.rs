@@ -38,12 +38,12 @@
 //! There are few problems to integrate this transform into the main transformer:
 //!
 //! 1. In Vite, it will collect import deps and dynamic import deps during the transform process, and return them
-//! at the end of function. We can do this, but how to pass them into the js side?
+//!    at the end of function. We can do this, but how to pass them into the js side?
 //!
 //! 2. In case other plugins will insert imports/exports, we must transform them in `exit_program`, but it will pose
-//! another problem: how to transform identifiers which refer to imports? We must collect some information from imports,
-//! but it is already at the end of the visitor. To solve this, we may introduce a new visitor to transform identifiers,
-//! dynamic imports, and import meta.
+//!    another problem: how to transform identifiers which refer to imports? We must collect some information from imports,
+//!    but it is already at the end of the visitor. To solve this, we may introduce a new visitor to transform identifiers,
+//!    dynamic imports, and import meta.
 
 use std::iter;
 
@@ -54,7 +54,7 @@ use oxc_allocator::{Allocator, Box as ArenaBox, TakeIn, Vec as ArenaVec};
 use oxc_ast::{NONE, ast::*};
 use oxc_ecmascript::BoundNames;
 use oxc_semantic::{ReferenceFlags, ScopeFlags, Scoping, SymbolFlags, SymbolId};
-use oxc_span::SPAN;
+use oxc_span::{Ident, SPAN};
 use oxc_syntax::identifier::is_identifier_name;
 use oxc_traverse::{Ancestor, BoundIdentifier, Traverse, traverse_mut};
 
@@ -327,13 +327,12 @@ impl<'a> ModuleRunnerTransform<'a> {
 
                 // Reuse the `vue` binding identifier by renaming it to `__vite_ssr_import_0__`
                 let mut local = specifier.unbox().local;
-                local.name = self.generate_import_binding_name(ctx);
+                local.name = self.generate_import_binding_name(ctx).into();
                 let binding = BoundIdentifier::from_binding_ident(&local);
-                ctx.scoping_mut().set_symbol_name(binding.symbol_id, &binding.name);
+                ctx.scoping_mut().set_symbol_name(binding.symbol_id, Ident::from(binding.name));
                 self.import_bindings.insert(binding.symbol_id, (binding, None));
 
-                let kind = BindingPatternKind::BindingIdentifier(ctx.alloc(local));
-                ctx.ast.binding_pattern(kind, NONE, false)
+                BindingPattern::BindingIdentifier(ctx.alloc(local))
             } else {
                 let binding = self.generate_import_binding(ctx);
                 arguments.push(self.transform_import_specifiers(&binding, specifiers, ctx));
@@ -550,7 +549,7 @@ impl<'a> ModuleRunnerTransform<'a> {
         export: ArenaBox<'a, ExportDefaultDeclaration<'a>>,
         ctx: &mut TraverseCtx<'a>,
     ) {
-        let ExportDefaultDeclaration { span, declaration, .. } = export.unbox();
+        let ExportDefaultDeclaration { span, declaration } = export.unbox();
         let expr = match declaration {
             ExportDefaultDeclarationKind::FunctionDeclaration(mut func) => {
                 if let Some(id) = &func.id {
@@ -625,11 +624,11 @@ impl<'a> ModuleRunnerTransform<'a> {
         let BindingIdentifier { name, symbol_id, .. } = ident;
 
         let scopes = ctx.scoping_mut();
-        scopes.remove_binding(scopes.root_scope_id(), &name);
+        scopes.remove_binding(scopes.root_scope_id(), name);
 
         let symbol_id = symbol_id.get().unwrap();
         // Do not need to insert if there no identifiers that point to this symbol
-        if !ctx.scoping().get_resolved_reference_ids(symbol_id).is_empty() {
+        if !ctx.scoping().symbol_is_unused(symbol_id) {
             self.import_bindings.insert(symbol_id, (binding.clone(), Some(key)));
         }
 
@@ -693,7 +692,7 @@ impl<'a> ModuleRunnerTransform<'a> {
         let init = ctx.ast.expression_await(SPAN, call);
 
         let kind = VariableDeclarationKind::Const;
-        let declarator = ctx.ast.variable_declarator(SPAN, kind, pattern, Some(init), false);
+        let declarator = ctx.ast.variable_declarator(SPAN, kind, pattern, NONE, Some(init), false);
         let declaration = ctx.ast.declaration_variable(span, kind, ctx.ast.vec1(declarator), false);
         Statement::from(declaration)
     }
@@ -738,7 +737,7 @@ impl<'a> ModuleRunnerTransform<'a> {
         let body = ctx.ast.function_body(SPAN, ctx.ast.vec(), ctx.ast.vec1(statement));
         let r#type = FunctionType::FunctionExpression;
         let scope_id = ctx.create_child_scope(ctx.scoping().root_scope_id(), ScopeFlags::Function);
-        ctx.ast.expression_function_with_scope_id_and_pure(
+        ctx.ast.expression_function_with_scope_id_and_pure_and_pife(
             SPAN,
             r#type,
             None,
@@ -751,6 +750,7 @@ impl<'a> ModuleRunnerTransform<'a> {
             NONE,
             Some(body),
             scope_id,
+            false,
             false,
         )
     }
@@ -806,7 +806,7 @@ impl<'a> ModuleRunnerTransform<'a> {
         );
         let pattern = binding.create_binding_pattern(ctx);
         let kind = VariableDeclarationKind::Const;
-        let declarator = ctx.ast.variable_declarator(SPAN, kind, pattern, Some(right), false);
+        let declarator = ctx.ast.variable_declarator(SPAN, kind, pattern, NONE, Some(right), false);
         let declaration = ctx.ast.declaration_variable(span, kind, ctx.ast.vec1(declarator), false);
         Statement::from(declaration)
     }
@@ -849,10 +849,9 @@ mod test {
     use std::path::Path;
 
     use rustc_hash::FxHashSet;
-    use similar::TextDiff;
 
     use oxc_allocator::Allocator;
-    use oxc_codegen::{Codegen, CodegenOptions};
+    use oxc_codegen::{Codegen, CodegenOptions, CommentOptions};
     use oxc_diagnostics::OxcDiagnostic;
     use oxc_parser::Parser;
     use oxc_semantic::SemanticBuilder;
@@ -889,7 +888,7 @@ mod test {
         }
         let code = Codegen::new()
             .with_options(CodegenOptions {
-                comments: false,
+                comments: CommentOptions::disabled(),
                 single_quote: true,
                 ..CodegenOptions::default()
             })
@@ -903,10 +902,11 @@ mod test {
         let source_type = SourceType::default();
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, source_text, source_type).parse();
+        assert!(ret.errors.is_empty());
 
         Codegen::new()
             .with_options(CodegenOptions {
-                comments: false,
+                comments: CommentOptions::disabled(),
                 single_quote: true,
                 ..CodegenOptions::default()
             })
@@ -919,8 +919,7 @@ mod test {
         let expected = format_expected_code(expected);
         let result = transform(source_text, false).unwrap().code;
         if result != expected {
-            let diff = TextDiff::from_lines(&expected, &result);
-            print_diff_in_terminal(&diff);
+            print_diff_in_terminal(&expected, &result);
             panic!("Expected code does not match the result");
         }
     }
@@ -930,8 +929,7 @@ mod test {
         let expected = format_expected_code(expected);
         let result = transform(source_text, true).unwrap().code;
         if result != expected {
-            let diff = TextDiff::from_lines(&expected, &result);
-            print_diff_in_terminal(&diff);
+            print_diff_in_terminal(&expected, &result);
             panic!("Expected code does not match the result");
         }
     }
@@ -942,8 +940,7 @@ mod test {
         let TransformReturn { code, deps: result_deps, dynamic_deps: result_dynamic_deps } =
             transform(source_text, false).unwrap();
         if code != expected {
-            let diff = TextDiff::from_lines(&expected, &code);
-            print_diff_in_terminal(&diff);
+            print_diff_in_terminal(&expected, &code);
             panic!("Expected code does not match the result");
         }
         for dep in deps {
@@ -1927,9 +1924,9 @@ Object.defineProperty(__vite_ssr_exports__, 'default', {
                return __vite_ssr_export_default__;
        }
 });
-const __vite_ssr_export_default__ = function getRandom() {
+const __vite_ssr_export_default__ = (function getRandom() {
   return Math.random();
-};
+});
 ",
         );
 

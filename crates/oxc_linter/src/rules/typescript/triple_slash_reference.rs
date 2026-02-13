@@ -1,15 +1,14 @@
-use oxc_ast::{
-    AstKind,
-    ast::{Statement, TSModuleReference},
-};
+use oxc_ast::ast::{Statement, TSModuleReference};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, Span};
 use rustc_hash::FxHashMap;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     context::{ContextHost, LintContext},
-    rule::Rule,
+    rule::{DefaultRuleConfig, Rule},
 };
 
 fn triple_slash_reference_diagnostic(ref_kind: &str, span: Span) -> OxcDiagnostic {
@@ -18,32 +17,56 @@ fn triple_slash_reference_diagnostic(ref_kind: &str, span: Span) -> OxcDiagnosti
         .with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct TripleSlashReference(Box<TripleSlashReferenceConfig>);
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct TripleSlashReferenceConfig {
+    /// What to enforce for `/// <reference lib="..." />` references.
     lib: LibOption,
+    /// What to enforce for `/// <reference path="..." />` references.
     path: PathOption,
+    /// What to enforce for `/// <reference types="..." />` references.
     types: TypesOption,
 }
-#[derive(Debug, Default, Clone, PartialEq)]
+
+#[derive(Debug, Default, Clone, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
 enum LibOption {
+    /// Allow triple-slash `lib` references.
     #[default]
     Always,
+    /// Disallow triple-slash `lib` references.
     Never,
 }
-#[derive(Debug, Default, Clone, PartialEq)]
+
+#[derive(Debug, Default, Clone, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
 enum PathOption {
+    /// Allow triple-slash `path` references.
     Always,
     #[default]
+    /// Disallow triple-slash `path` references.
     Never,
 }
-#[derive(Debug, Default, Clone, PartialEq)]
+
+#[derive(Debug, Default, Clone, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
 enum TypesOption {
+    /// Allow triple-slash `types` references.
     Always,
+    /// Disallow triple-slash `types` references.
     Never,
     #[default]
+    /// Prefer ES module import declarations over triple-slash `types` references.
+    /// This option only reports when there is an existing `import` declaration for the same module.
+    ///
+    /// For example, this would be reported as a lint violation with `prefer-import`:
+    /// ```ts
+    /// /// <reference types="foo" />
+    /// import { bar } from 'foo';
+    /// ```
     PreferImport,
 }
 
@@ -58,7 +81,7 @@ impl std::ops::Deref for TripleSlashReference {
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// Disallow certain triple slash directives in favor of ES6-style import declarations.
+    /// Disallow certain triple slash directives in favor of ES module import declarations.
     ///
     /// ### Why is this bad?
     ///
@@ -73,46 +96,17 @@ declare_oxc_lint!(
     /// ```
     TripleSlashReference,
     typescript,
-    correctness
+    correctness,
+    config = TripleSlashReferenceConfig,
 );
 
 impl Rule for TripleSlashReference {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let options: Option<&serde_json::Value> = value.get(0);
-        Self(Box::new(TripleSlashReferenceConfig {
-            lib: options
-                .and_then(|x| x.get("lib"))
-                .and_then(serde_json::Value::as_str)
-                .map_or_else(LibOption::default, |value| match value {
-                    "always" => LibOption::Always,
-                    "never" => LibOption::Never,
-                    _ => LibOption::default(),
-                }),
-            path: options
-                .and_then(|x| x.get("path"))
-                .and_then(serde_json::Value::as_str)
-                .map_or_else(PathOption::default, |value| match value {
-                    "always" => PathOption::Always,
-                    "never" => PathOption::Never,
-                    _ => PathOption::default(),
-                }),
-            types: options
-                .and_then(|x| x.get("types"))
-                .and_then(serde_json::Value::as_str)
-                .map_or_else(TypesOption::default, |value| match value {
-                    "always" => TypesOption::Always,
-                    "never" => TypesOption::Never,
-                    "prefer-import" => TypesOption::PreferImport,
-                    _ => TypesOption::default(),
-                }),
-        }))
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run_once(&self, ctx: &LintContext) {
-        let Some(root) = ctx.nodes().root_node() else {
-            return;
-        };
-        let AstKind::Program(program) = root.kind() else { unreachable!() };
+        let program = ctx.nodes().program();
 
         // We don't need to iterate over all comments since Triple-slash directives are only valid at the top of their containing file.
         // We are trying to get the first statement start potioin, falling back to the program end if statement does not exist

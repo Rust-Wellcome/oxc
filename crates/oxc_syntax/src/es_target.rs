@@ -7,7 +7,6 @@ use cow_utils::CowUtils;
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 #[expect(missing_docs)]
 pub enum ESTarget {
-    ES5,
     ES2015,
     ES2016,
     ES2017,
@@ -19,6 +18,7 @@ pub enum ESTarget {
     ES2023,
     ES2024,
     ES2025,
+    ES2026,
     #[default]
     ESNext,
 }
@@ -28,7 +28,7 @@ impl FromStr for ESTarget {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.cow_to_ascii_lowercase().as_ref() {
-            "es5" => Ok(Self::ES5),
+            "es5" => Err(String::from("ES5 is not yet supported.")),
             "es6" | "es2015" => Ok(Self::ES2015),
             "es2016" => Ok(Self::ES2016),
             "es2017" => Ok(Self::ES2017),
@@ -40,6 +40,7 @@ impl FromStr for ESTarget {
             "es2023" => Ok(Self::ES2023),
             "es2024" => Ok(Self::ES2024),
             "es2025" => Ok(Self::ES2025),
+            "es2026" => Ok(Self::ES2026),
             "esnext" => Ok(Self::ESNext),
             _ => Err(format!("Invalid target \"{s}\".")),
         }
@@ -49,7 +50,6 @@ impl FromStr for ESTarget {
 impl fmt::Display for ESTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            Self::ES5 => "es5",
             Self::ES2015 => "es2015",
             Self::ES2016 => "es2016",
             Self::ES2017 => "es2017",
@@ -61,6 +61,7 @@ impl fmt::Display for ESTarget {
             Self::ES2023 => "es2023",
             Self::ES2024 => "es2024",
             Self::ES2025 => "es2025",
+            Self::ES2026 => "es2026",
             Self::ESNext => "esnext",
         };
         f.write_str(s)

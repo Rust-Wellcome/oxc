@@ -69,8 +69,8 @@ pub fn wrap_statements_in_arrow_function_iife<'a>(
     let kind = FormalParameterKind::ArrowFormalParameters;
     let params = ctx.ast.alloc_formal_parameters(SPAN, kind, ctx.ast.vec(), NONE);
     let body = ctx.ast.alloc_function_body(SPAN, ctx.ast.vec(), stmts);
-    let arrow = ctx.ast.expression_arrow_function_with_scope_id_and_pure(
-        SPAN, false, false, NONE, params, NONE, body, scope_id, false,
+    let arrow = ctx.ast.expression_arrow_function_with_scope_id_and_pure_and_pife(
+        SPAN, false, false, NONE, params, NONE, body, scope_id, false, false,
     );
     ctx.ast.expression_call(span, arrow, NONE, ctx.ast.vec(), false)
 }
@@ -163,9 +163,10 @@ pub fn create_class_constructor<'a, 'c>(
     let mut params_rest = None;
     let stmts = if has_super_class {
         let args_binding = ctx.generate_uid("args", scope_id, SymbolFlags::FunctionScopedVariable);
-        params_rest = Some(
-            ctx.ast.alloc_binding_rest_element(SPAN, args_binding.create_binding_pattern(ctx)),
-        );
+        let rest_element =
+            ctx.ast.binding_rest_element(SPAN, args_binding.create_binding_pattern(ctx));
+        params_rest =
+            Some(ctx.ast.alloc_formal_parameter_rest(SPAN, ctx.ast.vec(), rest_element, NONE));
         ctx.ast.vec_from_iter(
             iter::once(ctx.ast.statement_expression(SPAN, create_super_call(&args_binding, ctx)))
                 .chain(stmts_iter),

@@ -1,73 +1,68 @@
+// Ignore dead code warnings when building `tasks/website`, which disables `napi` Cargo feature
+#![cfg_attr(not(feature = "napi"), allow(dead_code))]
+
 mod command;
+mod config_loader;
+mod init;
 mod lint;
+mod lsp;
+mod mode;
 mod output_formatter;
 mod result;
-mod runner;
-mod tester;
 mod walk;
 
+#[cfg(test)]
+mod tester;
+
+/// Re-exported CLI-related items for use in `tasks/website`.
 pub mod cli {
-    pub use crate::{command::*, lint::LintRunner, result::CliRunResult, runner::Runner};
+    pub use super::{command::*, init::*, lint::CliRunner, lsp::run_lsp, result::CliRunResult};
 }
 
-#[cfg(all(feature = "allocator", not(miri), not(target_family = "wasm")))]
+// Only include code to run linter when the `napi` feature is enabled.
+// Without this, `tasks/website` will not compile on Linux or Windows.
+// `tasks/website` depends on `oxlint` as a normal library, which causes linker errors if NAPI is enabled.
+#[cfg(feature = "napi")]
+mod js_config;
+#[cfg(feature = "napi")]
+mod run;
+#[cfg(feature = "napi")]
+pub use run::*;
+use rustc_hash::FxHashSet;
+
+// JS plugins are only supported on 64-bit little-endian platforms at present.
+// Note: `raw_transfer_constants` module will not compile on 32-bit systems.
+#[cfg(all(feature = "napi", target_pointer_width = "64", target_endian = "little"))]
+mod generated {
+    pub mod raw_transfer_constants;
+}
+
+#[cfg(all(feature = "napi", target_pointer_width = "64", target_endian = "little"))]
+mod js_plugins;
+
+// Use Mimalloc as the global allocator if `--features allocator` is enabled.
+// Mimalloc has better performance, but this is feature-gated because it's slow to compile.
+// `--features allocator` is only used in release builds.
+#[cfg(all(
+    feature = "allocator",
+    not(any(target_arch = "arm", miri, target_os = "freebsd", target_family = "wasm"))
+))]
 #[global_allocator]
 static GLOBAL: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
 
-use cli::{CliRunResult, LintRunner, Runner};
-use std::{ffi::OsStr, io::BufWriter};
+const DEFAULT_OXLINTRC_NAME: &str = ".oxlintrc.json";
+const DEFAULT_TS_OXLINTRC_NAME: &str = "oxlint.config.ts";
 
-pub fn lint() -> CliRunResult {
-    init_tracing();
-    init_miette();
+/// Return a JSON blob containing metadata for all available oxlint rules.
+///
+/// This uses the internal JSON output formatter to generate the full list.
+///
+/// # Panics
+/// Panics if the JSON generation fails, which should never happen under normal circumstances.
+pub fn get_all_rules_json() -> String {
+    use crate::output_formatter::{OutputFormat, OutputFormatter};
 
-    let mut args = std::env::args_os().peekable();
-
-    let args = match args.peek() {
-        Some(s) if s == OsStr::new("node") => args.skip(2),
-        _ => args.skip(1),
-    };
-    let args = args.collect::<Vec<_>>();
-
-    // SAFELY skip first two args (node + script.js)
-    // let cli_args = std::env::args_os().skip(2);
-    let cmd = crate::cli::lint_command();
-    let command = match cmd.run_inner(&*args) {
-        Ok(cmd) => cmd,
-        Err(e) => {
-            e.print_message(100);
-            return CliRunResult::InvalidOptionConfig;
-        }
-    };
-
-    command.handle_threads();
-    // stdio is blocked by LineWriter, use a BufWriter to reduce syscalls.
-    // See `https://github.com/rust-lang/rust/issues/60673`.
-    let mut stdout = BufWriter::new(std::io::stdout());
-
-    LintRunner::new(command).run(&mut stdout)
-}
-
-// Initialize the data which relies on `is_atty` system calls so they don't block subsequent threads.
-fn init_miette() {
-    miette::set_hook(Box::new(|_| Box::new(miette::MietteHandlerOpts::new().build()))).unwrap();
-}
-
-/// To debug `oxc_resolver`:
-/// `OXC_LOG=oxc_resolver oxlint --import-plugin`
-fn init_tracing() {
-    use tracing_subscriber::{filter::Targets, prelude::*};
-
-    // Usage without the `regex` feature.
-    // <https://github.com/tokio-rs/tracing/issues/1436#issuecomment-918528013>
-    tracing_subscriber::registry()
-        .with(std::env::var("OXC_LOG").map_or_else(
-            |_| Targets::new(),
-            |env_var| {
-                use std::str::FromStr;
-                Targets::from_str(&env_var).unwrap()
-            },
-        ))
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    OutputFormatter::new(OutputFormat::Json)
+        .all_rules(FxHashSet::default())
+        .expect("Failed to generate rules JSON")
 }

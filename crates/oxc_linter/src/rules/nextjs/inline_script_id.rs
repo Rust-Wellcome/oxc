@@ -99,8 +99,7 @@ impl Rule for InlineScriptId {
         let AstKind::ImportDefaultSpecifier(specifier) = node.kind() else {
             return;
         };
-        let Some(AstKind::ImportDeclaration(import_decl)) = ctx.nodes().parent_kind(node.id())
-        else {
+        let AstKind::ImportDeclaration(import_decl) = ctx.nodes().parent_kind(node.id()) else {
             return;
         };
 
@@ -111,13 +110,12 @@ impl Rule for InlineScriptId {
         'references_loop: for reference in
             ctx.semantic().symbol_references(specifier.local.symbol_id())
         {
-            let parent_node = ctx.nodes().parent_node(reference.node_id()).unwrap();
+            let parent_node = ctx.nodes().parent_node(reference.node_id());
             let AstKind::JSXOpeningElement(jsx_opening_element) = parent_node.kind() else {
                 continue;
             };
 
-            let Some(AstKind::JSXElement(jsx_element)) = ctx.nodes().parent_kind(parent_node.id())
-            else {
+            let AstKind::JSXElement(jsx_element) = ctx.nodes().parent_kind(parent_node.id()) else {
                 continue;
             };
 
@@ -135,10 +133,10 @@ impl Rule for InlineScriptId {
                             spread_attr.argument.without_parentheses()
                         {
                             for prop in &obj_expr.properties {
-                                if let ObjectPropertyKind::ObjectProperty(obj_prop) = prop {
-                                    if let PropertyKey::StaticIdentifier(ident) = &obj_prop.key {
-                                        prop_names_hash_set.insert(ident.name);
-                                    }
+                                if let ObjectPropertyKind::ObjectProperty(obj_prop) = prop
+                                    && let PropertyKey::StaticIdentifier(ident) = &obj_prop.key
+                                {
+                                    prop_names_hash_set.insert(ident.name.into());
                                 }
                             }
                         } else {
@@ -167,7 +165,7 @@ fn test() {
 
     let pass = vec![
         r#"import Script from 'next/script';
-			
+
 			      export default function TestPage() {
 			        return (
 			          <Script id="test-script">
@@ -176,7 +174,7 @@ fn test() {
 			        )
 			      }"#,
         r#"import Script from 'next/script';
-			
+
 			      export default function TestPage() {
 			        return (
 			          <Script
@@ -188,14 +186,14 @@ fn test() {
 			        )
 			      }"#,
         r#"import Script from 'next/script';
-			
+
 			      export default function TestPage() {
 			        return (
 			          <Script src="https://example.com" />
 			        )
 			      }"#,
         r#"import MyScript from 'next/script';
-			
+
 			      export default function TestPage() {
 			        return (
 			          <MyScript id="test-script">
@@ -204,7 +202,7 @@ fn test() {
 			        )
 			      }"#,
         r#"import MyScript from 'next/script';
-			
+
 			      export default function TestPage() {
 			        return (
 			          <MyScript
@@ -216,7 +214,7 @@ fn test() {
 			        )
 			      }"#,
         r#"import Script from 'next/script';
-			
+
 			      export default function TestPage() {
 			        return (
 			          <Script {...{ strategy: "lazyOnload" }} id={"test-script"}>
@@ -225,7 +223,7 @@ fn test() {
 			        )
 			      }"#,
         r#"import Script from 'next/script';
-			
+
 			      export default function TestPage() {
 			        return (
 			          <Script {...{ strategy: "lazyOnload", id: "test-script" }}>
@@ -246,7 +244,7 @@ fn test() {
 
     let fail = vec![
         r"import Script from 'next/script';
-			
+
 			        export default function TestPage() {
 			          return (
 			            <Script>
@@ -255,7 +253,7 @@ fn test() {
 			          )
 			        }",
         r"import Script from 'next/script';
-			
+
 			        export default function TestPage() {
 			          return (
 			            <Script
@@ -266,7 +264,7 @@ fn test() {
 			          )
 			        }",
         r"import MyScript from 'next/script';
-			
+
 			        export default function TestPage() {
 			          return (
 			            <MyScript>
@@ -275,7 +273,7 @@ fn test() {
 			          )
 			        }",
         r"import MyScript from 'next/script';
-			
+
 			        export default function TestPage() {
 			          return (
 			            <MyScript
@@ -287,7 +285,5 @@ fn test() {
 			        }",
     ];
 
-    Tester::new(InlineScriptId::NAME, InlineScriptId::PLUGIN, pass, fail)
-        .with_nextjs_plugin(true)
-        .test_and_snapshot();
+    Tester::new(InlineScriptId::NAME, InlineScriptId::PLUGIN, pass, fail).test_and_snapshot();
 }

@@ -187,14 +187,7 @@ impl<'a> Traverse<'a, TransformState<'a>> for TypeScriptAnnotations<'a, '_> {
         _ctx: &mut TraverseCtx<'a>,
     ) {
         decl.definite = false;
-    }
-
-    fn enter_binding_pattern(&mut self, pat: &mut BindingPattern<'a>, _ctx: &mut TraverseCtx<'a>) {
-        pat.type_annotation = None;
-
-        if pat.kind.is_binding_identifier() {
-            pat.optional = false;
-        }
+        decl.type_annotation = None;
     }
 
     fn enter_call_expression(&mut self, expr: &mut CallExpression<'a>, _ctx: &mut TraverseCtx<'a>) {
@@ -216,22 +209,30 @@ impl<'a> Traverse<'a, TransformState<'a>> for TypeScriptAnnotations<'a, '_> {
         }
     }
 
+    fn enter_function(&mut self, func: &mut Function<'a>, _ctx: &mut TraverseCtx<'a>) {
+        // Remove TypeScript annotations from function declarations
+        // Note: declare flag is preserved for exit_statements to handle declaration removal
+        func.type_parameters = None;
+        func.return_type = None;
+        func.this_param = None;
+    }
+
     fn enter_class(&mut self, class: &mut Class<'a>, _ctx: &mut TraverseCtx<'a>) {
+        // Remove TypeScript annotations from class declarations
+        // Note: declare flag is preserved for exit_statements to handle declaration removal
         class.type_parameters = None;
         class.super_type_arguments = None;
         class.implements.clear();
         class.r#abstract = false;
-    }
 
-    fn enter_class_body(&mut self, body: &mut ClassBody<'a>, _ctx: &mut TraverseCtx<'a>) {
         // Remove type only members
-        body.body.retain(|elem| match elem {
+        class.body.body.retain(|elem| match elem {
             ClassElement::MethodDefinition(method) => {
                 matches!(method.r#type, MethodDefinitionType::MethodDefinition)
                     && !method.value.is_typescript_syntax()
             }
             ClassElement::PropertyDefinition(prop) => {
-                matches!(prop.r#type, PropertyDefinitionType::PropertyDefinition) && !prop.declare
+                matches!(prop.r#type, PropertyDefinitionType::PropertyDefinition)
             }
             ClassElement::AccessorProperty(prop) => {
                 matches!(prop.r#type, AccessorPropertyType::AccessorProperty)
@@ -239,6 +240,16 @@ impl<'a> Traverse<'a, TransformState<'a>> for TypeScriptAnnotations<'a, '_> {
             ClassElement::TSIndexSignature(_) => false,
             ClassElement::StaticBlock(_) => true,
         });
+    }
+
+    fn exit_class(&mut self, class: &mut Class<'a>, _: &mut TraverseCtx<'a>) {
+        // Remove `declare` properties from the class body, other ts-only properties have been removed in `enter_class`.
+        // The reason that removing `declare` properties here because the legacy-decorator plugin needs to transform
+        // `declare` field in the `exit_class` phase, so we have to ensure this step is run after the legacy-decorator plugin.
+        class
+            .body
+            .body
+            .retain(|elem| !matches!(elem, ClassElement::PropertyDefinition(prop) if prop.declare));
     }
 
     fn enter_expression(&mut self, expr: &mut Expression<'a>, ctx: &mut TraverseCtx<'a>) {
@@ -300,6 +311,8 @@ impl<'a> Traverse<'a, TransformState<'a>> for TypeScriptAnnotations<'a, '_> {
         param.accessibility = None;
         param.readonly = false;
         param.r#override = false;
+        param.optional = false;
+        param.type_annotation = None;
     }
 
     fn exit_function(&mut self, func: &mut Function<'a>, _ctx: &mut TraverseCtx<'a>) {
@@ -335,18 +348,7 @@ impl<'a> Traverse<'a, TransformState<'a>> for TypeScriptAnnotations<'a, '_> {
         def: &mut PropertyDefinition<'a>,
         _ctx: &mut TraverseCtx<'a>,
     ) {
-        assert!(
-            !(def.declare && def.value.is_some()),
-            "Fields with the 'declare' modifier cannot be initialized here, but only in the constructor"
-        );
-
-        assert!(
-            !(def.definite && def.value.is_some()),
-            "Definitely assigned fields cannot be initialized here, but only in the constructor"
-        );
-
         def.accessibility = None;
-        def.declare = false;
         def.definite = false;
         def.r#override = false;
         def.optional = false;
@@ -369,12 +371,18 @@ impl<'a> Traverse<'a, TransformState<'a>> for TypeScriptAnnotations<'a, '_> {
         stmts: &mut ArenaVec<'a, Statement<'a>>,
         _ctx: &mut TraverseCtx<'a>,
     ) {
-        // Remove declare declaration
-        stmts.retain(
-            |stmt| {
-                if let Some(decl) = stmt.as_declaration() { !decl.declare() } else { true }
-            },
-        );
+        // Remove TypeScript type-only declarations (interfaces, type aliases, etc.)
+        // but NOT declarations with `declare` keyword - those will be handled
+        // by their respective enter_* methods which will remove the `declare` flag
+        stmts.retain(|stmt| {
+            if let Some(decl) = stmt.as_declaration() {
+                // Only remove pure TypeScript type declarations
+                // Keep all other declarations including those with `declare`
+                !decl.is_type()
+            } else {
+                true
+            }
+        });
     }
 
     fn exit_statement(&mut self, stmt: &mut Statement<'a>, ctx: &mut TraverseCtx<'a>) {
@@ -404,9 +412,28 @@ impl<'a> Traverse<'a, TransformState<'a>> for TypeScriptAnnotations<'a, '_> {
         _ctx: &mut TraverseCtx<'a>,
     ) {
         // Remove TS specific statements
-        stmts.retain(|stmt| match stmt {
+        stmts.retain_mut(|stmt| match stmt {
             Statement::ExpressionStatement(s) => !s.expression.is_typescript_syntax(),
-            match_declaration!(Statement) => !stmt.to_declaration().is_typescript_syntax(),
+            match_declaration!(Statement) => {
+                let decl = stmt.to_declaration_mut();
+                match decl {
+                    Declaration::VariableDeclaration(var_decl) => {
+                        // Remove declare variable declarations entirely
+                        !var_decl.declare
+                    }
+                    Declaration::FunctionDeclaration(func_decl) => {
+                        // Remove declare function declarations and function overload signatures entirely
+                        // Keep only function implementations (those with a body)
+                        !func_decl.declare && func_decl.body.is_some()
+                    }
+                    Declaration::ClassDeclaration(class_decl) => {
+                        // Remove declare class declarations entirely
+                        !class_decl.declare
+                    }
+                    // Remove type-only declarations
+                    _ => !decl.is_typescript_syntax(),
+                }
+            }
             // Ignore ModuleDeclaration as it's handled in the program
             _ => true,
         });
@@ -495,6 +522,22 @@ impl<'a> Traverse<'a, TransformState<'a>> for TypeScriptAnnotations<'a, '_> {
 
     fn enter_jsx_fragment(&mut self, _elem: &mut JSXFragment<'a>, _ctx: &mut TraverseCtx<'a>) {
         self.has_jsx_fragment = true;
+    }
+
+    fn enter_formal_parameter_rest(
+        &mut self,
+        node: &mut FormalParameterRest<'a>,
+        _ctx: &mut oxc_traverse::TraverseCtx<'a, TransformState<'a>>,
+    ) {
+        node.type_annotation = None;
+    }
+
+    fn enter_catch_parameter(
+        &mut self,
+        node: &mut CatchParameter<'a>,
+        _ctx: &mut oxc_traverse::TraverseCtx<'a, TransformState<'a>>,
+    ) {
+        node.type_annotation = None;
     }
 }
 

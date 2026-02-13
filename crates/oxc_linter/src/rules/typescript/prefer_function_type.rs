@@ -1,5 +1,5 @@
 use oxc_ast::{
-    AstKind, CommentKind,
+    AstKind,
     ast::{ExportDefaultDeclarationKind, Expression, TSInterfaceDeclaration, TSSignature, TSType},
 };
 use oxc_diagnostics::OxcDiagnostic;
@@ -29,18 +29,21 @@ declare_oxc_lint!(
     /// ### What it does
     ///
     /// Enforce using function types instead of interfaces with call signatures.
-    /// TypeScript allows for two common ways to declare a type for a function:
     ///
+    /// ### Why is this bad?
+    ///
+    /// TypeScript allows for two common ways to declare a type for a function:
     /// - Function type: `() => string`
     /// - Object type with a signature: `{ (): string }`
     ///
-    /// The function type form is generally preferred when possible for being more succinct.
-    ///
-    /// This rule suggests using a function type instead of an interface or object type literal with a single call signature.
+    /// The function type form is generally preferred when possible for being
+    /// more succinct and readable. Interfaces with only call signatures add
+    /// unnecessary verbosity without providing additional functionality.
     ///
     /// ### Examples
-    /// ```ts
-    /// // error
+    ///
+    /// Examples of **incorrect** code for this rule:
+    /// ```typescript
     /// interface Example {
     ///   (): string;
     /// }
@@ -52,33 +55,30 @@ declare_oxc_lint!(
     /// interface ReturnsSelf {
     ///   (arg: string): this;
     /// }
+    /// ```
     ///
-    /// // success
+    /// Examples of **correct** code for this rule:
+    /// ```typescript
     /// type Example = () => string;
     ///
     /// function foo(example: () => number): number {
-    ///   return bar();
+    ///   return example();
     /// }
     ///
-    /// // returns the function itself, not the `this` argument.
+    /// // Returns the function itself, not the `this` argument
     /// type ReturnsSelf = (arg: string) => ReturnsSelf;
     ///
+    /// // Multiple properties are allowed
     /// function foo(bar: { (): string; baz: number }): string {
     ///   return bar();
     /// }
     ///
-    /// interface Foo {
-    ///   bar: string;
-    /// }
-    /// interface Bar extends Foo {
-    ///   (): void;
-    /// }
-    ///
-    /// // multiple call signatures (overloads) is allowed:
+    /// // Multiple call signatures (overloads) are allowed
     /// interface Overloaded {
     ///   (data: string): number;
     ///   (id: number): string;
     /// }
+    ///
     /// // this is equivalent to Overloaded interface.
     /// type Intersection = ((data: string) => number) & ((id: number) => string);
     /// ```
@@ -149,42 +149,22 @@ fn check_member(member: &TSSignature, node: &AstNode<'_>, ctx: &LintContext<'_>)
                     let mut is_parent_exported = false;
                     let mut node_start = interface_decl.span.start;
                     let mut node_end = interface_decl.span.end;
-                    if let Some(parent_node) = ctx.nodes().parent_node(node.id()) {
-                        if let AstKind::ExportNamedDeclaration(export_name_decl) =
-                            parent_node.kind()
-                        {
-                            is_parent_exported = true;
-                            node_start = export_name_decl.span.start;
-                            node_end = export_name_decl.span.end;
-                        }
+                    if let AstKind::ExportNamedDeclaration(export_name_decl) =
+                        ctx.nodes().parent_kind(node.id())
+                    {
+                        is_parent_exported = true;
+                        node_start = export_name_decl.span.start;
+                        node_end = export_name_decl.span.end;
                     }
 
-                    let has_comments = ctx.has_comments_between(interface_decl.span);
+                    let mut comments = ctx.comments_range(node_start..node_end).peekable();
+                    if comments.peek().is_some() {
+                        let mut comments_text = String::new();
 
-                    if has_comments {
-                        let comments = ctx
-                            .comments_range(node_start..node_end)
-                            .map(|comment| (*comment, comment.content_span()));
-
-                        let comments_text = {
-                            let mut comments_vec: Vec<String> = vec![];
-                            comments.for_each(|(comment_interface, span)| {
-                                let comment = span.source_text(source_code);
-
-                                match comment_interface.kind {
-                                    CommentKind::Line => {
-                                        let single_line_comment: String = format!("//{comment}\n");
-                                        comments_vec.push(single_line_comment);
-                                    }
-                                    CommentKind::Block => {
-                                        let multi_line_comment: String = format!("/*{comment}*/\n");
-                                        comments_vec.push(multi_line_comment);
-                                    }
-                                }
-                            });
-
-                            comments_vec.join("")
-                        };
+                        for comment in comments {
+                            comments_text.push_str(comment.span.source_text(source_code));
+                            comments_text.push('\n');
+                        }
 
                         return Fix::new(
                             format!(

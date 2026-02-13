@@ -2,7 +2,25 @@
 //!
 //! Code adapted from
 //! * [esbuild](https://github.com/evanw/esbuild/blob/v0.24.0/internal/js_printer/js_printer.go)
+
 #![warn(missing_docs)]
+
+use std::{borrow::Cow, cmp, slice};
+
+use cow_utils::CowUtils;
+
+use oxc_ast::ast::*;
+use oxc_data_structures::{code_buffer::CodeBuffer, stack::Stack};
+use oxc_index::IndexVec;
+use oxc_semantic::Scoping;
+use oxc_span::{CompactStr, GetSpan, Span};
+use oxc_syntax::{
+    class::ClassId,
+    identifier::{is_identifier_part, is_identifier_part_ascii},
+    operator::{BinaryOperator, UnaryOperator, UpdateOperator},
+    precedence::Precedence,
+};
+use rustc_hash::FxHashMap;
 
 mod binary_expr_visitor;
 mod comment;
@@ -10,30 +28,23 @@ mod context;
 mod r#gen;
 mod operator;
 mod options;
+#[cfg(feature = "sourcemap")]
 mod sourcemap_builder;
 mod str;
 
-use std::borrow::Cow;
+use binary_expr_visitor::BinaryExpressionVisitor;
+use comment::CommentsMap;
+use operator::Operator;
+#[cfg(feature = "sourcemap")]
+use sourcemap_builder::SourcemapBuilder;
+use str::{Quote, cold_branch, is_script_close_tag};
 
-use oxc_ast::ast::*;
-use oxc_data_structures::{code_buffer::CodeBuffer, stack::Stack};
-use oxc_semantic::Scoping;
-use oxc_span::{GetSpan, Span};
-use oxc_syntax::{
-    identifier::{is_identifier_part, is_identifier_part_ascii},
-    operator::{BinaryOperator, UnaryOperator, UpdateOperator},
-    precedence::Precedence,
-};
+pub use context::Context;
+pub use r#gen::{Gen, GenExpr};
+pub use options::{CodegenOptions, CommentOptions, LegalComment};
 
-use crate::{
-    binary_expr_visitor::BinaryExpressionVisitor, comment::CommentsMap, operator::Operator,
-    sourcemap_builder::SourcemapBuilder, str::Quote,
-};
-pub use crate::{
-    context::Context,
-    r#gen::{Gen, GenExpr},
-    options::{CodegenOptions, LegalComment},
-};
+// Re-export `IndentChar` from `oxc_data_structures`
+pub use oxc_data_structures::code_buffer::IndentChar;
 
 /// Output from [`Codegen::build`]
 #[non_exhaustive]
@@ -44,6 +55,7 @@ pub struct CodegenReturn {
     /// The source map from the input source code to the generated source code.
     ///
     /// You must set [`CodegenOptions::source_map_path`] for this to be [`Some`].
+    #[cfg(feature = "sourcemap")]
     pub map: Option<oxc_sourcemap::SourceMap>,
 
     /// All the legal comments returned from [LegalComment::Linked] or [LegalComment::External].
@@ -76,6 +88,9 @@ pub struct Codegen<'a> {
 
     scoping: Option<Scoping>,
 
+    /// Private member name mappings for mangling
+    private_member_mappings: Option<IndexVec<ClassId, FxHashMap<String, CompactStr>>>,
+
     /// Output Code
     code: CodeBuffer,
 
@@ -85,6 +100,8 @@ pub struct Codegen<'a> {
     need_space_before_dot: usize,
     print_next_indent_as_space: bool,
     binary_expr_stack: Stack<BinaryExpressionVisitor<'a>>,
+    class_stack: Stack<ClassId>,
+    next_class_id: ClassId,
     /// Indicates the output is JSX type, it is set in [`Program::gen`] and the result
     /// is obtained by [`oxc_span::SourceType::is_jsx`]
     is_jsx: bool,
@@ -107,7 +124,8 @@ pub struct Codegen<'a> {
     // Builders
     comments: CommentsMap,
 
-    sourcemap_builder: Option<SourcemapBuilder>,
+    #[cfg(feature = "sourcemap")]
+    sourcemap_builder: Option<SourcemapBuilder<'a>>,
 }
 
 impl Default for Codegen<'_> {
@@ -140,11 +158,14 @@ impl<'a> Codegen<'a> {
             options,
             source_text: None,
             scoping: None,
+            private_member_mappings: None,
             code: CodeBuffer::default(),
             needs_semicolon: false,
             need_space_before_dot: 0,
             print_next_indent_as_space: false,
             binary_expr_stack: Stack::with_capacity(12),
+            class_stack: Stack::with_capacity(4),
+            next_class_id: ClassId::from_usize(0),
             prev_op_end: 0,
             prev_reg_exp_end: 0,
             prev_op: None,
@@ -155,6 +176,7 @@ impl<'a> Codegen<'a> {
             indent: 0,
             quote: Quote::Double,
             comments: CommentsMap::default(),
+            #[cfg(feature = "sourcemap")]
             sourcemap_builder: None,
         }
     }
@@ -163,6 +185,7 @@ impl<'a> Codegen<'a> {
     #[must_use]
     pub fn with_options(mut self, options: CodegenOptions) -> Self {
         self.quote = if options.single_quote { Quote::Single } else { Quote::Double };
+        self.code = CodeBuffer::with_indent(options.indent_char, options.indent_width);
         self.options = options;
         self
     }
@@ -183,6 +206,19 @@ impl<'a> Codegen<'a> {
         self
     }
 
+    /// Set private member name mappings for mangling.
+    ///
+    /// This allows renaming of private class members like `#field` -> `#a`.
+    /// The Vec contains per-class mappings, indexed by class declaration order.
+    #[must_use]
+    pub fn with_private_member_mappings(
+        mut self,
+        mappings: Option<IndexVec<ClassId, FxHashMap<String, CompactStr>>>,
+    ) -> Self {
+        self.private_member_mappings = mappings;
+        self
+    }
+
     /// Print a [`Program`] into a string of source code.
     ///
     /// A source map will be generated if [`CodegenOptions::source_map_path`] is set.
@@ -190,16 +226,24 @@ impl<'a> Codegen<'a> {
     pub fn build(mut self, program: &Program<'a>) -> CodegenReturn {
         self.quote = if self.options.single_quote { Quote::Single } else { Quote::Double };
         self.source_text = Some(program.source_text);
+        self.indent = self.options.initial_indent;
         self.code.reserve(program.source_text.len());
         self.build_comments(&program.comments);
+        #[cfg(feature = "sourcemap")]
         if let Some(path) = &self.options.source_map_path {
             self.sourcemap_builder = Some(SourcemapBuilder::new(path, program.source_text));
         }
         program.print(&mut self, Context::default());
         let legal_comments = self.handle_eof_linked_or_external_comments(program);
         let code = self.code.into_string();
+        #[cfg(feature = "sourcemap")]
         let map = self.sourcemap_builder.map(SourcemapBuilder::into_sourcemap);
-        CodegenReturn { code, map, legal_comments }
+        CodegenReturn {
+            code,
+            #[cfg(feature = "sourcemap")]
+            map,
+            legal_comments,
+        }
     }
 
     /// Turn what's been built so far into a string. Like [`build`],
@@ -228,6 +272,118 @@ impl<'a> Codegen<'a> {
     #[inline]
     pub fn print_str(&mut self, s: &str) {
         self.code.print_str(s);
+    }
+
+    /// Push str into the buffer, escaping `</script` to `<\/script`.
+    #[inline]
+    pub fn print_str_escaping_script_close_tag(&mut self, s: &str) {
+        // `</script` will be very rare. So we try to make the search as quick as possible by:
+        // 1. Searching for `<` first, and only checking if followed by `/script` once `<` is found.
+        // 2. Searching longer strings for `<` in chunks of 16 bytes using SIMD, and only doing the
+        //    more expensive byte-by-byte search once a `<` is found.
+
+        let bytes = s.as_bytes();
+        let mut consumed = 0;
+
+        // Search range of bytes for `</script`, byte by byte.
+        //
+        // Bytes between `ptr` and `last_ptr` (inclusive) are searched for `<`.
+        // If `<` is found, the following 7 bytes are checked to see if they're `/script`.
+        //
+        // Requirements for the closure below:
+        // * `ptr` and `last_ptr` must be within bounds of `bytes`.
+        // * `last_ptr` must be greater or equal to `ptr`.
+        // * `last_ptr` must be no later than 8 bytes before end of string.
+        //   i.e. safe to read 8 bytes at `end_ptr`.
+        let mut search_bytes = |mut ptr: *const u8, last_ptr| {
+            loop {
+                // SAFETY: `ptr` is always less than or equal to `last_ptr`.
+                // `last_ptr` is within bounds of `bytes`, so safe to read a byte at `ptr`.
+                let byte = unsafe { *ptr.as_ref().unwrap_unchecked() };
+                if byte == b'<' {
+                    // SAFETY: `ptr <= last_ptr`, and `last_ptr` points to no later than
+                    // 8 bytes before end of string, so safe to read 8 bytes from `ptr`
+                    let slice = unsafe { slice::from_raw_parts(ptr, 8) };
+                    if is_script_close_tag(slice) {
+                        // Push str up to and including `<`. Skip `/`. Write `\/` instead.
+                        // SAFETY:
+                        // `consumed` is initially 0, and only updated below to be after `/`,
+                        // so in bounds, and on a UTF-8 char boundary.
+                        // `index` is on `<`, so `index + 1` is in bounds and a UTF-8 char boundary.
+                        // `consumed` is always less than `index + 1` as it's set on a previous round.
+                        unsafe {
+                            let index = ptr.offset_from_unsigned(bytes.as_ptr());
+                            let before = bytes.get_unchecked(consumed..=index);
+                            self.code.print_bytes_unchecked(before);
+
+                            // Set `consumed` to after `/`
+                            consumed = index + 2;
+                        }
+                        self.print_str("\\/");
+                        // Note: We could advance `ptr` by 8 bytes here to skip over `</script`,
+                        // but this branch will be very rarely taken, so it's better to keep it simple
+                    }
+                }
+
+                if ptr == last_ptr {
+                    break;
+                }
+                // SAFETY: `ptr` is less than `last_ptr`, which is in bounds, so safe to increment `ptr`
+                ptr = unsafe { ptr.add(1) };
+            }
+        };
+
+        // Search string in chunks of 16 bytes
+        let mut chunks = bytes.chunks_exact(16);
+        for (chunk_index, chunk) in chunks.by_ref().enumerate() {
+            #[expect(clippy::missing_panics_doc, reason = "infallible")]
+            let chunk: &[u8; 16] = chunk.try_into().unwrap();
+
+            // Compiler vectorizes this loop to a few SIMD ops
+            let mut contains_lt = false;
+            for &byte in chunk {
+                if byte == b'<' {
+                    contains_lt = true;
+                }
+            }
+
+            if contains_lt {
+                // Chunk contains at least one `<`.
+                // Find them, and check if they're the start of `</script`.
+                //
+                // SAFETY: `index` is byte index of start of chunk.
+                // We search bytes starting with first byte of chunk, and ending with last byte of chunk.
+                // i.e. `index` to `index + 15` (inclusive).
+                // If this chunk is towards the end of the string, reduce the range of bytes searched
+                // so the last byte searched has at least 7 further bytes after it.
+                // i.e. safe to read 8 bytes at `last_ptr`.
+                cold_branch(|| unsafe {
+                    let index = chunk_index * 16;
+                    let remaining_bytes = bytes.len() - index;
+                    let last_offset = cmp::min(remaining_bytes - 8, 15);
+                    let ptr = bytes.as_ptr().add(index);
+                    let last_ptr = ptr.add(last_offset);
+                    search_bytes(ptr, last_ptr);
+                });
+            }
+        }
+
+        // Search last chunk byte-by-byte.
+        // Skip this if less than 8 bytes remaining, because less than 8 bytes can't contain `</script`.
+        let last_chunk = chunks.remainder();
+        if last_chunk.len() >= 8 {
+            let ptr = last_chunk.as_ptr();
+            // SAFETY: `last_chunk.len() >= 8`, so `- 8` cannot wrap.
+            // `last_chunk.as_ptr().add(last_chunk.len() - 8)` is in bounds of `last_chunk`.
+            let last_ptr = unsafe { ptr.add(last_chunk.len() - 8) };
+            search_bytes(ptr, last_ptr);
+        }
+
+        // SAFETY: `consumed` is either 0, or after `/`, so on a UTF-8 char boundary, and in bounds
+        unsafe {
+            let remaining = bytes.get_unchecked(consumed..);
+            self.code.print_bytes_unchecked(remaining);
+        }
     }
 
     /// Print a single [`Expression`], adding it to the code generator's
@@ -326,6 +482,23 @@ impl<'a> Codegen<'a> {
     }
 
     #[inline]
+    fn enter_class(&mut self) {
+        let class_id = self.next_class_id;
+        self.next_class_id = ClassId::from_usize(self.next_class_id.index() + 1);
+        self.class_stack.push(class_id);
+    }
+
+    #[inline]
+    fn exit_class(&mut self) {
+        self.class_stack.pop();
+    }
+
+    #[inline]
+    fn current_class_ids(&self) -> impl Iterator<Item = ClassId> {
+        self.class_stack.iter().rev().copied()
+    }
+
+    #[inline]
     fn wrap<F: FnMut(&mut Self)>(&mut self, wrap: bool, mut f: F) {
         if wrap {
             self.print_ascii_byte(b'(');
@@ -393,7 +566,6 @@ impl<'a> Codegen<'a> {
             self.dedent();
             self.print_indent();
         }
-        self.add_source_mapping_end(span);
         self.print_ascii_byte(b'}');
     }
 
@@ -404,10 +576,9 @@ impl<'a> Codegen<'a> {
         self.indent();
     }
 
-    fn print_block_end(&mut self, span: Span) {
+    fn print_block_end(&mut self, _span: Span) {
         self.dedent();
         self.print_indent();
-        self.add_source_mapping_end(span);
         self.print_ascii_byte(b'}');
     }
 
@@ -457,16 +628,17 @@ impl<'a> Codegen<'a> {
 
         // Ensure first string literal is not a directive.
         let mut first_needs_parens = false;
-        if directives.is_empty() && !self.options.minify {
-            if let Statement::ExpressionStatement(s) = first {
-                let s = s.expression.without_parentheses();
-                if matches!(s, Expression::StringLiteral(_)) {
-                    first_needs_parens = true;
-                    self.print_ascii_byte(b'(');
-                    s.print_expr(self, Precedence::Lowest, ctx);
-                    self.print_ascii_byte(b')');
-                    self.print_semicolon_after_statement();
-                }
+        if directives.is_empty()
+            && !self.options.minify
+            && let Statement::ExpressionStatement(s) = first
+        {
+            let s = s.expression.without_parentheses();
+            if matches!(s, Expression::StringLiteral(_)) {
+                first_needs_parens = true;
+                self.print_ascii_byte(b'(');
+                s.print_expr(self, Precedence::Lowest, ctx);
+                self.print_ascii_byte(b')');
+                self.print_semicolon_after_statement();
             }
         }
 
@@ -529,6 +701,7 @@ impl<'a> Codegen<'a> {
             self.print_list(arguments, ctx);
         }
         self.print_ascii_byte(b')');
+        self.add_source_mapping_end(span);
     }
 
     fn print_list_with_comments(&mut self, items: &[Argument<'_>], ctx: Context) {
@@ -555,24 +728,23 @@ impl<'a> Codegen<'a> {
     }
 
     fn get_identifier_reference_name(&self, reference: &IdentifierReference<'a>) -> &'a str {
-        if let Some(scoping) = &self.scoping {
-            if let Some(reference_id) = reference.reference_id.get() {
-                if let Some(name) = scoping.get_reference_name(reference_id) {
-                    // SAFETY: Hack the lifetime to be part of the allocator.
-                    return unsafe { std::mem::transmute_copy(&name) };
-                }
-            }
+        if let Some(scoping) = &self.scoping
+            && let Some(reference_id) = reference.reference_id.get()
+            && let Some(name) = scoping.get_reference_name(reference_id)
+        {
+            // SAFETY: Hack the lifetime to be part of the allocator.
+            return unsafe { std::mem::transmute_copy(&name) };
         }
         reference.name.as_str()
     }
 
     fn get_binding_identifier_name(&self, ident: &BindingIdentifier<'a>) -> &'a str {
-        if let Some(scoping) = &self.scoping {
-            if let Some(symbol_id) = ident.symbol_id.get() {
-                let name = scoping.symbol_name(symbol_id);
-                // SAFETY: Hack the lifetime to be part of the allocator.
-                return unsafe { std::mem::transmute_copy(&name) };
-            }
+        if let Some(scoping) = &self.scoping
+            && let Some(symbol_id) = ident.symbol_id.get()
+        {
+            let name = scoping.symbol_name(symbol_id);
+            // SAFETY: Hack the lifetime to be part of the allocator.
+            return unsafe { std::mem::transmute_copy(&name) };
         }
         ident.name.as_str()
     }
@@ -615,16 +787,12 @@ impl<'a> Codegen<'a> {
 
     fn print_non_negative_float(&mut self, num: f64) {
         // Inline the buffer here to avoid heap allocation on `buffer.format(*self).to_string()`.
-        let mut buffer = ryu_js::Buffer::new();
+        let mut buffer = dragonbox_ecma::Buffer::new();
         if num < 1000.0 && num.fract() == 0.0 {
             self.print_str(buffer.format(num));
             self.need_space_before_dot = self.code_len();
         } else {
-            let s = Self::get_minified_number(num, &mut buffer);
-            self.print_str(&s);
-            if !s.bytes().any(|b| matches!(b, b'.' | b'e' | b'x')) {
-                self.need_space_before_dot = self.code_len();
-            }
+            self.print_minified_number(num, &mut buffer);
         }
     }
 
@@ -635,14 +803,16 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    // `get_minified_number` from terser
+    // Optimized version of `get_minified_number` from terser
     // https://github.com/terser/terser/blob/c5315c3fd6321d6b2e076af35a70ef532f498505/lib/output.js#L2418
+    // Instead of building all candidates and finding the shortest, we track the shortest as we go
+    // and use self.print_str directly instead of returning intermediate strings
     #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_possible_wrap)]
-    fn get_minified_number(num: f64, buffer: &mut ryu_js::Buffer) -> Cow<'_, str> {
-        use cow_utils::CowUtils;
-
+    fn print_minified_number(&mut self, num: f64, buffer: &mut dragonbox_ecma::Buffer) {
         if num < 1000.0 && num.fract() == 0.0 {
-            return Cow::Borrowed(buffer.format(num));
+            self.print_str(buffer.format(num));
+            self.need_space_before_dot = self.code_len();
+            return;
         }
 
         let mut s = buffer.format(num);
@@ -651,65 +821,120 @@ impl<'a> Codegen<'a> {
             s = &s[1..];
         }
 
-        let s = s.cow_replacen("e+", "e", 1);
+        let mut best_candidate = s.cow_replacen("e+", "e", 1);
+        let mut is_hex = false;
 
-        let mut candidates = vec![s.clone()];
-
+        // Track the best candidate found so far
         if num.fract() == 0.0 {
-            candidates.push(Cow::Owned(format!("0x{:x}", num as u128)));
+            // For integers, check hex format and other optimizations
+            let hex_candidate = format!("0x{:x}", num as u128);
+            if hex_candidate.len() < best_candidate.len() {
+                is_hex = true;
+                best_candidate = hex_candidate.into();
+            }
         }
-
-        // create `1e-2`
-        if s.starts_with(".0") {
-            if let Some((i, _)) = s[1..].bytes().enumerate().find(|(_, c)| *c != b'0') {
-                let len = i + 1; // `+1` to include the dot.
-                let digits = &s[len..];
-                candidates.push(Cow::Owned(format!("{digits}e-{}", digits.len() + len - 1)));
+        // Check for scientific notation optimizations for numbers starting with ".0"
+        else if best_candidate.starts_with(".0") {
+            // Skip the first '0' since we know it's there from the starts_with check
+            if let Some(i) = best_candidate.bytes().skip(2).position(|c| c != b'0') {
+                let len = i + 2; // `+2` to include the dot and first zero.
+                let digits = &best_candidate[len..];
+                let exp = digits.len() + len - 1;
+                let exp_str_len = itoa::Buffer::new().format(exp).len();
+                // Calculate expected length: digits + 'e-' + exp_length
+                let expected_len = digits.len() + 2 + exp_str_len;
+                if expected_len < best_candidate.len() {
+                    best_candidate = format!("{digits}e-{exp}").into();
+                    debug_assert_eq!(best_candidate.len(), expected_len);
+                }
             }
         }
 
-        // create 1e2
-        if s.ends_with('0') {
-            if let Some((len, _)) = s.bytes().rev().enumerate().find(|(_, c)| *c != b'0') {
-                candidates.push(Cow::Owned(format!("{}e{len}", &s[0..s.len() - len])));
-            }
-        }
-
-        // `1.2e101` -> ("1", "2", "101")
-        // `1.3415205933077406e300` -> `13415205933077406e284;`
-        if let Some((integer, point, exponent)) =
-            s.split_once('.').and_then(|(a, b)| b.split_once('e').map(|e| (a, e.0, e.1)))
+        // Check for numbers ending with zeros (but not hex numbers)
+        // The `!is_hex` check is necessary to prevent hex numbers like `0x8000000000000000`
+        // from being incorrectly converted to scientific notation
+        if !is_hex
+            && best_candidate.ends_with('0')
+            && let Some(len) = best_candidate.bytes().rev().position(|c| c != b'0')
         {
-            candidates.push(Cow::Owned(format!(
-                "{integer}{point}e{}",
-                exponent.parse::<isize>().unwrap() - point.len() as isize
-            )));
+            let base = &best_candidate[0..best_candidate.len() - len];
+            let exp_str_len = itoa::Buffer::new().format(len).len();
+            // Calculate expected length: base + 'e' + len
+            let expected_len = base.len() + 1 + exp_str_len;
+            if expected_len < best_candidate.len() {
+                best_candidate = format!("{base}e{len}").into();
+                debug_assert_eq!(best_candidate.len(), expected_len);
+            }
         }
 
-        candidates.into_iter().min_by_key(|c| c.len()).unwrap()
+        // Check for scientific notation optimization: `1.2e101` -> `12e100`
+        if let Some((integer, point, exponent)) = best_candidate
+            .split_once('.')
+            .and_then(|(a, b)| b.split_once('e').map(|e| (a, e.0, e.1)))
+        {
+            let new_expr = exponent.parse::<isize>().unwrap() - point.len() as isize;
+            let new_exp_str_len = itoa::Buffer::new().format(new_expr).len();
+            // Calculate expected length: integer + point + 'e' + new_exp_str_len
+            let expected_len = integer.len() + point.len() + 1 + new_exp_str_len;
+            if expected_len < best_candidate.len() {
+                best_candidate = format!("{integer}{point}e{new_expr}").into();
+                debug_assert_eq!(best_candidate.len(), expected_len);
+            }
+        }
+
+        // Print the best candidate and update need_space_before_dot
+        self.print_str(&best_candidate);
+        if !best_candidate.bytes().any(|b| matches!(b, b'.' | b'e' | b'x')) {
+            self.need_space_before_dot = self.code_len();
+        }
     }
 
+    #[cfg(feature = "sourcemap")]
     fn add_source_mapping(&mut self, span: Span) {
-        if let Some(sourcemap_builder) = self.sourcemap_builder.as_mut() {
-            if !span.is_empty() {
-                sourcemap_builder.add_source_mapping(self.code.as_bytes(), span.start, None);
-            }
+        if let Some(sourcemap_builder) = self.sourcemap_builder.as_mut()
+            && !span.is_empty()
+        {
+            sourcemap_builder.add_source_mapping(self.code.as_bytes(), span.start, None);
         }
     }
 
+    #[cfg(not(feature = "sourcemap"))]
+    #[inline]
+    fn add_source_mapping(&mut self, _span: Span) {}
+
+    #[cfg(feature = "sourcemap")]
     fn add_source_mapping_end(&mut self, span: Span) {
-        if let Some(sourcemap_builder) = self.sourcemap_builder.as_mut() {
-            if !span.is_empty() {
-                sourcemap_builder.add_source_mapping(self.code.as_bytes(), span.end, None);
+        if let Some(sourcemap_builder) = self.sourcemap_builder.as_mut()
+            && !span.is_empty()
+        {
+            // Validate that span.end is within source content bounds.
+            // When oxc_codegen adds punctuation (semicolons, newlines) that don't exist in the
+            // original source, span.end may be at or beyond the source content length.
+            // We should not create sourcemap tokens for such positions as they would be invalid.
+            if let Some(source_text) = self.source_text {
+                #[expect(clippy::cast_possible_truncation)]
+                if span.end >= source_text.len() as u32 {
+                    return;
+                }
             }
+            sourcemap_builder.add_source_mapping(self.code.as_bytes(), span.end, None);
         }
     }
 
+    #[cfg(not(feature = "sourcemap"))]
+    #[inline]
+    fn add_source_mapping_end(&mut self, _span: Span) {}
+
+    #[cfg(feature = "sourcemap")]
     fn add_source_mapping_for_name(&mut self, span: Span, name: &str) {
-        if let Some(sourcemap_builder) = self.sourcemap_builder.as_mut() {
-            if !span.is_empty() {
-                sourcemap_builder.add_source_mapping_for_name(self.code.as_bytes(), span, name);
-            }
+        if let Some(sourcemap_builder) = self.sourcemap_builder.as_mut()
+            && !span.is_empty()
+        {
+            sourcemap_builder.add_source_mapping_for_name(self.code.as_bytes(), span, name);
         }
     }
+
+    #[cfg(not(feature = "sourcemap"))]
+    #[inline]
+    fn add_source_mapping_for_name(&mut self, _span: Span, _name: &str) {}
 }

@@ -5,6 +5,7 @@ use oxc_ast::{
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, Span};
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::{
@@ -16,17 +17,25 @@ use crate::{
 };
 
 fn prefer_object_from_entries_diagnostic(span: Span) -> OxcDiagnostic {
-    OxcDiagnostic::warn("Prefer 'Object.fromEntries' over manual object construction from entries")
-        .with_help("Use 'Object.fromEntries(pairs)' instead of manually building objects with reduce or forEach")
+    OxcDiagnostic::warn("Prefer `Object.fromEntries` over manual object construction from entries.")
+        .with_help("Use `Object.fromEntries(pairs)` instead of manually building objects with `reduce` or `forEach`.")
         .with_label(span)
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct PreferObjectFromEntries(Box<PreferObjectFromEntriesConfig>);
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
 pub struct PreferObjectFromEntriesConfig {
+    /// Additional functions to treat as equivalents to `Object.fromEntries`.
     functions: Vec<String>,
+}
+
+impl Default for PreferObjectFromEntriesConfig {
+    fn default() -> Self {
+        Self { functions: vec!["_.fromPairs".to_string(), "lodash.fromPairs".to_string()] }
+    }
 }
 
 impl std::ops::Deref for PreferObjectFromEntries {
@@ -71,7 +80,8 @@ declare_oxc_lint!(
     PreferObjectFromEntries,
     unicorn,
     style,
-    pending
+    pending,
+    config = PreferObjectFromEntriesConfig,
 );
 
 impl Rule for PreferObjectFromEntries {
@@ -192,42 +202,36 @@ impl Rule for PreferObjectFromEntries {
         }
 
         // `() => ({...object, key})`
-        if let Expression::ObjectExpression(object_expr) = &stmt {
-            if object_expr.properties.len() == 2 {
-                if let ObjectPropertyKind::SpreadProperty(spread) = &object_expr.properties[0] {
-                    if let Expression::Identifier(spread_ident) =
-                        spread.argument.get_inner_expression()
-                    {
-                        let Some(spread_symbol_id) =
-                            ctx.scoping().get_reference(spread_ident.reference_id()).symbol_id()
-                        else {
-                            return;
-                        };
+        if let Expression::ObjectExpression(object_expr) = &stmt
+            && object_expr.properties.len() == 2
+            && let ObjectPropertyKind::SpreadProperty(spread) = &object_expr.properties[0]
+            && let Expression::Identifier(spread_ident) = spread.argument.get_inner_expression()
+        {
+            let Some(spread_symbol_id) =
+                ctx.scoping().get_reference(spread_ident.reference_id()).symbol_id()
+            else {
+                return;
+            };
 
-                        if spread_symbol_id != accumulator_ident.symbol_id() {
-                            return;
-                        }
-                        let ObjectPropertyKind::ObjectProperty(object_prop) =
-                            &object_expr.properties[1]
-                        else {
-                            return;
-                        };
-
-                        if object_prop.kind != PropertyKind::Init || object_prop.method {
-                            return;
-                        }
-
-                        ctx.diagnostic(prefer_object_from_entries_diagnostic(
-                            call_expr_member_expr_property_span(call_expr),
-                        ));
-                    }
-                }
+            if spread_symbol_id != accumulator_ident.symbol_id() {
+                return;
             }
+            let ObjectPropertyKind::ObjectProperty(object_prop) = &object_expr.properties[1] else {
+                return;
+            };
+
+            if object_prop.kind != PropertyKind::Init || object_prop.method {
+                return;
+            }
+
+            ctx.diagnostic(prefer_object_from_entries_diagnostic(
+                call_expr_member_expr_property_span(call_expr),
+            ));
         }
     }
 
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let mut config: PreferObjectFromEntriesConfig = value
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        let config: PreferObjectFromEntriesConfig = value
             .as_array()
             .and_then(|arr| arr.first())
             .map(|config| {
@@ -235,10 +239,7 @@ impl Rule for PreferObjectFromEntries {
             })
             .unwrap_or_default();
 
-        config.functions.push("_.fromPairs".into());
-        config.functions.push("lodash.fromPairs".into());
-
-        Self(Box::new(config))
+        Ok(Self(Box::new(config)))
     }
 }
 

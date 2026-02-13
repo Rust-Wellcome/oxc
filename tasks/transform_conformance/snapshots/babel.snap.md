@@ -1,16 +1,15 @@
-commit: 1d4546bc
+commit: 92c052dc
 
-Passed: 711/1200
+Passed: 695/1160
 
 # All Passed:
 * babel-plugin-transform-logical-assignment-operators
+* babel-plugin-transform-export-namespace-from
 * babel-plugin-transform-optional-catch-binding
 * babel-plugin-transform-react-display-name
-* babel-plugin-transform-react-jsx-self
-* babel-plugin-transform-react-jsx-source
 
 
-# babel-preset-env (43/130)
+# babel-preset-env (30/82)
 * dynamic-import/auto-esm-unsupported-import-unsupported/input.mjs
 x Output mismatch
 
@@ -26,31 +25,10 @@ env: Systemjs module is not implemented.
 * dynamic-import/modules-umd/input.mjs
 env: Umd module is not implemented.
 
-* dynamic-import-babel-7/auto-esm-unsupported-import-unsupported/input.mjs
-x Output mismatch
-
-* dynamic-import-babel-7/modules-amd/input.js
-env: Amd module is not implemented.
-
-* dynamic-import-babel-7/modules-cjs/input.mjs
-x Output mismatch
-
-* dynamic-import-babel-7/modules-systemjs/input.mjs
-env: Systemjs module is not implemented.
-
-* dynamic-import-babel-7/modules-umd/input.mjs
-env: Umd module is not implemented.
-
 * export-namespace-from/auto-esm-not-supported/input.mjs
 x Output mismatch
 
 * export-namespace-from/auto-export-namespace-not-supported/input.mjs
-x Output mismatch
-
-* export-namespace-from/false-export-namespace-not-supported/input.mjs
-x Output mismatch
-
-* export-namespace-from/false-export-namespace-not-supported-caller-supported/input.mjs
 x Output mismatch
 
 * modules/auto-cjs/input.mjs
@@ -173,90 +151,6 @@ x Output mismatch
 * preset-options/unicode-sets-regex-chrome-111/input.js
 x Output mismatch
 
-* preset-options-babel-7/browserslist-config-ignore-config-with-false/input.mjs
-x Output mismatch
-
-* preset-options-babel-7/browserslist-config-ignore-package-with-false/input.mjs
-x Output mismatch
-
-* preset-options-babel-7/browserslist-defaults/input.mjs
-x Output mismatch
-
-* preset-options-babel-7/browserslist-defaults-not-ie/input.mjs
-x Output mismatch
-
-* preset-options-babel-7/deno-1_0/input.mjs
-x Output mismatch
-
-* preset-options-babel-7/destructuring-edge/input.js
-x Output mismatch
-
-* preset-options-babel-7/duplicate-named-capturing-groups-regex-chrome-120/input.js
-x Output mismatch
-
-* preset-options-babel-7/empty-options/input.mjs
-x Output mismatch
-
-* preset-options-babel-7/esmodules-async-functions/input.mjs
-x Output mismatch
-
-* preset-options-babel-7/include/input.mjs
-x Output mismatch
-
-* preset-options-babel-7/include-scoped/input.mjs
-x Output mismatch
-
-* preset-options-babel-7/ios-10/input.mjs
-x Output mismatch
-
-* preset-options-babel-7/ios-10_3/input.mjs
-x Output mismatch
-
-* preset-options-babel-7/ios-6/input.mjs
-x Output mismatch
-
-* preset-options-babel-7/loose-typeof-symbol/input.mjs
-x Output mismatch
-
-* preset-options-babel-7/loose-with-typeof-symbol-includes/input.mjs
-x Output mismatch
-
-* preset-options-babel-7/no-options/input.mjs
-x Output mismatch
-
-* preset-options-babel-7/regexp-modifiers-chrome-121/input.js
-x Output mismatch
-
-* preset-options-babel-7/reserved-keys-ie8/input.mjs
-x Output mismatch
-
-* preset-options-babel-7/reserved-names-ie8/input.mjs
-x Output mismatch
-
-* preset-options-babel-7/rhino-1_7_13/input.mjs
-x Output mismatch
-
-* preset-options-babel-7/safari-10_3-block-scoped/input.js
-x Output mismatch
-
-* preset-options-babel-7/safari-tagged-template-literals/input.js
-x Output mismatch
-
-* preset-options-babel-7/shippedProposals/input.js
-x Output mismatch
-
-* preset-options-babel-7/spec/input.js
-x Output mismatch
-
-* preset-options-babel-7/unicode-property-regex-chrome-49/input.js
-x Output mismatch
-
-* preset-options-babel-7/unicode-sets-regex-chrome-111/input.js
-x Output mismatch
-
-* preset-options-babel-7/useBuiltIns-false/input.mjs
-x Output mismatch
-
 * sanity/block-scoping-for-of/input.js
 x Output mismatch
 
@@ -270,6 +164,62 @@ x Output mismatch
 x Output mismatch
 
 * shipped-proposals/new-class-features-firefox-70/input.js
+x Output mismatch
+
+
+# babel-plugin-transform-explicit-resource-management (20/28)
+* integration/commonjs-transform/input.js
+x Output mismatch
+
+* transform-sync/for-head-shadow/input.js
+x Output mismatch
+
+* transform-sync/function-body/input.js
+Bindings mismatch:
+after transform: ScopeId(1): ["_usingCtx", "x"]
+rebuilt        : ScopeId(1): ["_usingCtx"]
+Bindings mismatch:
+after transform: ScopeId(2): []
+rebuilt        : ScopeId(2): ["x"]
+Symbol scope ID mismatch for "x":
+after transform: SymbolId(1): ScopeId(1)
+rebuilt        : SymbolId(2): ScopeId(2)
+
+* transform-sync/multiple-nested/input.js
+Bindings mismatch:
+after transform: ScopeId(3): ["_usingCtx3", "z"]
+rebuilt        : ScopeId(3): ["_usingCtx3"]
+Bindings mismatch:
+after transform: ScopeId(10): []
+rebuilt        : ScopeId(4): ["z"]
+Symbol scope ID mismatch for "z":
+after transform: SymbolId(2): ScopeId(3)
+rebuilt        : SymbolId(5): ScopeId(4)
+
+* transform-sync/named-evaluation/input.js
+x Output mismatch
+
+* transform-top-level/hoisting/input.mjs
+x Output mismatch
+
+* transform-top-level/hoisting-default-class/input.mjs
+x Output mismatch
+
+* transform-top-level/hoisting-mutate-outer-class-binding/input.js
+x Output mismatch
+
+
+# babel-plugin-transform-unicode-sets-regex (0/4)
+* basic/basic/input.js
+x Output mismatch
+
+* basic/string-properties/input.js
+x Output mismatch
+
+* transform-u/basic/input.js
+x Output mismatch
+
+* transform-u/string-properties/input.js
 x Output mismatch
 
 
@@ -455,7 +405,37 @@ x Output mismatch
 x Output mismatch
 
 
-# babel-plugin-transform-class-static-block (17/21)
+# babel-plugin-transform-class-static-block (10/24)
+* class-static-block/before-static-fields/input.js
+x Output mismatch
+
+* class-static-block/class-binding/input.js
+x Output mismatch
+
+* class-static-block/class-declaration/input.js
+x Output mismatch
+
+* class-static-block/class-inferred-name/input.js
+x Output mismatch
+
+* class-static-block/in-class-heritage/input.js
+x Output mismatch
+
+* class-static-block/multiple-static-initializers/input.js
+x Output mismatch
+
+* class-static-block/name-conflict/input.js
+x Output mismatch
+
+* class-static-block/new-target/input.js
+x Output mismatch
+
+* class-static-block/preserve-comments/input.js
+x Output mismatch
+
+* class-static-block/var-scope/input.js
+x Output mismatch
+
 * integration/in-class-heritage/input.js
 x Output mismatch
 
@@ -986,7 +966,7 @@ rebuilt        : ["o"]
 x Output mismatch
 
 
-# babel-plugin-transform-object-rest-spread (28/39)
+# babel-plugin-transform-object-rest-spread (27/40)
 * object-rest/for-x/input.js
 Bindings mismatch:
 after transform: ScopeId(0): ["_excluded", "_excluded2", "_excluded3", "_ref", "a", "b"]
@@ -1121,6 +1101,9 @@ Unresolved references mismatch:
 after transform: ["babelHelpers", "d"]
 rebuilt        : ["_ref3", "babelHelpers", "d"]
 
+* object-rest/object-ref-computed/input.js
+x Output mismatch
+
 * object-rest/parameters-object-rest-used-in-default/input.js
 Symbol reference IDs mismatch for "R":
 after transform: SymbolId(0): [ReferenceId(0)]
@@ -1191,10 +1174,24 @@ Unresolved reference IDs mismatch for "Symbol":
 after transform: [ReferenceId(0), ReferenceId(1), ReferenceId(4)]
 rebuilt        : [ReferenceId(0), ReferenceId(7)]
 
+* regression/gh-17274/input.js
+x Output mismatch
+
 * regression/gh-8323/input.js
 
   x Option `loose` is not implemented for object-rest-spread.
 
+
+
+# babel-plugin-transform-dotall-regex (0/3)
+* dotall-regex/simple/input.js
+x Output mismatch
+
+* dotall-regex/with-unicode-flag/input.js
+x Output mismatch
+
+* dotall-regex/with-unicode-property-escape/input.js
+x Output mismatch
 
 
 # babel-plugin-transform-async-to-generator (10/31)
@@ -1314,17 +1311,7 @@ x Output mismatch
 x Output mismatch
 
 
-# babel-preset-typescript (11/17)
-* jsx-compat/ts-invalid/input.ts
-
-  x Expected `>` but found `/`
-   ,-[tasks/coverage/babel/packages/babel-preset-typescript/test/fixtures/jsx-compat/ts-invalid/input.ts:1:7]
- 1 | (<div />);
-   :       |
-   :       `-- `>` expected
-   `----
-
-
+# babel-preset-typescript (7/12)
 * node-extensions/import-in-cts/input.cts
 x Output mismatch
 
@@ -1343,7 +1330,7 @@ x Output mismatch
 x Output mismatch
 
 
-# babel-plugin-transform-typescript (48/158)
+# babel-plugin-transform-typescript (53/157)
 * cast/as-expression/input.ts
 Unresolved references mismatch:
 after transform: ["T", "x"]
@@ -1364,6 +1351,8 @@ rebuilt        : ["x"]
    :   ^^^^^^^
  9 | 
    `----
+  help: Private identifiers are enforced at runtime, while accessibility
+        modifiers only affect type checking, so using both is redundant.
 
 
   x TS(1243): 'accessor' modifier cannot be used with 'readonly' modifier.
@@ -1373,6 +1362,8 @@ rebuilt        : ["x"]
     :   ^^^^^^^^
  15 | }
     `----
+  help: Allowed modifiers are: private, protected, public, static, abstract,
+        override
 
 
 * class/accessor-allowDeclareFields-true/input.ts
@@ -1385,6 +1376,8 @@ rebuilt        : ["x"]
    :   ^^^^^^^
  9 | 
    `----
+  help: Private identifiers are enforced at runtime, while accessibility
+        modifiers only affect type checking, so using both is redundant.
 
 
   x TS(1243): 'accessor' modifier cannot be used with 'readonly' modifier.
@@ -1394,6 +1387,8 @@ rebuilt        : ["x"]
     :   ^^^^^^^^
  15 | }
     `----
+  help: Allowed modifiers are: private, protected, public, static, abstract,
+        override
 
 
 * class/head/input.ts
@@ -1401,18 +1396,8 @@ Unresolved references mismatch:
 after transform: ["D", "I"]
 rebuilt        : ["D"]
 
-* class/methods/input.ts
-Scope children mismatch:
-after transform: ScopeId(1): [ScopeId(2), ScopeId(3), ScopeId(4), ScopeId(5)]
-rebuilt        : ScopeId(1): [ScopeId(2), ScopeId(3), ScopeId(4)]
-
 * class/parameter-properties-late-super/input.ts
 x Output mismatch
-
-* class/private-method-override/input.ts
-Scope children mismatch:
-after transform: ScopeId(1): [ScopeId(2), ScopeId(3), ScopeId(4)]
-rebuilt        : ScopeId(1): [ScopeId(2)]
 
 * class/private-method-override-transform-private/input.ts
 x Output mismatch
@@ -1421,32 +1406,20 @@ x Output mismatch
 Bindings mismatch:
 after transform: ScopeId(0): ["E"]
 rebuilt        : ScopeId(0): []
-Scope children mismatch:
-after transform: ScopeId(0): [ScopeId(1)]
-rebuilt        : ScopeId(0): []
 
 * declarations/erased/input.ts
 Bindings mismatch:
 after transform: ScopeId(0): ["C", "E", "M", "N", "f", "x"]
-rebuilt        : ScopeId(0): []
-Scope children mismatch:
-after transform: ScopeId(0): [ScopeId(1), ScopeId(2), ScopeId(3), ScopeId(4), ScopeId(5), ScopeId(6), ScopeId(7), ScopeId(8)]
 rebuilt        : ScopeId(0): []
 
 * declarations/export-declare-enum/input.ts
 Bindings mismatch:
 after transform: ScopeId(0): ["A"]
 rebuilt        : ScopeId(0): []
-Scope children mismatch:
-after transform: ScopeId(0): [ScopeId(1)]
-rebuilt        : ScopeId(0): []
 
 * declarations/nested-namespace/input.mjs
 Bindings mismatch:
 after transform: ScopeId(0): ["P"]
-rebuilt        : ScopeId(0): []
-Scope children mismatch:
-after transform: ScopeId(0): [ScopeId(1)]
 rebuilt        : ScopeId(0): []
 
 * enum/boolean-value/input.ts
@@ -1697,9 +1670,6 @@ rebuilt        : SymbolId(0): SymbolFlags(FunctionScopedVariable)
 x Output mismatch
 
 * exports/declare-namespace/input.ts
-Scope children mismatch:
-after transform: ScopeId(0): [ScopeId(1), ScopeId(3)]
-rebuilt        : ScopeId(0): [ScopeId(1)]
 Symbol flags mismatch for "N":
 after transform: SymbolId(0): SymbolFlags(Class | NamespaceModule | Ambient)
 rebuilt        : SymbolId(0): SymbolFlags(Class)
@@ -1711,9 +1681,6 @@ after transform: SymbolId(0): [Span { start: 13, end: 14 }, Span { start: 83, en
 rebuilt        : SymbolId(0): []
 
 * exports/declare-shadowed/input.ts
-Scope children mismatch:
-after transform: ScopeId(0): [ScopeId(1), ScopeId(2), ScopeId(3), ScopeId(4)]
-rebuilt        : ScopeId(0): [ScopeId(1), ScopeId(2)]
 Symbol flags mismatch for "Signal":
 after transform: SymbolId(0): SymbolFlags(Class | Function | Ambient)
 rebuilt        : SymbolId(0): SymbolFlags(Function)
@@ -1738,40 +1705,32 @@ rebuilt        : SymbolId(2): []
 
 * exports/declared-types/input.ts
 Bindings mismatch:
-after transform: ScopeId(0): ["BB", "BB2", "C", "C2", "E", "M", "N", "f", "foo", "x"]
+after transform: ScopeId(0): ["BB", "BB2", "C", "C2", "E", "N", "f", "foo", "x"]
 rebuilt        : ScopeId(0): ["BB", "BB2", "C2", "foo"]
-Scope children mismatch:
-after transform: ScopeId(0): [ScopeId(1), ScopeId(2), ScopeId(3), ScopeId(4), ScopeId(5), ScopeId(6), ScopeId(7), ScopeId(8), ScopeId(9), ScopeId(10), ScopeId(11), ScopeId(12), ScopeId(13), ScopeId(14), ScopeId(15), ScopeId(16), ScopeId(17), ScopeId(18)]
-rebuilt        : ScopeId(0): [ScopeId(1), ScopeId(2), ScopeId(3), ScopeId(4), ScopeId(5)]
 Bindings mismatch:
-after transform: ScopeId(12): ["BB", "K"]
+after transform: ScopeId(11): ["BB", "K"]
 rebuilt        : ScopeId(2): ["BB"]
 Scope flags mismatch:
-after transform: ScopeId(12): ScopeFlags(StrictMode)
+after transform: ScopeId(11): ScopeFlags(StrictMode)
 rebuilt        : ScopeId(2): ScopeFlags(StrictMode | Function)
 Bindings mismatch:
-after transform: ScopeId(13): ["BB", "L"]
+after transform: ScopeId(12): ["BB", "L"]
 rebuilt        : ScopeId(3): ["BB"]
 Scope flags mismatch:
-after transform: ScopeId(13): ScopeFlags(StrictMode)
+after transform: ScopeId(12): ScopeFlags(StrictMode)
 rebuilt        : ScopeId(3): ScopeFlags(StrictMode | Function)
 Scope flags mismatch:
-after transform: ScopeId(16): ScopeFlags(StrictMode)
+after transform: ScopeId(15): ScopeFlags(StrictMode)
 rebuilt        : ScopeId(4): ScopeFlags(StrictMode | Function)
 Symbol flags mismatch for "BB":
-after transform: SymbolId(11): SymbolFlags(RegularEnum)
+after transform: SymbolId(10): SymbolFlags(RegularEnum)
 rebuilt        : SymbolId(1): SymbolFlags(FunctionScopedVariable)
 Symbol redeclarations mismatch for "BB":
-after transform: SymbolId(11): [Span { start: 479, end: 481 }, Span { start: 495, end: 497 }]
+after transform: SymbolId(10): [Span { start: 445, end: 447 }, Span { start: 461, end: 463 }]
 rebuilt        : SymbolId(1): []
 Symbol flags mismatch for "BB2":
-after transform: SymbolId(16): SymbolFlags(RegularEnum)
+after transform: SymbolId(15): SymbolFlags(RegularEnum)
 rebuilt        : SymbolId(4): SymbolFlags(FunctionScopedVariable)
-
-* exports/default-function/input.ts
-Scope children mismatch:
-after transform: ScopeId(0): [ScopeId(1), ScopeId(2), ScopeId(3)]
-rebuilt        : ScopeId(0): [ScopeId(1)]
 
 * exports/export-const-enums/input.ts
 Scope flags mismatch:
@@ -1783,11 +1742,6 @@ rebuilt        : SymbolId(0): SymbolFlags(FunctionScopedVariable)
 Symbol reference IDs mismatch for "None":
 after transform: SymbolId(0): [ReferenceId(0), ReferenceId(2)]
 rebuilt        : SymbolId(0): [ReferenceId(1)]
-
-* exports/export-type/input.ts
-Scope children mismatch:
-after transform: ScopeId(0): [ScopeId(1)]
-rebuilt        : ScopeId(0): []
 
 * exports/imported-types/input.ts
 Bindings mismatch:
@@ -1803,25 +1757,16 @@ rebuilt        : ScopeId(0): ["C"]
 x Output mismatch
 
 * exports/issue-9916-1/input.ts
-Scope children mismatch:
-after transform: ScopeId(0): [ScopeId(1), ScopeId(3)]
-rebuilt        : ScopeId(0): []
 Unresolved references mismatch:
 after transform: ["PromiseLike"]
 rebuilt        : []
 
 * exports/issue-9916-2/input.ts
-Scope children mismatch:
-after transform: ScopeId(0): [ScopeId(1), ScopeId(3)]
-rebuilt        : ScopeId(0): []
 Unresolved references mismatch:
 after transform: ["PromiseLike"]
 rebuilt        : []
 
 * exports/issue-9916-3/input.ts
-Scope children mismatch:
-after transform: ScopeId(0): [ScopeId(1), ScopeId(3)]
-rebuilt        : ScopeId(0): []
 Unresolved references mismatch:
 after transform: ["PromiseLike"]
 rebuilt        : []
@@ -1832,9 +1777,6 @@ after transform: SymbolId(0): [ReferenceId(0)]
 rebuilt        : SymbolId(0): []
 
 * function/overloads/input.ts
-Scope children mismatch:
-after transform: ScopeId(0): [ScopeId(1), ScopeId(2)]
-rebuilt        : ScopeId(0): [ScopeId(1)]
 Symbol span mismatch for "f":
 after transform: SymbolId(0): Span { start: 9, end: 10 }
 rebuilt        : SymbolId(0): Span { start: 29, end: 30 }
@@ -1843,9 +1785,6 @@ after transform: SymbolId(0): [Span { start: 9, end: 10 }, Span { start: 29, end
 rebuilt        : SymbolId(0): []
 
 * function/overloads-exports/input.mjs
-Scope children mismatch:
-after transform: ScopeId(0): [ScopeId(1), ScopeId(2)]
-rebuilt        : ScopeId(0): [ScopeId(1)]
 Symbol span mismatch for "f":
 after transform: SymbolId(0): Span { start: 9, end: 10 }
 rebuilt        : SymbolId(0): Span { start: 29, end: 30 }
@@ -1897,9 +1836,6 @@ rebuilt        : ScopeId(0): ["A", "B"]
 Bindings mismatch:
 after transform: ScopeId(0): ["A", "B", "C", "Class", "D", "E", "F", "G", "H", "x", "y"]
 rebuilt        : ScopeId(0): ["A", "Class", "x", "y"]
-Scope children mismatch:
-after transform: ScopeId(0): [ScopeId(1), ScopeId(2)]
-rebuilt        : ScopeId(0): [ScopeId(1)]
 
 * imports/elision-qualifiedname/input.ts
 Bindings mismatch:
@@ -2013,9 +1949,6 @@ rebuilt        : ScopeId(0): []
 Bindings mismatch:
 after transform: ScopeId(0): ["AliasModule", "LongNameModule", "babel", "bar", "baz", "node", "some", "str"]
 rebuilt        : ScopeId(0): ["AliasModule", "bar", "baz", "node", "some", "str"]
-Scope children mismatch:
-after transform: ScopeId(0): [ScopeId(1)]
-rebuilt        : ScopeId(0): []
 Symbol reference IDs mismatch for "AliasModule":
 after transform: SymbolId(8): [ReferenceId(2), ReferenceId(3), ReferenceId(4)]
 rebuilt        : SymbolId(0): [ReferenceId(1), ReferenceId(2)]
@@ -2272,9 +2205,6 @@ rebuilt        : SymbolId(101): Span { start: 0, end: 0 }
 Bindings mismatch:
 after transform: ScopeId(1): ["B", "C", "_N", "e", "f", "v"]
 rebuilt        : ScopeId(1): ["_N"]
-Scope children mismatch:
-after transform: ScopeId(1): [ScopeId(2), ScopeId(3), ScopeId(4), ScopeId(5)]
-rebuilt        : ScopeId(1): []
 Symbol flags mismatch for "N":
 after transform: SymbolId(0): SymbolFlags(ValueModule)
 rebuilt        : SymbolId(0): SymbolFlags(BlockScopedVariable)
@@ -2283,9 +2213,6 @@ after transform: SymbolId(0): Span { start: 17, end: 18 }
 rebuilt        : SymbolId(0): Span { start: 0, end: 0 }
 
 * namespace/declare-global-nested-namespace/input.ts
-Scope children mismatch:
-after transform: ScopeId(0): [ScopeId(1), ScopeId(3), ScopeId(4)]
-rebuilt        : ScopeId(0): [ScopeId(1), ScopeId(2)]
 Symbol flags mismatch for "X":
 after transform: SymbolId(2): SymbolFlags(ValueModule)
 rebuilt        : SymbolId(0): SymbolFlags(BlockScopedVariable)
@@ -2297,21 +2224,12 @@ rebuilt        : SymbolId(0): Span { start: 0, end: 0 }
 Bindings mismatch:
 after transform: ScopeId(1): ["_a", "b", "c", "d"]
 rebuilt        : ScopeId(1): ["_a", "c"]
-Scope children mismatch:
-after transform: ScopeId(1): [ScopeId(2), ScopeId(3), ScopeId(4)]
-rebuilt        : ScopeId(1): [ScopeId(2)]
 Bindings mismatch:
 after transform: ScopeId(6): ["_WithTypes", "a", "b", "c", "d"]
 rebuilt        : ScopeId(3): ["_WithTypes", "d"]
-Scope children mismatch:
-after transform: ScopeId(6): [ScopeId(7), ScopeId(9), ScopeId(11), ScopeId(12)]
-rebuilt        : ScopeId(3): [ScopeId(4)]
 Bindings mismatch:
 after transform: ScopeId(12): ["D", "_d"]
 rebuilt        : ScopeId(4): ["_d"]
-Scope children mismatch:
-after transform: ScopeId(12): [ScopeId(13)]
-rebuilt        : ScopeId(4): []
 Scope flags mismatch:
 after transform: ScopeId(18): ScopeFlags(StrictMode)
 rebuilt        : ScopeId(9): ScopeFlags(StrictMode | Function)
@@ -2394,49 +2312,6 @@ rebuilt        : SymbolId(0): Span { start: 0, end: 0 }
 Bindings mismatch:
 after transform: ScopeId(0): ["Platform"]
 rebuilt        : ScopeId(0): []
-Scope children mismatch:
-after transform: ScopeId(0): [ScopeId(1)]
-rebuilt        : ScopeId(0): []
-
-* namespace/module-nested/input.ts
-Symbol flags mismatch for "src":
-after transform: SymbolId(0): SymbolFlags(ValueModule)
-rebuilt        : SymbolId(0): SymbolFlags(BlockScopedVariable)
-Symbol span mismatch for "src":
-after transform: SymbolId(0): Span { start: 7, end: 10 }
-rebuilt        : SymbolId(0): Span { start: 0, end: 0 }
-Symbol flags mismatch for "ns1":
-after transform: SymbolId(1): SymbolFlags(ValueModule)
-rebuilt        : SymbolId(2): SymbolFlags(BlockScopedVariable)
-Symbol span mismatch for "ns1":
-after transform: SymbolId(1): Span { start: 32, end: 35 }
-rebuilt        : SymbolId(2): Span { start: 0, end: 0 }
-Symbol flags mismatch for "ns2":
-after transform: SymbolId(3): SymbolFlags(ValueModule)
-rebuilt        : SymbolId(5): SymbolFlags(BlockScopedVariable)
-Symbol span mismatch for "ns2":
-after transform: SymbolId(3): Span { start: 113, end: 116 }
-rebuilt        : SymbolId(5): Span { start: 0, end: 0 }
-
-* namespace/module-nested-export/input.ts
-Symbol flags mismatch for "src":
-after transform: SymbolId(0): SymbolFlags(ValueModule)
-rebuilt        : SymbolId(0): SymbolFlags(BlockScopedVariable)
-Symbol span mismatch for "src":
-after transform: SymbolId(0): Span { start: 14, end: 17 }
-rebuilt        : SymbolId(0): Span { start: 0, end: 0 }
-Symbol flags mismatch for "ns1":
-after transform: SymbolId(1): SymbolFlags(ValueModule)
-rebuilt        : SymbolId(2): SymbolFlags(BlockScopedVariable)
-Symbol span mismatch for "ns1":
-after transform: SymbolId(1): Span { start: 39, end: 42 }
-rebuilt        : SymbolId(2): Span { start: 0, end: 0 }
-Symbol flags mismatch for "ns2":
-after transform: SymbolId(3): SymbolFlags(ValueModule)
-rebuilt        : SymbolId(5): SymbolFlags(BlockScopedVariable)
-Symbol span mismatch for "ns2":
-after transform: SymbolId(3): Span { start: 120, end: 123 }
-rebuilt        : SymbolId(5): Span { start: 0, end: 0 }
 
 * namespace/multiple/input.ts
 Symbol flags mismatch for "N":
@@ -2451,8 +2326,9 @@ rebuilt        : SymbolId(0): []
 
 * namespace/mutable-fail/input.ts
 
-  ! Namespaces exporting non-const are not supported by Babel. Change to const
-  | or see: https://babeljs.io/docs/en/babel-plugin-transform-typescript
+  ! Namespaces exporting non-const are not supported by Oxc. Change
+  | to const or see: https://oxc.rs/docs/guide/usage/transformer/
+  | typescript.html#partial-namespace-support
    ,-[tasks/coverage/babel/packages/babel-plugin-transform-typescript/test/fixtures/namespace/mutable-fail/input.ts:2:14]
  1 | namespace N {
  2 |   export let V;
@@ -2463,9 +2339,9 @@ rebuilt        : SymbolId(0): []
 
 * namespace/namespace-flag/input.ts
 
-  ! Namespace not marked type-only declare. Non-declarative namespaces are
-  | only supported experimentally in Babel. To enable and review caveats see:
-  | https://babeljs.io/docs/en/babel-plugin-transform-typescript
+  ! Namespace not marked type-only declare are disabled. To enable and
+  | review caveats see: https://oxc.rs/docs/guide/usage/transformer/
+  | typescript.html#partial-namespace-support
    ,-[tasks/coverage/babel/packages/babel-plugin-transform-typescript/test/fixtures/namespace/namespace-flag/input.ts:1:1]
  1 | namespace N {}
    : ^^^^^^^^^^^^^^
@@ -2532,9 +2408,6 @@ rebuilt        : SymbolId(20): SymbolFlags(BlockScopedVariable)
 Bindings mismatch:
 after transform: ScopeId(1): ["B", "G", "_A"]
 rebuilt        : ScopeId(1): ["G", "_A"]
-Scope children mismatch:
-after transform: ScopeId(1): [ScopeId(2), ScopeId(4)]
-rebuilt        : ScopeId(1): [ScopeId(2)]
 Bindings mismatch:
 after transform: ScopeId(4): ["G", "H"]
 rebuilt        : ScopeId(2): ["G"]
@@ -2702,7 +2575,7 @@ x Output mismatch
 x Output mismatch
 
 
-# babel-plugin-transform-react-jsx (132/144)
+# babel-plugin-transform-react-jsx (137/149)
 * autoImport/after-polyfills-compiled-to-cjs/input.mjs
 x Output mismatch
 
@@ -2795,65 +2668,8 @@ transform-react-jsx: unknown field `autoImport`, expected one of `runtime`, `dev
 
 
 
-# babel-plugin-transform-react-jsx-development (8/11)
-* cross-platform/disallow-__self-as-jsx-attribute/input.js
-
-  ! Duplicate __self prop found.
-   ,-[tasks/coverage/babel/packages/babel-plugin-transform-react-jsx-development/test/fixtures/cross-platform/disallow-__self-as-jsx-attribute/input.js:1:14]
- 1 | var x = <div __self={self}></div>;
-   :              ^^^^^^
-   `----
-
-
-* cross-platform/disallow-__source-as-jsx-attribute/input.js
-
-  ! Duplicate __source prop found.
-   ,-[tasks/coverage/babel/packages/babel-plugin-transform-react-jsx-development/test/fixtures/cross-platform/disallow-__source-as-jsx-attribute/input.js:1:14]
- 1 | var x = <div __source={source}></div>;
-   :              ^^^^^^^^
-   `----
-
-
+# babel-plugin-transform-react-jsx-development (7/8)
 * cross-platform/within-ts-module-block/input.ts
-x Output mismatch
-
-
-# babel-plugin-proposal-explicit-resource-management (20/27)
-* integration/commonjs-transform/input.js
-x Output mismatch
-
-* transform-sync/function-body/input.js
-Bindings mismatch:
-after transform: ScopeId(1): ["_usingCtx", "x"]
-rebuilt        : ScopeId(1): ["_usingCtx"]
-Bindings mismatch:
-after transform: ScopeId(2): []
-rebuilt        : ScopeId(2): ["x"]
-Symbol scope ID mismatch for "x":
-after transform: SymbolId(1): ScopeId(1)
-rebuilt        : SymbolId(2): ScopeId(2)
-
-* transform-sync/multiple-nested/input.js
-Bindings mismatch:
-after transform: ScopeId(3): ["_usingCtx3", "z"]
-rebuilt        : ScopeId(3): ["_usingCtx3"]
-Bindings mismatch:
-after transform: ScopeId(10): []
-rebuilt        : ScopeId(4): ["z"]
-Symbol scope ID mismatch for "z":
-after transform: SymbolId(2): ScopeId(3)
-rebuilt        : SymbolId(5): ScopeId(4)
-
-* transform-sync/named-evaluation/input.js
-x Output mismatch
-
-* transform-top-level/hoisting/input.mjs
-x Output mismatch
-
-* transform-top-level/hoisting-default-class/input.mjs
-x Output mismatch
-
-* transform-top-level/hoisting-mutate-outer-class-binding/input.js
 x Output mismatch
 
 

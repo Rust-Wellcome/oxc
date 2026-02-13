@@ -18,19 +18,16 @@ fn no_obj_calls_diagnostic(obj_name: &str, span: Span) -> OxcDiagnostic {
         .with_label(span)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct NoObjCalls;
-
-impl Default for NoObjCalls {
-    fn default() -> Self {
-        Self
-    }
-}
 
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// Disallow calling some global objects as functions
+    /// Disallow calling some global objects as functions.
+    ///
+    /// This rule can be disabled for TypeScript code, as the TypeScript compiler
+    /// enforces this check.
     ///
     /// ### Why is this bad?
     ///
@@ -104,7 +101,7 @@ fn resolve_global_binding<'a, 'b: 'a>(
     let decl = nodes.get_node(symbols.symbol_declaration(binding_id));
     match decl.kind() {
         AstKind::VariableDeclarator(parent_decl) => {
-            if !parent_decl.id.kind.is_binding_identifier() {
+            if !parent_decl.id.is_binding_identifier() {
                 return Some(ident.name.as_str());
             }
             match &parent_decl.init {
@@ -126,36 +123,34 @@ fn resolve_global_binding<'a, 'b: 'a>(
 
 impl Rule for NoObjCalls {
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
-        let (callee, span) = match node.kind() {
-            AstKind::NewExpression(expr) => (&expr.callee, expr.span),
-            AstKind::CallExpression(expr) => (&expr.callee, expr.span),
-            _ => return,
-        };
+        match node.kind() {
+            AstKind::NewExpression(expr) => check_callee(&expr.callee, expr.span, node, ctx),
+            AstKind::CallExpression(expr) => check_callee(&expr.callee, expr.span, node, ctx),
+            _ => {}
+        }
+    }
+}
 
-        match callee {
-            Expression::Identifier(ident) => {
-                // handle new Math(), Math(), etc
-                if let Some(top_level_reference) =
-                    resolve_global_binding(ident, node.scope_id(), ctx)
-                {
-                    if is_global_obj(top_level_reference) {
-                        ctx.diagnostic(no_obj_calls_diagnostic(ident.name.as_str(), span));
-                    }
-                }
-            }
-
-            match_member_expression!(Expression) => {
-                // handle new globalThis.Math(), globalThis.Math(), etc
-                if let Some(global_member) = global_this_member(callee.to_member_expression()) {
-                    if is_global_obj(global_member) {
-                        ctx.diagnostic(no_obj_calls_diagnostic(global_member, span));
-                    }
-                }
-            }
-            _ => {
-                // noop
+fn check_callee<'a>(callee: &'a Expression, span: Span, node: &AstNode<'a>, ctx: &LintContext<'a>) {
+    match callee {
+        Expression::Identifier(ident) => {
+            // handle new Math(), Math(), etc
+            if let Some(top_level_reference) = resolve_global_binding(ident, node.scope_id(), ctx)
+                && is_global_obj(top_level_reference)
+            {
+                ctx.diagnostic(no_obj_calls_diagnostic(ident.name.as_str(), span));
             }
         }
+
+        match_member_expression!(Expression) => {
+            // handle new globalThis.Math(), globalThis.Math(), etc
+            if let Some(global_member) = global_this_member(callee.to_member_expression())
+                && is_global_obj(global_member)
+            {
+                ctx.diagnostic(no_obj_calls_diagnostic(global_member, span));
+            }
+        }
+        _ => {}
     }
 }
 
@@ -165,53 +160,46 @@ fn test() {
     // see: https://github.com/eslint/eslint/blob/v9.9.1/tests/lib/rules/no-obj-calls.js
 
     let pass = vec![
-        ("const m = Math;", None),
-        ("let m = foo.Math();", None),
-        ("JSON.parse(\"{}\")", None),
-        ("Math.PI * 2 * (r * r)", None),
-        ("bar.Atomics(foo)", None),
+        "const m = Math;",
+        "let m = foo.Math();",
+        "JSON.parse(\"{}\")",
+        "Math.PI * 2 * (r * r)",
+        "bar.Atomics(foo)",
         // reference test cases
-        (
-            "let j = JSON;
-            function foo() {
-                let j = x => x;
-                return x();
-            }",
-            None,
-        ),
+        "let j = JSON;
+        function foo() {
+            let j = x => x;
+            return x();
+        }",
         // https://github.com/oxc-project/oxc/pull/508#issuecomment-1618850742
-        ("{const Math = () => {}; {let obj = new Math();}}", None),
-        ("{const {parse} = JSON;parse('{}')}", None),
+        "{const Math = () => {}; {let obj = new Math();}}",
+        "{const {parse} = JSON;parse('{}')}",
         // https://github.com/oxc-project/oxc/issues/4389
-        (
-            r"
-        export const getConfig = getConfig;
+        r"export const getConfig = getConfig;
         getConfig();",
-            None,
-        ),
     ];
 
     let fail = vec![
-        ("let newObj = new JSON();", None),
-        ("let obj = JSON();", None),
-        ("let obj = globalThis.JSON()", None),
-        ("new JSON", None),
-        ("const foo = x => new JSON()", None),
-        ("let newObj = new Math();", None),
-        ("let obj = Math();", None),
-        ("let obj = new Math().foo;", None),
-        ("let obj = new globalThis.Math()", None),
-        ("let newObj = new Atomics();", None),
-        ("let obj = Atomics();", None),
-        ("let newObj = new Intl();", None),
-        ("let obj = Intl();", None),
-        ("let newObj = new Reflect();", None),
-        ("let obj = Reflect();", None),
-        ("function d() { JSON.parse(Atomics()) }", None),
+        "let newObj = new JSON();",
+        "let obj = JSON();",
+        "let obj = globalThis.JSON()",
+        "new JSON",
+        "const foo = x => new JSON()",
+        "let newObj = new Math();",
+        "let obj = Math();",
+        "let obj = new Math().foo;",
+        "let obj = new globalThis.Math()",
+        "let newObj = new Atomics();",
+        "let obj = Atomics();",
+        "let newObj = new Intl();",
+        "let obj = Intl();",
+        "let newObj = new Reflect();",
+        "let obj = Reflect();",
+        "function d() { JSON.parse(Atomics()) }",
         // reference test cases
-        ("let j = JSON; j();", None),
-        ("let a = JSON; let b = a; let c = b; b();", None),
-        ("let m = globalThis.Math; new m();", None),
+        "let j = JSON; j();",
+        "let a = JSON; let b = a; let c = b; b();",
+        "let m = globalThis.Math; new m();",
     ];
 
     Tester::new(NoObjCalls::NAME, NoObjCalls::PLUGIN, pass, fail).test_and_snapshot();

@@ -3,8 +3,14 @@ use fast_glob::glob_match;
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{CompactStr, Span};
+use schemars::JsonSchema;
+use serde::Deserialize;
 
-use crate::{context::LintContext, module_record::ImportImportName, rule::Rule};
+use crate::{
+    context::LintContext,
+    module_record::ImportImportName,
+    rule::{DefaultRuleConfig, Rule},
+};
 
 fn no_namespace_diagnostic(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Usage of namespaced aka wildcard \"*\" imports prohibited")
@@ -12,11 +18,14 @@ fn no_namespace_diagnostic(span: Span) -> OxcDiagnostic {
         .with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct NoNamespace(Box<NoNamespaceConfig>);
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct NoNamespaceConfig {
+    /// An array of glob strings for modules that should be ignored by the rule.
+    /// For example, `["*.json"]` will ignore all JSON imports.
     ignore: Vec<CompactStr>,
 }
 
@@ -49,16 +58,6 @@ declare_oxc_lint!(
     /// * **Explicit Imports**: Modern JavaScript practices encourage explicit imports for specific components. This enhances code readability and maintainability.
     /// * **Tree-Shaking**: Tools like Webpack and Rollup use tree-shaking to remove unused code from your bundles. Namespaced imports can prevent efficient tree-shaking, leading to larger bundle sizes.
     ///
-    /// ### Options
-    ///
-    /// `ignore` : array of glob strings for modules that should be ignored by the rule.
-    ///
-    /// ```json
-    /// {
-    ///     "ignore": ["*.json"]
-    /// }
-    /// ```
-    ///
     /// ### Examples
     ///
     /// Examples of **incorrect** code for this rule:
@@ -78,22 +77,14 @@ declare_oxc_lint!(
     NoNamespace,
     import,
     style,
-    pending  // TODO: fixer
+    pending,  // TODO: fixer
+    config = NoNamespaceConfig,
 );
 
 /// <https://github.com/import-js/eslint-plugin-import/blob/v2.29.1/docs/rules/no-namespace.md>
 impl Rule for NoNamespace {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let obj = value.get(0);
-        Self(Box::new(NoNamespaceConfig {
-            ignore: obj
-                .and_then(|v| v.get("ignore"))
-                .and_then(serde_json::Value::as_array)
-                .map(|v| {
-                    v.iter().filter_map(serde_json::Value::as_str).map(CompactStr::from).collect()
-                })
-                .unwrap_or_default(),
-        }))
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run_once(&self, ctx: &LintContext<'_>) {
@@ -107,19 +98,11 @@ impl Rule for NoNamespace {
             ImportImportName::NamespaceObject => {
                 let source = entry.module_request.name();
 
-                if self.ignore.is_empty() {
-                    ctx.diagnostic(no_namespace_diagnostic(entry.local_name.span));
-                } else {
-                    if !source.contains('.') {
-                        return;
-                    }
-
-                    if self.ignore.iter().any(|pattern| {
-                        glob_match(pattern.as_str(), source.trim_start_matches("./"))
-                    }) {
-                        return;
-                    }
-
+                if self.ignore.is_empty()
+                    || self.ignore.iter().all(|pattern| {
+                        !glob_match(pattern.as_str(), source.trim_start_matches("./"))
+                    })
+                {
                     ctx.diagnostic(no_namespace_diagnostic(entry.local_name.span));
                 }
             }
@@ -152,6 +135,13 @@ fn test() {
         (r"import * as foo from 'foo';", None),
         (r"import defaultExport, * as foo from 'foo';", None),
         (r"import * as foo from './foo';", None),
+        (
+            r"
+            import * as zod from 'zod'
+            import * as DrizzleKit from 'drizzle-kit/api'
+            ",
+            Some(serde_json::json!([{ "ignore": ["zod"] }])),
+        ),
     ];
 
     Tester::new(NoNamespace::NAME, NoNamespace::PLUGIN, pass, fail)

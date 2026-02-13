@@ -4,7 +4,7 @@ use oxc_allocator::{Allocator, Vec as ArenaVec};
 use oxc_ast::ast::*;
 use oxc_ast_visit::Visit;
 use oxc_semantic::{NodeId, Reference, Scoping};
-use oxc_span::SPAN;
+use oxc_span::{Ident, SPAN};
 use oxc_syntax::{
     reference::{ReferenceFlags, ReferenceId},
     scope::{ScopeFlags, ScopeId},
@@ -156,11 +156,6 @@ impl<'a> TraverseScoping<'a> {
         child_scope_ids: &[ScopeId],
         flags: ScopeFlags,
     ) -> ScopeId {
-        // Remove these scopes from parent's children
-        if self.scoping.has_scope_child_ids() {
-            self.scoping.remove_child_scopes(scope_id, child_scope_ids);
-        }
-
         // Create new scope as child of parent
         let new_scope_id = self.create_child_scope(scope_id, flags);
 
@@ -205,9 +200,6 @@ impl<'a> TraverseScoping<'a> {
             "Child scope must be a child of parent scope"
         );
 
-        if self.scoping.has_scope_child_ids() {
-            self.scoping.remove_child_scope(parent_id, child_id);
-        }
         self.scoping.set_scope_parent_id(child_id, Some(scope_id));
         scope_id
     }
@@ -234,8 +226,6 @@ impl<'a> TraverseScoping<'a> {
                 self.scoping.set_scope_parent_id(child_id, parent_id);
             }
         }
-
-        self.scoping.delete_scope(scope_id);
     }
 
     /// Add binding to `ScopeTree` and `SymbolTable`.
@@ -246,6 +236,7 @@ impl<'a> TraverseScoping<'a> {
         scope_id: ScopeId,
         flags: SymbolFlags,
     ) -> SymbolId {
+        let name = Ident::from(name);
         let symbol_id = self.scoping.create_symbol(SPAN, name, flags, scope_id, NodeId::DUMMY);
         self.scoping.add_binding(scope_id, name, symbol_id);
 
@@ -299,7 +290,8 @@ impl<'a> TraverseScoping<'a> {
         symbol_id: SymbolId,
         flags: ReferenceFlags,
     ) -> ReferenceId {
-        let reference = Reference::new_with_symbol_id(NodeId::DUMMY, symbol_id, flags);
+        let reference =
+            Reference::new_with_symbol_id(NodeId::DUMMY, symbol_id, self.current_scope_id, flags);
         let reference_id = self.scoping.create_reference(reference);
         self.scoping.add_resolved_reference(symbol_id, reference_id);
         reference_id
@@ -307,9 +299,9 @@ impl<'a> TraverseScoping<'a> {
 
     /// Create an unbound reference
     pub fn create_unbound_reference(&mut self, name: &str, flags: ReferenceFlags) -> ReferenceId {
-        let reference = Reference::new(NodeId::DUMMY, flags);
+        let reference = Reference::new(NodeId::DUMMY, self.current_scope_id, flags);
         let reference_id = self.scoping.create_reference(reference);
-        self.scoping.add_root_unresolved_reference(name, reference_id);
+        self.scoping.add_root_unresolved_reference(Ident::from(name), reference_id);
         reference_id
     }
 
@@ -348,7 +340,7 @@ impl<'a> TraverseScoping<'a> {
         if let Some(symbol_id) = symbol_id {
             self.scoping.delete_resolved_reference(symbol_id, reference_id);
         } else {
-            self.scoping.delete_root_unresolved_reference(name, reference_id);
+            self.scoping.delete_root_unresolved_reference(Ident::from(name), reference_id);
         }
     }
 

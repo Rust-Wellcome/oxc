@@ -2,8 +2,14 @@ use oxc_ast::{AstKind, ast::Expression};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
+use schemars::JsonSchema;
+use serde::Deserialize;
 
-use crate::{AstNode, context::LintContext, rule::Rule};
+use crate::{
+    AstNode,
+    context::LintContext,
+    rule::{DefaultRuleConfig, Rule},
+};
 
 fn no_multi_assign_diagnostic(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Do not use chained assignment")
@@ -11,8 +17,32 @@ fn no_multi_assign_diagnostic(span: Span) -> OxcDiagnostic {
         .with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct NoMultiAssign {
+    /// When set to `true`, the rule allows chains that don't include initializing a variable in a declaration or initializing a class field.
+    ///
+    /// Examples of **correct** code for this option set to `true`:
+    /// ```js
+    /// let a;
+    /// let b;
+    /// a = b = "baz";
+    ///
+    /// const x = {};
+    /// const y = {};
+    /// x.one = y.one = 1;
+    /// ```
+    ///
+    /// Examples of **incorrect** code for this option set to `true`:
+    /// ```js
+    /// let a = b = "baz";
+    ///
+    /// const foo = bar = 1;
+    ///
+    /// class Foo {
+    ///     a = b = 10;
+    /// }
+    /// ```
     ignore_non_declaration: bool,
 }
 
@@ -71,76 +101,44 @@ declare_oxc_lint!(
     /// a = "quux";
     /// b = "quux";
     /// ```
-    ///
-    /// ### Options
-    ///
-    /// This rule has an object option:
-    /// * `"ignoreNonDeclaration"`: When set to `true`, the rule allows chains that don't include initializing a variable in a declaration or initializing a class field. Default is `false`.
-    ///
-    /// #### ignoreNonDeclaration
-    ///
-    /// Examples of **correct** code for the `{ "ignoreNonDeclaration": true }` option:
-    /// ```js
-    /// let a;
-    /// let b;
-    /// a = b = "baz";
-    ///
-    /// const x = {};
-    /// const y = {};
-    /// x.one = y.one = 1;
-    /// ```
-    ///
-    /// Examples of **incorrect** code for the `{ "ignoreNonDeclaration": true }` option:
-    /// ```js
-    /// let a = b = "baz";
-    ///
-    /// const foo = bar = 1;
-    ///
-    /// class Foo {
-    ///     a = b = 10;
-    /// }
-    /// ```
     NoMultiAssign,
     eslint,
     style,
+    config = NoMultiAssign,
 );
 
 impl Rule for NoMultiAssign {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let ignore_non_declaration = value
-            .get(0)
-            .and_then(|config| config.get("ignoreNonDeclaration"))
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
-
-        Self { ignore_non_declaration }
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
-        // e.g. `var a = b = c;`
-        if let AstKind::VariableDeclarator(declarator) = node.kind() {
-            let Some(Expression::AssignmentExpression(assign_expr)) = &declarator.init else {
-                return;
-            };
-            ctx.diagnostic(no_multi_assign_diagnostic(assign_expr.span));
-        }
-
-        // e.g. `class A { a = b = 1; }`
-        if let AstKind::PropertyDefinition(prop_def) = node.kind() {
-            let Some(Expression::AssignmentExpression(assign_expr)) = &prop_def.value else {
-                return;
-            };
-            ctx.diagnostic(no_multi_assign_diagnostic(assign_expr.span));
-        }
-
-        // e.g. `let a; let b; a = b = 1;`
-        if !self.ignore_non_declaration {
-            if let AstKind::AssignmentExpression(parent_expr) = node.kind() {
+        match node.kind() {
+            // e.g. `var a = b = c;`
+            AstKind::VariableDeclarator(declarator) => {
+                let Some(Expression::AssignmentExpression(assign_expr)) = &declarator.init else {
+                    return;
+                };
+                ctx.diagnostic(no_multi_assign_diagnostic(assign_expr.span));
+            }
+            // e.g. `class A { a = b = 1; }`
+            AstKind::PropertyDefinition(prop_def) => {
+                let Some(Expression::AssignmentExpression(assign_expr)) = &prop_def.value else {
+                    return;
+                };
+                ctx.diagnostic(no_multi_assign_diagnostic(assign_expr.span));
+            }
+            // e.g. `let a; let b; a = b = 1;`
+            AstKind::AssignmentExpression(parent_expr) => {
+                if self.ignore_non_declaration {
+                    return;
+                }
                 let Expression::AssignmentExpression(expr) = &parent_expr.right else {
                     return;
                 };
                 ctx.diagnostic(no_multi_assign_diagnostic(expr.span));
             }
+            _ => {}
         }
     }
 }

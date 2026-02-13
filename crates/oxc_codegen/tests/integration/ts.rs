@@ -2,7 +2,7 @@ use oxc_codegen::CodegenOptions;
 
 use crate::{
     snapshot, snapshot_options,
-    tester::{test_same, test_tsx},
+    tester::{test_idempotency, test_same, test_tsx},
 };
 
 #[test]
@@ -59,7 +59,7 @@ fn ts() {
         "function <const T>(){}",
         "class A {m?(): void}",
         "class A {constructor(public readonly a: number) {}}",
-        "abstract class A {private abstract static m() {}}",
+        "abstract class A {private abstract static m()}",
         "abstract class A {private abstract static readonly prop: string}",
         "interface A { a: string, 'b': number, 'c'(): void }",
         "enum A { a, 'b' }",
@@ -68,6 +68,7 @@ fn ts() {
         "a = x!;",
         "b = (x as y);",
         "c = foo<string>;",
+        "new Map<string, number>();",
         "d = x satisfies y;",
         "export @x declare abstract class C {}",
         "div<T>``",
@@ -132,8 +133,37 @@ export import b = require("b");
   static
   bar() {}
 }",
+        // TSImportType - ensure backticks are not used in minify mode
+        "type T = typeof import('react');",
+        "type U = typeof import(\"vue\");",
+        "type V = typeof import('some-module').SomeType;",
+        "type W = typeof import('pkg').default<string>;",
     ];
 
     snapshot("ts", &cases);
     snapshot_options("minify", &cases, &CodegenOptions::minify());
+}
+
+#[test]
+fn ts_as_expression_in_binary_expr() {
+    test_idempotency("key in (that as object)");
+    test_idempotency("'foo' in (x as Record<string, unknown>)");
+    test_idempotency("(x as object) instanceof Map");
+    test_idempotency("'foo' in ((x as object) as Record<string, unknown>)");
+    test_idempotency(
+        "!(typeof that === 'object' && 'keys' in that && typeof (that as object & { keys: unknown }).keys === 'function')",
+    );
+}
+
+#[test]
+fn ts_satisfies_expression() {
+    test_idempotency("d = x satisfies y");
+    test_idempotency("const Foo = (() => {})() satisfies X");
+    test_idempotency("const Bar = (x as Y) satisfies Z");
+    test_idempotency("(x satisfies Y).foo");
+    test_idempotency("(x satisfies Y)[0]");
+    test_idempotency("(x satisfies Y)()");
+    test_idempotency("x satisfies Y || z");
+    test_idempotency("x satisfies Y && z");
+    test_idempotency("x satisfies Y === z");
 }

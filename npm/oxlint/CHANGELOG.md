@@ -4,6 +4,189 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [1.42.0] - 2026-01-26
+
+### 🚀 Features
+
+- 15d69dc linter: Implement react/display-name rule (#18426) (camchenry)
+
+### 📚 Documentation
+
+- 8ccd853 npm: Update package homepage URLs and add keywords (#18509) (Boshen)
+
+## [1.41.0] - 2026-01-19
+
+### 📚 Documentation
+
+- 8a294d5 oxfmt, oxlint: Update logo (#18242) (Dunqing)
+
+## [1.37.0] - 2026-01-05
+
+### 💥 BREAKING CHANGES
+
+- f7da875 oxlint: [**BREAKING**] Remove oxc_language_server binary (#17457) (Boshen)
+
+### 📚 Documentation
+
+- 7e5fc90 linter: Update list of plugins that are reserved. (#17516) (connorshea)
+
+## [1.35.0] - 2025-12-22
+
+### 🚀 Features
+
+- 9e624c9 linter/react: Add `version` to `ReactPluginSettings` (#17169) (camc314)
+
+## [1.34.0] - 2025-12-19
+
+### 🚀 Features
+
+- a0f74a0 linter/config: Allow aliasing plugin names to allow names the same as builtin plugins (#15569) (Cameron)
+
+### 🐛 Bug Fixes
+
+- 005ec25 linter: Permit `$schema` `.oxlintrc.json` struct (#17060) (Copilot)
+- d446c43 linter: Prevent extra fields from being present on oxlint config file (#16874) (connorshea)
+
+## [1.30.0] - 2025-11-24
+
+### 🚀 Features
+
+- 595867a oxlint: Generate markdownDescription fields for oxlint JSON schema. (#15959) (connorshea)
+
+## [1.29.0] - 2025-11-17
+
+### 🚀 Features
+
+- 84de1ca oxlint,oxfmt: Allow comments and also commas for vscode-json-ls (#15612) (leaysgur)
+
+## [1.26.0] - 2025-11-05
+
+### 🚀 Features
+
+- 26f24d5 linter: Permit comments in `.oxlintrc.json` via json schema file (#15249) (Martin Leduc)
+
+### 🐛 Bug Fixes
+
+- d6996d0 linter: Fix JSON schema to deny additional properties for categories enum. (#15257) (Connor Shea)
+- 9304f9f linter: Fix JSON schema to deny additional properties for plugins enum. (#15259) (Connor Shea)
+
+### 📚 Documentation
+
+- 84ef5ab linter: Avoid linebreaks for markdown links and update plugins docs in the configuration schema. (#15246) (Connor Shea)
+
+
+## [1.25.0] - 2025-10-30
+
+### 🚀 Features
+
+- bd74603 linter: Add support for vitest/valid-title rule (#12085) (Tyler Earls)
+
+
+## [1.24.0] - 2025-10-22
+
+### 🐛 Bug Fixes
+
+- 28e76ec oxlint: Resolving JS plugin failing when `extends` is used (#14556) (camc314)
+
+
+
+
+## [1.21.0] - 2025-10-08
+
+### 🐛 Bug Fixes
+
+- 6e8d2f6 language_server: Ignore JS plugins (#14379) (overlookmotel)
+
+
+
+## [1.19.0] - 2025-09-29
+
+### 🚀 Features
+
+- b4d716f linter/plugins: Move custom JS plugin config to `jsPlugins` (#14133) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- 8879b5a linter/plugins: Add types export to `npm/oxlint` (#14219) (overlookmotel)
+
+
+
+## [1.17.0] - 2025-09-23
+
+### 🚀 Features
+
+- 3e117c6 linter/plugins: Add `defineRule` API (#13945) (overlookmotel)
+- a14aa79 npm/oxlint: Convert to ES modules (#13876) (Boshen)
+- b52389a node: Bump `engines` field to require Node.js 20.19.0+ for ESM support (#13879) (Copilot)
+- 53d04dd linter: Convert `oxlint` to NAPI app (#13723) (overlookmotel)
+
+### 🚜 Refactor
+
+- bb040bc parser, linter: Replace `.mjs` files with `.js` (#14045) (overlookmotel)
+- 7e0d736 linter/plugins: Rename `--experimental-js-plugins` to `--js-plugins` (#13860) (overlookmotel)
+
+
+
+
+## [1.14.0] - 2025-08-30
+
+### 🚀 Features
+
+- 7fc4aef npm/oxlint: 'oxlint-tsgolint': '>=0.1.4' (Boshen)
+
+
+## [1.13.0] - 2025-08-26
+
+### 🐛 Bug Fixes
+
+- 02c779f npm/oxlint: Make `oxlint-tsgolint` truly optional (#13153) (Boshen)
+
+
+
+
+## [1.11.1] - 2025-08-09
+
+### 🐛 Bug Fixes
+
+- 8c57153 npm/oxlint: Fix `oxlint-tsgolint` version range for yarn (Boshen)
+
+### 🚜 Refactor
+
+- 238b183 linter: Use `fast-glob` instead of `globset` for `GlobSet` (#12870) (shulaoda)
+
+
+## [1.11.0] - 2025-08-07
+
+### 🚀 Features
+
+- ac46347 oxlint: Add `tsgolint` integration (#12485) (camchenry)
+
+
+## [1.10.0] - 2025-08-06
+
+### 🚀 Features
+
+- 9b35600 linter/jsx-a11y: Add support for mapped attributes in label association checks (#12805) (camc314)
+
+
+## [1.9.0] - 2025-07-29
+
+### 🚜 Refactor
+
+- bea652f linter: Add `vue` and `regex` to `BuiltinLintPlugins` (#12542) (Sysix)
+
+
+
+## [1.7.0] - 2025-07-16
+
+### 🚀 Features
+
+- a4dae73 linter: Introduce `LintPlugins` to store builtin + custom plugins (#12117) (camc314)
+
+
+
+
+
 
 
 

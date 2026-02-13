@@ -4,6 +4,183 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.111.0] - 2026-01-26
+
+### 🚀 Features
+
+- 8db0e78 linter/plugins: Handle BOMs (#18376) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- c205b0d ast: Remove `ThisExpression` from `TSModuleReference` (#18489) (Boshen)
+
+## [0.109.0] - 2026-01-19
+
+### 💥 BREAKING CHANGES
+
+- 9135b0b ast: [**BREAKING**] Move scope from `TSEnumDeclaration` to `TSEnumBody` (#18058) (Boshen)
+
+## [0.103.0] - 2025-12-15
+
+### 🚀 Features
+
+- d221921 semantic: ScopeFlags::With (#16291) (Aapo Alasuutari)
+
+## [0.100.0] - 2025-12-01
+
+### 💥 BREAKING CHANGES
+
+- 74cf572 ast: [**BREAKING**] Make `source` field of `TSImportType` a `StringLiteral` (#16114) (copilot-swe-agent)
+- 43156ae ast: [**BREAKING**] Rename `TSImportType` `argument` field to `source` (#16110) (overlookmotel)
+
+## [0.99.0] - 2025-11-24
+
+### 💥 BREAKING CHANGES
+
+- cbb27fd ast: [**BREAKING**] Add `TSGlobalDeclaration` type (#15712) (overlookmotel)
+
+## [0.96.0] - 2025-10-30
+
+### 🚀 Features
+
+- bec7a7d semantic: Add scope to `TSConstructorType` (#14676) (camc314)
+- f45d2f0 semantic: Add scope to `TSCallSignatureDeclaration` (#14672) (camc314)
+
+### 🐛 Bug Fixes
+
+- be94bfd semantic: Add scope tracking for `with` statements (#14652) (Boshen)
+
+
+
+
+
+
+## [0.91.0] - 2025-09-22
+
+### 🚀 Features
+
+- a14aa79 npm/oxlint: Convert to ES modules (#13876) (Boshen)
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
+## [0.91.0] - 2025-09-21
+
+### 🚀 Features
+
+- a14aa79 npm/oxlint: Convert to ES modules (#13876) (Boshen)
+
+
+
+
+
+
+
+
+
+## [0.83.0] - 2025-08-29
+
+### 🚀 Features
+
+- bb10c88 ast_visit: Add `Utf8ToUtf16Converter::convert_program` method (#13341) (overlookmotel)
+- 59d2c08 ast_visit: `Utf8ToUtf16` translate back from UTF-16 to UTF-8 (#13340) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- 1cdc420 ast_visit: Correct and expand comments in `Utf8ToUtf16Converter` (#13310) (overlookmotel)
+
+### 🚜 Refactor
+
+- cd5a9ca ast_visit: `Utf8ToUtf16` record end offset of multi-byte chars (#13339) (overlookmotel)
+
+
+
+
+
+## [0.82.0] - 2025-08-12
+
+### 💥 BREAKING CHANGES
+
+- 128b527 data_structures: [**BREAKING**] Remove `PointerExt` trait (#12903) (overlookmotel)
+
+### 🚜 Refactor
+
+- c072e01 all: Add missing lifetimes in function return types (#12895) (overlookmotel)
+
+
+## [0.81.0] - 2025-08-06
+
+### 💥 BREAKING CHANGES
+
+- 2cc1001 ast: [**BREAKING**] Remove `ExportDefaultDeclaration` `exported` field (#12808) (overlookmotel)
+- 50b91ac ast: [**BREAKING**] Remove `IdentifierReference` from `qualifier` field of `TSImportType` (#12799) (camc314)
+
+
+## [0.80.0] - 2025-08-03
+
+### 💥 BREAKING CHANGES
+
+- cd93174 ast: [**BREAKING**] Introduce `WithClauseKeyword` (#12741) (overlookmotel)
+
+### 📚 Documentation
+
+- de1de35 rust: Add comprehensive README.md documentation for all Rust crates (#12706) (Copilot)
+
+
+
+## [0.79.0] - 2025-07-30
+
+### 🚜 Refactor
+
+- a696227 linter: Remove AstKind for SimpleAssignmentTarget (#12401) (Tyler Earls)
+
+
+
+
+
+## [0.77.1] - 2025-07-16
+
+### 🚀 Features
+
+- 9b14fbc ast: Add `ThisExpression` to `TSTypeName` (#12156) (Boshen)
+
+### 🚜 Refactor
+
+- ee761de ast: Remove `AstKind` for `AssignmentTarget` (#12252) (Tyler Earls)
+- c025868 ast: Remove `AstKind` for `TSFunctionType` (#12287) (camc314)
+
+
+## [0.77.0] - 2025-07-12
+
+### 🚜 Refactor
+
+- 8814c53 ast: Remove `AstKind` for `PropertyKey` (#12108) (camchenry)
+
+
+## [0.76.0] - 2025-07-08
+
+### 🚜 Refactor
+
+- e8e2a25 ast: Remove `AstKind` for `AssignmentTargetPattern` (#12105) (camchenry)
+
+
+## [0.75.1] - 2025-07-03
+
+### 🚜 Refactor
+
+- f1d4086 ast: Remove `AstKind` for `ModuleDeclaration` (#12022) (camchenry)
+- 754c05a ast: Remove `AstKind` for `TSTypeName` (#11990) (camchenry)
+- f7a2ae4 ast: Add `AstKind` for `AssignmentTargetPropertyIdentifier`, `AssignmentTargetPropertyProperty` (#11985) (camc314)
+- cfa52c2 ast: Add `AstKind` for `AssignmentTargetRest` (#11984) (camc314)
+- 54582cb ast: Add `AstKind` for `BindingProperty` (#11974) (camc314)
+- 9f6784a ast: Add `AstKind` for `TSInterfaceBody` (#11967) (camc314)
+- 3f50cef ast: Add `AstKind` for `TSIndexSignature` (#11966) (camc314)
+- 03bce3f ast: Add `AstKind` for `TSConstructorType` (#11965) (camc314)
+- 0cef370 ast: Add `AstKind::TemplateElement` (#11955) (camchenry)
+
+
 ## [0.75.0] - 2025-06-25
 
 ### 🚜 Refactor

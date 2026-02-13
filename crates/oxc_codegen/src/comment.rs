@@ -1,19 +1,17 @@
-use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 
-use oxc_ast::{Comment, CommentKind, ast::Program};
-use oxc_syntax::identifier::is_line_terminator;
+use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::{Codegen, LegalComment};
+use oxc_ast::{Comment, CommentKind, ast::Program};
+use oxc_syntax::line_terminator::LineTerminatorSplitter;
+
+use crate::{Codegen, LegalComment, options::CommentOptions};
 
 pub type CommentsMap = FxHashMap</* attached_to */ u32, Vec<Comment>>;
 
 impl Codegen<'_> {
     pub(crate) fn build_comments(&mut self, comments: &[Comment]) {
-        if !self.options.comments
-            && self.options.legal_comments.is_none()
-            && !self.options.annotation_comments
-        {
+        if self.options.comments == CommentOptions::disabled() {
             return;
         }
         for comment in comments {
@@ -24,6 +22,9 @@ impl Codegen<'_> {
             let mut add = false;
             if comment.is_leading() {
                 if comment.is_legal() && self.options.print_legal_comment() {
+                    add = true;
+                }
+                if comment.is_jsdoc() && self.options.print_jsdoc_comment() {
                     add = true;
                 }
                 if comment.is_annotation() && self.options.print_annotation_comment() {
@@ -84,40 +85,59 @@ impl Codegen<'_> {
     }
 
     pub(crate) fn print_comments(&mut self, comments: &[Comment]) {
-        for (i, comment) in comments.iter().enumerate() {
-            if i == 0 {
-                if comment.preceded_by_newline() {
-                    // Skip printing newline if this comment is already on a newline.
-                    if let Some(b) = self.last_byte() {
-                        match b {
-                            b'\n' => self.print_indent(),
-                            b'\t' => { /* noop */ }
-                            _ => {
-                                self.print_hard_newline();
-                                self.print_indent();
-                            }
-                        }
+        let Some((first, rest)) = comments.split_first() else {
+            return;
+        };
+
+        if first.preceded_by_newline() {
+            // Skip printing newline if this comment is already on a newline.
+            if let Some(b) = self.last_byte() {
+                match b {
+                    b'\n' => self.print_indent(),
+                    b'\t' => { /* noop */ }
+                    _ => {
+                        self.print_hard_newline();
+                        self.print_indent();
                     }
-                } else {
-                    self.print_indent();
                 }
             }
-            if i >= 1 {
+        } else {
+            self.print_indent();
+        }
+        self.print_comment(first);
+
+        if let Some((last, middle)) = rest.split_last() {
+            for comment in middle {
                 if comment.preceded_by_newline() {
                     self.print_hard_newline();
                     self.print_indent();
                 } else if comment.is_legal() {
                     self.print_hard_newline();
-                }
-            }
-            self.print_comment(comment);
-            if i == comments.len() - 1 {
-                if comment.is_line() || comment.followed_by_newline() {
-                    self.print_hard_newline();
                 } else {
-                    self.print_next_indent_as_space = true;
+                    self.print_soft_space();
                 }
+                self.print_comment(comment);
             }
+
+            if last.preceded_by_newline() {
+                self.print_hard_newline();
+                self.print_indent();
+            } else if last.is_legal() {
+                self.print_hard_newline();
+            } else {
+                self.print_soft_space();
+            }
+            self.print_comment(last);
+
+            if last.is_line() || last.followed_by_newline() {
+                self.print_hard_newline();
+            } else {
+                self.print_next_indent_as_space = true;
+            }
+        } else if first.is_line() || first.followed_by_newline() {
+            self.print_hard_newline();
+        } else {
+            self.print_next_indent_as_space = true;
         }
     }
 
@@ -127,16 +147,15 @@ impl Codegen<'_> {
         };
         let comment_source = comment.span.source_text(source_text);
         match comment.kind {
-            CommentKind::Line => {
-                self.print_str(comment_source);
+            CommentKind::Line | CommentKind::SingleLineBlock => {
+                self.print_str_escaping_script_close_tag(comment_source);
             }
-            CommentKind::Block => {
-                // Print block comments with our own indentation.
-                for line in comment_source.split(is_line_terminator) {
+            CommentKind::MultiLineBlock => {
+                for line in LineTerminatorSplitter::new(comment_source) {
                     if !line.starts_with("/*") {
                         self.print_indent();
                     }
-                    self.print_str(line.trim_start());
+                    self.print_str_escaping_script_close_tag(line.trim_start());
                     if !line.ends_with("*/") {
                         self.print_hard_newline();
                     }
@@ -151,7 +170,7 @@ impl Codegen<'_> {
         &mut self,
         program: &Program<'_>,
     ) -> Vec<Comment> {
-        let legal_comments = &self.options.legal_comments;
+        let legal_comments = &self.options.comments.legal;
         if matches!(legal_comments, LegalComment::None | LegalComment::Inline) {
             return vec![];
         }
@@ -163,10 +182,10 @@ impl Codegen<'_> {
         let source_text = program.source_text;
         for comment in program.comments.iter().filter(|c| c.is_legal()) {
             let mut text = Cow::Borrowed(comment.span.source_text(source_text));
-            if comment.is_block() && text.contains(is_line_terminator) {
+            if comment.is_multiline_block() {
                 let mut buffer = String::with_capacity(text.len());
                 // Print block comments with our own indentation.
-                for line in text.split(is_line_terminator) {
+                for line in LineTerminatorSplitter::new(&text) {
                     if !line.starts_with("/*") {
                         buffer.push('\t');
                     }
@@ -189,6 +208,8 @@ impl Codegen<'_> {
         match legal_comments {
             LegalComment::Eof => {
                 self.print_hard_newline();
+                // Clear the flag to ensure consistent formatting for all EOF comments
+                self.print_next_indent_as_space = false;
                 for c in comments {
                     self.print_comment(&c);
                     self.print_hard_newline();

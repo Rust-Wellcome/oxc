@@ -4,6 +4,1128 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [1.43.0] - 2026-02-02
+
+### 💥 BREAKING CHANGES
+
+- b34a155 linter/plugins: [**BREAKING**] `RuleTester` set `context.filename` to absolute path (#18702) (overlookmotel)
+
+### 🚀 Features
+
+- c962dd2 linter/lsp: Implement support for oxlint.config.ts (#18826) (camc314)
+- da32203 linter: Auto generate oxlint.config.ts types (#18597) (camc314)
+- 19b4df7 oxlint: Introduce `defineConfig` helper (#18596) (camc314)
+- ea97231 linter: Implement `oxlint.config.ts` support (#17563) (camc314)
+- 88f30e0 linter/plugins: Move eslint compatible plugin conversion to `eslintCompatPlugin` function (#18791) (overlookmotel)
+- 2a72794 linter/plugins: `RuleTester` take `cwd` property (#18756) (overlookmotel)
+- 772ea70 linter: Introduce `load_js_configs` napi callback (#18767) (camc314)
+- e9690c1 linter: Introduce `DiscoveredConfig` in preparation for JS configs (#18674) (camc314)
+- 558b588 linter/prefer-namespace-keyword: Move to correctness (#18733) (camc314)
+- 7a5c268 oxlint/lsp: Support `jsPlugins` (#17840) (Sysix)
+
+### 🐛 Bug Fixes
+
+- a3417b1 linter/plugins: Clear state when reloading workspace (#18837) (overlookmotel)
+- c879992 linter: Error on arrays passed in as config (#18822) (camc314)
+- 5c80422 linter/tsdown: Ensure relative path for globals import starts with `./` (#18820) (camc314)
+- 7419dfb linter: Remove invalid debug assersion, add test (#18819) (camc314)
+- 0ca6269 ci: Fix the repo path normalization logic for tests on Windows. (#18815) (connorshea)
+- 41f92d1 linter: Error when given config options for a lint rule that has no config options defined. (#18809) (connorshea)
+- 1d34b42 linter: Fix 32 bit build (#18783) (camc314)
+- 95df577 linter/plugins: Handle error from `destroyWorkspace` (#18763) (overlookmotel)
+- d981978 linter/plugins: Use non-blocking mode when calling `destroyWorkspace` (#18762) (overlookmotel)
+- 3f43d4c linter: Accept bools as valid values for `fixable` (#18772) (camc314)
+- 005910a linter/plugins: Support plugins outside of workspace (#18755) (overlookmotel)
+- f82011b oxlint/lsp: Disable JS plugins support in LSP except in tests (#18727) (overlookmotel)
+- e440b78 linter/plugins: Pass all args to CFG event handlers when 2 rules use same handler (#18683) (overlookmotel)
+- 2e1fbc2 linter/plugins: Implement `context.parserPath` (#18644) (overlookmotel)
+- 34951ed linter/plugins: `filename` option takes precedence over `parserOptions.lang` in `RuleTester` (#18643) (overlookmotel)
+- 28df160 linter/plugins: Allow line number passed to `report` to be 0 (#18642) (overlookmotel)
+- 0ff4cea oxlint/cli: Report error when nested config could not be parsed (#18504) (Sysix)
+
+### ⚡ Performance
+
+- 9862224 linter/plugins: Reduce cost of workspaces (#18758) (overlookmotel)
+- 3a6b41e linter/plugins: Replace ESLint Traverser with lightweight traverseNode (#18529) (Rintaro Itokawa)
+
+### 📚 Documentation
+
+- ffe53a3 linter: Update lint function docs (#18766) (camc314)
+
+## [1.42.0] - 2026-01-26
+
+### 🚀 Features
+
+- 704c8eb linter/use-isnan: Add more specific error message for equality/inequality (#18542) (camchenry)
+- 1e99ace linter/use-isnan: Support more `indexOf` cases and improve diagnostic messages (#18537) (camchenry)
+- b4b6247 linter/plugins: `RuleTester` support settings (#18445) (overlookmotel)
+- 15d69dc linter: Implement react/display-name rule (#18426) (camchenry)
+- 2fbceae linter: Implement rule docs and config support for rules with tuple config options. (#18372) (connorshea)
+- 8db0e78 linter/plugins: Handle BOMs (#18376) (overlookmotel)
+- 6ac09e2 linter/plugins: Support source text not being at start of buffer (#18375) (overlookmotel)
+- 2cc6ad2 linter/plugins: Add `ecmaFeatures` to `parserOptions` (#18313) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- 2acf568 linter/plugins: Keep `Infinity` in rule default options (#18550) (overlookmotel)
+- 332d2ef linter/plugins: Add `jsx` property to `parserOptions.ecmaFeatures` (#18549) (overlookmotel)
+- c205b0d ast: Remove `ThisExpression` from `TSModuleReference` (#18489) (Boshen)
+- c51339a oxlint/lsp: Respect code action `source.fixAll` as an alias for `source.fixAll.oxc` (#18366) (Sysix)
+- 3c0e9b9 oxlint/lsp: Skip dangerous fixes/suggestions for "fix all" code action and command (#18364) (Sysix)
+- b8a371d linter: Fix the path used in the gitlab format output (#18165) (connorshea)
+- a9bfbcf linter: Compatibility issue with `DiagnosticData` type in ESLint (#18396) (루밀LuMir)
+- c163231 linter: Update eslint/sort-imports to validate options. (#18378) (connorshea)
+- b871235 linter/plugins: Fix identifying "use strict" directives in scope analysis (#18402) (overlookmotel)
+- faca4b5 linter/plugins: Tokenize `let`, `static` and `yield` as `Keyword`s (#18368) (overlookmotel)
+- a3914fd linter/plugins: Allow line number passed to `report` to be 1 over line count (#18341) (overlookmotel)
+- 9eec600 linter: Update `react/jsx-fragments` rule to raise an error on invalid configuration options (#18111) (connorshea)
+- 9e359d4 linter/plugins: Set all properties on global vars objects (#18317) (overlookmotel)
+- 39c7f32 linter/plugins: Set `writeable` flag on variables where defined as globals (#18316) (overlookmotel)
+- a570693 linter/plugins: Fix `CatchClause` scopes (#18312) (overlookmotel)
+- 44be0eb linter/plugins: Set scope analyse settings based on source type (#18306) (overlookmotel)
+
+### ⚡ Performance
+
+- 2eefd6d linter/plugins: Remove branch from token parsing (#18369) (overlookmotel)
+
+### 📚 Documentation
+
+- ab506d6 linter/plugins: Correct comment (#18456) (overlookmotel)
+
+## [1.40.0] - 2026-01-19
+
+### 💥 BREAKING CHANGES
+
+- ba9c750 span: [**BREAKING**] Use `ModuleKind::CommonJS` for `.cjs` and `.cts` file extensions (#18117) (Boshen)
+- 3a0a190 linter/plugins: [**BREAKING**] Prevent access to `cwd` in `createOnce` (#18081) (overlookmotel)
+- 9135b0b ast: [**BREAKING**] Move scope from `TSEnumDeclaration` to `TSEnumBody` (#18058) (Boshen)
+
+### 🚀 Features
+
+- 7c86fc3 linter/plugins: Support `commonjs` source type in `RuleTester` (#18198) (overlookmotel)
+- 6e8fa80 napi/parser, napi/transform: Accept `sourceType: "commonjs"` (#18197) (overlookmotel)
+- 66b8c02 parser: Implement unambiguous module parsing for JS/TS files (#18124) (Boshen)
+- 08dad63 span: Add `sourceType: 'commonjs'` support (#18089) (Boshen)
+- b516088 linter: Implement rule option validation/error handling for jest/no-hooks and eslint/no-return-assign rules. (#17600) (connorshea)
+- e7631dd website: Update website generation flow for JSON rules output (#17973) (connorshea)
+- 1757251 linter: Update linter JSON rule output to include extra information. (#15763) (connorshea)
+
+### 🐛 Bug Fixes
+
+- 4d68448 linter/plugins: `report` accept out of range `column` indexes in `loc` (#18199) (overlookmotel)
+- 8a2dabc linter/plugins: Rule tester default to module source type in ESLint compat mode (#18195) (overlookmotel)
+- 6956543 linter: Fix LSP panic from stale directive spans (#18082) (Boshen)
+- 7a0ca99 linter/plugins: Use correct ScriptKind for tokens (#17185) (Peter Wagenet)
+- 2a397f8 oxlint/lsp: Don't send `workspace/diagnostic/refresh` notification on watched file changes (#17885) (Sysix)
+
+### 📚 Documentation
+
+- d51cb6c linter/plugins: Remove outdated comments (#18194) (overlookmotel)
+
+## [1.39.0] - 2026-01-12
+
+### 🚀 Features
+
+- af1d0e3 linter/prefer-optional-chain: Add rule (#17831) (camc314)
+- 3567304 linter/vitest: Implement `consistent-each-for` (#17601) (Said Atrahouch)
+- 2bd2d5a linter/vitest: Implement hoisted-apis-on-top (#17658) (Said Atrahouch)
+
+### 🐛 Bug Fixes
+
+- 84f4f3c linter: Add doc url for tsgolint diagnostics (#17879) (Sysix)
+
+### 📚 Documentation
+
+- e81a306 linter: Update the tsconfig flag mention for the import plugin. (#17778) (connorshea)
+
+## [1.37.0] - 2026-01-05
+
+### 🚀 Features
+
+- 6154c8c linter/eslint-plugin-vitest: Implemented vitest/warn-todo rule (#17228) (Said Atrahouch)
+- 9e8ec78 linter/only-throw-error rule: Add `allowRethrowing` option for  (#17554) (camc314)
+- ee34716 linter/react: Implement no-will-update-set-state (#17530) (Kenzo Wada)
+- 3088e1d linter/react: Implement no-this-in-sfc (#17535) (Kenzo Wada)
+- 29a2868 linter/jsx-a11y: Implement no-static-element-interactions (#17538) (Kenzo Wada)
+
+### 🐛 Bug Fixes
+
+- a702f13 oxlint/lsp: Correct position for "disable for this file" with shebang (#17613) (Sysix)
+- 529901c linter: Include JS plugin rules when calculating total rule count (#17520) (connorshea)
+- 96ef2cc linter: Print total rule # when using a single nested config (#17517) (connorshea)
+- 9ad0f29 oxlint: Do not enable external plugin store when no external linter is passed (#17498) (Sysix)
+- 174375d oxfmt,oxlint: Disable mimalloc for 32-bit Arm targets (#17473) (Yaksh Bariya)
+- a38892a linter: Update no-unnecessary-template-expression docs and test case (#17453) (camc314)
+
+## [1.36.0] - 2025-12-29
+
+### 🚀 Features
+
+- 267e255 linter/react: Implement react/no-did-mount-set-state (#17313) (Kenzo Wada)
+- 5cc7c90 linter/plugins: Pass `env` from Rust to JS (#17291) (overlookmotel)
+- b97101a linter: Implement aria/proptypes (#17253) (mehm8128)
+
+### 🐛 Bug Fixes
+
+- fec2863 linter: Respect `.gitignore` regardless of if a git repo is initialized (#17375) (copilot-swe-agent)
+- c6690d1 rust: Remove unsupported tokio io-std feature for WASM compatibility (#17311) (Boshen)
+- 7eaa660 linter/plugins: Set up global scope correctly (#17293) (overlookmotel)
+
+## [1.35.0] - 2025-12-22
+
+### 🚀 Features
+
+- d913f87 linter/plugins: Implement code path analysis (CFG) (#17229) (overlookmotel)
+- 33b4e63 linter/plugins: Support more selector classes in visitor (#17219) (overlookmotel)
+- b2b87c6 linter/plugins: Add `getRange` and `getLoc` methods to `SourceCode` (#17179) (overlookmotel)
+- 0f63e75 linter: Implement react/no-unsafe (#16532) (Kenzo Wada)
+- 9e624c9 linter/react: Add `version` to `ReactPluginSettings` (#17169) (camc314)
+- 563b039 linter/plugins: Add `SourceCode#getLines` method (#17177) (overlookmotel)
+- 5b5f2fd linter/no-base-to-string: Add checkUnknown option (#17139) (camc314)
+- d03b855 linter/no-unsafe-member-access: Add allowOptionalChaining option (#17138) (camc314)
+- b86a134 linter/no-unnecessary-type-assertion: Add checkLiteralConstAssertions option (#17137) (camc314)
+
+### 🐛 Bug Fixes
+
+- e08fdf1 linter/plugins: Include hashbang in comments (#17231) (overlookmotel)
+- a3d203b linter/plugins: Make node, token, and comment objects have `Object.prototype` in prototype chain (#17220) (overlookmotel)
+- 6f753a8 linter/plugins: Fix `:function` selector class (#17218) (overlookmotel)
+- 4027039 linter/plugins: Reset `ancestors` if error during AST walk (#17207) (overlookmotel)
+- 376caf1 linter: Improve the error message for when the oxlint config file is invalid. (#17196) (connorshea)
+- c95a0ec linter: `valid-title`: fix diagnostic quoted in strings (#17180) (camchenry)
+
+### ⚡ Performance
+
+- 78df915 linter: Avoid multiple `to_string_lossy` calls in loop (#17212) (overlookmotel)
+- 5aefb84 linter/plugins: Reduce size of walker code (#17176) (overlookmotel)
+
+### 📚 Documentation
+
+- 1714719 linter/plugin: Correct doc comment on `getNodeLoc` function (#17178) (overlookmotel)
+
+## [1.34.0] - 2025-12-19
+
+### 🚀 Features
+
+- a0f74a0 linter/config: Allow aliasing plugin names to allow names the same as builtin plugins (#15569) (Cameron)
+- a43d251 linter/plugins: `RuleTester` support `languageOptions.globals` (#17009) (overlookmotel)
+- 8bc4287 linter/plugins: Validate options against schema (#16974) (overlookmotel)
+- 291b57b ast_tools: Generate TS declaration files for deserializer and walk files (#16912) (camc314)
+- cd3db21 linter: Add ignoredTypeNames option to no-base-to-string rule (#16898) (camc314)
+
+### 🐛 Bug Fixes
+
+- fb9e193 linter: OOM problems with custom plugins (#17082) (overlookmotel)
+- fd03131 linter/plugins: Handle plugin names containing slashes (#17073) (overlookmotel)
+- b2a4fac linter/plugins: Error if plugin name alias is not normalized (#17071) (overlookmotel)
+- e046c4e linter/no-misused-spread: Add rule options support (#17054) (camc314)
+- 5c1a9e0 linter/no-deprecated: Add rule options support (#17053) (camc314)
+- 67f8c5d linter/plugins: Get correct plugin name in all cases (#17033) (overlookmotel)
+- 674dab9 linter/plugins: Fix indentation in error message (#17018) (overlookmotel)
+- 6524f72 linter/plugins: Add `@types/node` dev dependency to `oxlint` package (#17016) (overlookmotel)
+- 7a35513 linter/plugins: Better error for `null` in `globals` in `RuleTester` (#17011) (overlookmotel)
+- 42603ba linter/plugins: Always define `languageOptions.globals` (#17008) (overlookmotel)
+- 477bb57 linter: Fix `vitest/no-restricted-vi-methods` and add tests for it. (#16971) (connorshea)
+- 23ac6b1 linter/plugins: Apply defaults from `meta.schema` to options (#16930) (overlookmotel)
+- 2f946cf linter/plugins: Error if `defaultOptions` is not JSON-serializable (#16959) (overlookmotel)
+- d8b8a57 linter/plugins: Freeze whole of merged options (#16958) (overlookmotel)
+- b845871 linter/plugins: Correctly handle object with `__proto__` keys in options merging (#16928) (overlookmotel)
+
+### ⚡ Performance
+
+- fd8e9c6 linter/plugins: Speed up cloning JSON objects (#16997) (overlookmotel)
+- d77e22d linter/plugins: Use `DEFAULT_OPTIONS` for rules with empty array as default options (#16913) (overlookmotel)
+
+### 📚 Documentation
+
+- ca26a11 linter/plugins: Fix typo in doc comment (#16966) (overlookmotel)
+- 3183bf8 linter/plugins: Fix typo in JSDoc comment (#16900) (overlookmotel)
+
+## [1.33.0] - 2025-12-15
+
+### 💥 BREAKING CHANGES
+
+- e654c13 linter/plugins: [**BREAKING**] Do not export `NodeOrToken` type (#16806) (overlookmotel)
+- f814c82 linter/plugins: [**BREAKING**] Use TypeScript parser directly for getting tokens (#16805) (overlookmotel)
+
+### 🚀 Features
+
+- 1bdaab1 linter/prefer-nullish-coalescing: Add rule (#16778) (camc314)
+- 2b73b14 linter/plugins: Support `parserOptions.ecmaFeatures.jsx` option in `RuleTester` (#16690) (overlookmotel)
+- 563eab7 linter/plugins: Add `parserOptions.lang` option to `RuleTester` (#16688) (overlookmotel)
+- e39f487 linter/plugins: Add `ignoreNonFatalErrors` option to `RuleTester` (#16672) (overlookmotel)
+- 4cf1353 linter/plugins: `RuleTester` support `languageOptions.sourceType` (#16660) (overlookmotel)
+- 8c8b6d9 linter/plugins: Add `languageOptions` types to `RuleTester` config types (#16642) (overlookmotel)
+- 554250e linter/plugins: `RuleTester` parser support options (#16641) (overlookmotel)
+- 30a9076 ast, parser, codegen: Add `CommentKind::MultilineBlock` (#16479) (Dunqing)
+- 767db50 linter: Promote constructor_super rule from nursery to correctness (#16605) (camc314)
+
+### 🐛 Bug Fixes
+
+- eccffcf linter/plugins: `report()` accept `loc` with no `end` (#16859) (overlookmotel)
+- d3208dc parser: Parse `let?.x` (#16840) (Copilot)
+- 3302fcb linter/plugins: Sort visitors in order of specificity (#16834) (overlookmotel)
+- 36c9097 linter/plugins: `RuleTester` sort diagnostics before comparing to errors (#16741) (overlookmotel)
+- 32e23f7 linter/plugins: Correct punctuation in error message (#16718) (overlookmotel)
+- 6832464 linter/plugins: Do not escape tab or CR in test case names in `RuleTester` (#16712) (overlookmotel)
+
+### ⚡ Performance
+
+- 6b1a7b5 linter/plugins: Store specificity in a single integer (#16835) (overlookmotel)
+- 3b7d345 linter/plugins: Use `start` and `end` instead of `range` in tokens methods (#16808) (overlookmotel)
+- 4f9d17f linter/plugins: Remove unnecessary check (#16750) (overlookmotel)
+- a5dc4c6 oxlint: Run e2e tests concurrently (#16651) (camc314)
+- 0241b9a linter/plugins: Remove code for renaming global values (#16610) (overlookmotel)
+
+### 📚 Documentation
+
+- 32b641a linter/plugins: Fix typo in JSDoc comment (#16699) (overlookmotel)
+
+## [1.32.0] - 2025-12-08
+
+### 🚀 Features
+
+- 5c62c16 linter/plugins: Allow JS plugins to access `globals` (#16512) (Arsh)
+- 7584938 linter/plugins: Add ESLint compat mode to `RuleTester` (#16538) (overlookmotel)
+- b38c2d0 linter/plugins: Add `SourceCode#lineStartIndices` getter (#16510) (overlookmotel)
+- ba93ffc linter/plugins: Add `SourceCode#tokensAndComments` getter (#16503) (overlookmotel)
+- d2ca540 linter/plugins: Add `SourceCode#isESTree` property (#16499) (overlookmotel)
+- 9001234 linter: Add fix support for tsgolint diagnostics (#16344) (camc314)
+- 0ec454c linter/plugins: Merge default options into options (#16358) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- a806d74 linter: Use import type for ESTree in visitor.d.ts (#16472) (camc314)
+- 1a69b06 linter: Junit support for multiple files/errors/diagnostics (#16568) (Shrey Sudhir)
+- fd84dcc linter/plugins: `RuleTester` parser catch fatal errors (#16558) (overlookmotel)
+- ab4deb0 linter/plugins: Improve safety of options merging (#16549) (overlookmotel)
+- f7751cc linter/plugins: Fix TS types for `RuleTester` (#16546) (overlookmotel)
+- 6d33320 linter/plugins: Prevent user modifying the default config (#16545) (overlookmotel)
+- b4483c5 linter/plugins: Add config support skeleton to `RuleTester` (#16537) (overlookmotel)
+- 3a49158 linter/plugins: Improve TS types for tokens (#16502) (overlookmotel)
+- 2d3217e linter/plugins: Remove panics from `lint_file` and `setup_configs` (#16453) (overlookmotel)
+
+### ⚡ Performance
+
+- 793b989 linter/plugins: Move result-processing work off main JS thread (#16456) (overlookmotel)
+- 44dff7b linter/plugins: Skip serialization overhead when no errors (#16443) (overlookmotel)
+- 1aa2409 linter/plugins: Do not remove `messageId` field from `DiagnosticReport` before sending to Rust (#16442) (overlookmotel)
+
+### 📚 Documentation
+
+- e24aabd linter/plugins: Correct comment (#16559) (overlookmotel)
+- 8c85e08 linter/plugins: Add TODO comment (#16511) (overlookmotel)
+- a9b9298 linter/plugins: Add JSDoc comments to `SourceCode` properties (#16497) (overlookmotel)
+- 467cc1a linter/plugins: Improve comment on error branch (#16464) (overlookmotel)
+
+## [1.31.0] - 2025-12-01
+
+### 💥 BREAKING CHANGES
+
+- 74cf572 ast: [**BREAKING**] Make `source` field of `TSImportType` a `StringLiteral` (#16114) (copilot-swe-agent)
+
+### 🚀 Features
+
+- 5da1a63 linter/plugins: Introduce `RuleTester` (#16206) (overlookmotel)
+- 41129ab linter/plugins: Implement `languageOptions.parser` (#16292) (overlookmotel)
+- 7150209 linter/plugins: Implement `SourceCode#getNodeByRangeIndex` (#16256) (overlookmotel)
+- 3226864 linter/plugins: Implement options merging (#16217) (overlookmotel)
+- cbb108a linter/plugins: Support default options (#16170) (overlookmotel)
+- 04a3a66 linter/plugins: Implement `SourceCode#getTokenOrCommentAfter()` (#16045) (Arsh)
+- 68b63d9 linter/plugins: Implement `SourceCode#getTokenOrCommentBefore()` (#16044) (Arsh)
+- 04d9454 linter/plugins: Implement `SourceCode#getTokenByRangeStart()` (#16043) (Arsh)
+- 7b8d578 linter/plugins: Implement `SourceCode#getTokensBetween()` (#16034) (Arsh)
+- 79c242f linter/plugins: Implement `SourceCode#getLastTokensBetween()` (#16033) (Arsh)
+- 1772078 linter/plugins: Implement `SourceCode#getFirstTokenBetween()` (#16032) (Arsh)
+- 21bb86d linter/plugins: Implement `SourceCode#getFirstTokensBetween()` (#16019) (Arsh)
+- 78f74b1 linter/plugins: Implement `SourceCode#getLastTokenBetween()` (#16008) (Arsh)
+- df0b948 linter/plugins: Implement `SourceCode#getLastToken()` (#16003) (Arsh)
+
+### 🐛 Bug Fixes
+
+- cf249f5 linter/plugins: Fix message interpolation (#16300) (overlookmotel)
+- 9149a26 linter/plugins, napi/parser: Deep freeze visitor keys (#16293) (overlookmotel)
+- 653fa6c oxlint/oxfmt/lsp: Tell client the real tool name & version (#16212) (Sysix)
+- 0df1901 linter/plugins: Reset state after error during AST visitation (#16246) (overlookmotel)
+- 78aa294 linter/plugins: Deep freeze options (#16218) (overlookmotel)
+- 123bffe linter/plugins: Handle zero-token files in `SourceCode#getLastToken()` (#16184) (Arsh)
+- 55fcfba linter: Add considerDefaultExhaustiveForUnions option to switch-exhaustiveness-check (#16204) (camc314)
+- 9cc20a1 minifier: Avoid merging side effectful expressions to next assignment statement if the side effect may change the left hand side reference (#16165) (sapphi-red)
+- 75249e0 linter/plugins: Handle non-UTF8 file paths (#16157) (overlookmotel)
+- 86fa667 linter/plugins: Improve type def for `RuleMeta` `defaultOptions` property (#16159) (overlookmotel)
+- 91eb3f2 ast/estree: Convert `TSImportType` `argument` field to `Literal` (#16109) (overlookmotel)
+- f5cb601 linter/plugins: Perform length checks before continuing loops (#16025) (Arsh)
+
+### ⚡ Performance
+
+- 02bdf90 linter/plugins, napi/parser: Reuse arrays in visitor keys (#16294) (overlookmotel)
+- d3a34f8 linter/plugins: Optimize `getTokens()` and other methods (#16188) (Arsh)
+- c05db06 linter/plugins: Speed up `initTokensWithComments` (#16117) (overlookmotel)
+- 4846886 linter/plugins: Optimize merging of `tokens` and `comments` (#16071) (Arsh)
+- e232d35 linter/plugins: Recycle objects in token methods (#16068) (overlookmotel)
+
+### 📚 Documentation
+
+- e928732 linter/plugins: Fix JSDoc comment (#16295) (overlookmotel)
+- be36e36 linter/plugins: Fix JSDoc comment for `loadPluginImpl` (#16211) (overlookmotel)
+- 0e1d38a linter/plugins: Clarify JSDoc comment for `getTokensBetween` (#16070) (overlookmotel)
+- 3ee22b2 linter/plugins: Fix JSDoc comments for tokens methods (#16063) (overlookmotel)
+- f257b5c linter/plugins: Clarify JSDoc comments for tokens methods (#16062) (overlookmotel)
+
+## [1.30.0] - 2025-11-24
+
+### 💥 BREAKING CHANGES
+
+- cbb27fd ast: [**BREAKING**] Add `TSGlobalDeclaration` type (#15712) (overlookmotel)
+
+### 🚀 Features
+
+- 0c1f82b linter/plugins: Add `tokens` property to `Program` (#16020) (overlookmotel)
+- 9e61beb linter/plugins: Implement `SourceCode#getFirstToken()` (#16002) (Arsh)
+- 9a548dd linter/plugins: Implement `SourceCode#getLastTokens()` (#16000) (Arsh)
+- 0b6cb11 linter/plugins: Implement `SourceCode#getFirstTokens()` (#15976) (Arsh)
+- 166781e linter/plugins: Implement `SourceCode#getTokenAfter()` (#15973) (Arsh)
+- 6ae232b linter: Expose type errors via tsgolint (#15917) (camc314)
+- 2bfdd26 linter/plugins: Implement `SourceCode#getTokensAfter()` (#15971) (Arsh)
+- 45fffc1 linter/plugins: Implement `SourceCode#getTokenBefore()` (#15956) (Arsh)
+- 776e473 linter/plugins: Implement `SourceCode#getTokensBefore()` (#15955) (Arsh)
+- 986cac1 linter/plugins: Token-related `SourceCode` APIs (TS ESLint implementation) (#15861) (Arsh)
+- 4b9d8d2 linter/type-aware: Include range with tsconfig diagnostics (#15916) (camc314)
+
+### 🐛 Bug Fixes
+
+- 2bd3cb6 apps, editors, napi: Fix `oxlint-disable` comments (#16014) (overlookmotel)
+- a8a2032 linter: Support missing `range` for internal diagnostics (#15964) (camc314)
+- 9fa9ef2 linter: Gracefully fail when using import plugin, large file counf and JS plugins (#15864) (camc314)
+- c027398 linter/plugins: Correct bindings package names glob in TSDown config (#15871) (overlookmotel)
+- 46bd6bd linter/plugins: Pin `@typescript-eslint/scope-manager` dependency (#15807) (overlookmotel)
+- fba31fa linter: Patch `@typescript-eslint/scope manager` (#15214) (Arsh)
+
+### ⚡ Performance
+
+- 024b48a linter/plugins: Lazy-load tokens parsing code (#16011) (overlookmotel)
+- 15365c9 linter/plugins: Reduce var assignments (#15953) (overlookmotel)
+- 84d1f4f linter/plugins: Downgrade some checks to debug-only (#15922) (overlookmotel)
+
+### 📚 Documentation
+
+- 6c72e84 linter: Use backticks for code elements across more rule diagnostics (#15958) (connorshea)
+- a63dad7 linter/plugins: Add comment (#15952) (overlookmotel)
+- db6a110 linter/plugins: Fix JSDoc comment (#15884) (overlookmotel)
+- fbf0fd4 linter/plugins: Add JSDoc comments to `Plugin` and `Rule` types (#15815) (overlookmotel)
+- ac5e4b5 linter/plugins: Add JSDoc comments and improve comments (#15814) (overlookmotel)
+
+## [1.29.0] - 2025-11-17
+
+### 🚀 Features
+
+- e01c551 oxlint: Add `--lsp` flag to run the language server (#15611) (Sysix)
+- f5d9abb oxlint: Add enabled? column to --rules cli output (#15213) (Wren)
+- 6b5205c linter/plugins: Implement deprecated `SourceCode#getJSDocComment` method (#15653) (overlookmotel)
+- 5eccff1 linter/plugins: Implement deprecated `SourceCode` tokens methods (#15645) (overlookmotel)
+- 0d52a5e linter/plugins: Implement `Context#parserOptions` getter (#15632) (overlookmotel)
+- 287a538 linter/plugins: Implement `Context#get*` deprecated methods (#15606) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- 7c4a916 linter: Restores `oxlint --rules -f=json` functionality. (#15689) (Wren)
+- 24d00f4 linter/plugins: Add types for suggested fixes (#15636) (overlookmotel)
+- 257360f linter/plugins: Fill in TS type def for `RuleMeta` (#15629) (overlookmotel)
+- bb5f8ca oxlint: Fix type annotation for big-endian (#15561) (Sysix)
+
+### ⚡ Performance
+
+- e2a0997 linter/plugins: Recycle empty visitor object in ESLint compat mode (#15693) (overlookmotel)
+- 54061e9 linter/plugins: Avoid implicit boolean coercion in `initLines` (#15641) (overlookmotel)
+
+### 📚 Documentation
+
+- a5feebc linter: `oxlint-disable` not `eslint-disable` (#15672) (overlookmotel)
+- 3d15805 linter: Reformat doc comments (#15670) (overlookmotel)
+- 16fcba6 linter: Remove "experimental" from description of stable features (#15669) (overlookmotel)
+- e62fd98 linter: Correct comment on what `EnablePlugins` does (#15668) (overlookmotel)
+- a25d31e linter: Fix grammar (#15666) (overlookmotel)
+- f5f452f linter: Add missing `perf` category (#15667) (overlookmotel)
+- a210b12 linter/plugins: Improve JSDoc comment for `RuleOptionsSchema` (#15642) (overlookmotel)
+- 3aabfac linter/plugins: Alter comments on `FILE_CONTEXT` used in ESLint-compat `Context` shim (#15605) (overlookmotel)
+
+## [1.27.0] - 2025-11-10
+
+### 🚀 Features
+
+- 222a8f0 linter/plugins: Implement `SourceCode#isSpaceBetween` (#15498) (overlookmotel)
+- 2f9735d linter/plugins: Implement `context.languageOptions` (#15486) (overlookmotel)
+- bc731ff linter/plugins: Stub out all `Context` APIs (#15479) (overlookmotel)
+- 5822cb4 linter/plugins: Add `extend` method to `FILE_CONTEXT` (#15477) (overlookmotel)
+- 7b1e6f3 apps: Add pure rust binaries and release to github (#15469) (Boshen)
+
+### 🐛 Bug Fixes
+
+- 6957fb9 linter/plugins: Do not allow access to `Context#id` in `createOnce` (#15489) (overlookmotel)
+- 7409630 linter/plugins: Allow access to `cwd` in `createOnce` in ESLint interop mode (#15488) (overlookmotel)
+- a17ca32 linter/plugins: Replace `Context` class (#15448) (overlookmotel)
+- fde753e linter/plugins: Block access to `context.settings` in `createOnce` (#15394) (overlookmotel)
+- cc403f5 linter/plugins: Return empty object for unimplemented parserServices (#15364) (magic-akari)
+
+### ⚡ Performance
+
+- 3c57291 linter/plugins: Optimize loops (#15449) (overlookmotel)
+- 3166233 linter/plugins: Remove `Arc`s (#15431) (overlookmotel)
+- 9de1322 linter/plugins: Lazily deserialize settings JSON (#15395) (overlookmotel)
+- 3049ec2 linter/plugins: Optimize `deepFreezeSettings` (#15392) (overlookmotel)
+- 444ebfd linter/plugins: Use single object for `parserServices` (#15378) (overlookmotel)
+
+### 📚 Documentation
+
+- 97d2104 linter: Update comment in lint.rs about default value for tsconfig path (#15530) (Connor Shea)
+
+## [1.26.0] - 2025-11-05
+
+### 🚀 Features
+
+- 230e34c linter/plugins: Allow js plugins to access settings (#14724) (Arsh)
+- 7a00691 linter/no-deprecated: Add rule (#15272) (camc314)
+- ab065a9 tsgolint: Improve diagnostic messages with file reference (#15274) (camc314)
+- 979ec04 linter: Pretty print tsgolint internal diagnostics (#15131) (camc314)
+
+### 🐛 Bug Fixes
+
+- 40231a6 linter/plugins, napi/parser: Add `parent` field to `FormalParameterRest` and `TSParameterProperty` in TS type defs (#15337) (overlookmotel)
+- 861508a linter/plugins: Make `parent` fields in TS type defs non-optional (#15336) (overlookmotel)
+- 7f079ab ast/estree: Fix raw transfer deserializer for `AssignmentTargetPropertyIdentifier` (#15304) (overlookmotel)
+- 56c6627 linter/plugins: Resolve JS plugins only with conditions Node.js supports (#15248) (sapphi-red)
+- f376e61 linter: Bundle `@typescript-eslint/scope-manager` (#15210) (Arsh)
+- 80a187c linter: Add offset for parsing error in partial loading files (#15075) (Liang Mi)
+
+### 🚜 Refactor
+
+- 636e7ed linter/plugins: Shorten `ScopeManager` code (#15335) (overlookmotel)
+- a7cf856 ast/estree: Shorten raw transfer deserializer for `AssignmentTargetPropertyIdentifier` (#15303) (overlookmotel)
+
+### 📚 Documentation
+
+- a7d9f1d linter/plugins: Reformat and clarify `ScopeManager` JSDoc comments (#15333) (overlookmotel)
+- 69e61d4 linter/plugins: Update comment (#15293) (overlookmotel)
+
+### ⚡ Performance
+
+- 8b31daa linter/plugins: Small optimizations to `ScopeManager` (#15334) (overlookmotel)
+- 4c0ba92 linter/plugins: Use singleton object for `ScopeManager` (#15332) (overlookmotel)
+- c82fab0 ast/estree: Remove pointless assignments from raw transfer deserializers (#15305) (overlookmotel)
+- ee9f2f4 linter/plugins: Faster check for `cwd` (#15301) (overlookmotel)
+
+### 🧪 Testing
+
+- 48e646b oxlint/lsp: Update snapshot for invalid syntax test (#15191) (Sysix)
+- dbc260b linter: Disable tsgolint exit code specific test on windows (#15117) (camc314)
+
+
+## [1.25.0] - 2025-10-30
+
+### 💥 BREAKING CHANGES
+
+- 659fd37 linter: [**BREAKING**] `tsgolint`: request fixes when necessary (#15048) (camchenry)
+
+### 🚀 Features
+
+- ed24d60 linter: Expose tsgolint program diagnostics (#15080) (camc314)
+- f7bef73 linter/plugins: Scope manager API (#14890) (Arsh)
+- 3e15cdd linter/strict-boolean-expression: Add rule (#14930) (camc314)
+- bd74603 linter: Add support for vitest/valid-title rule (#12085) (Tyler Earls)
+
+### 🐛 Bug Fixes
+
+- 597340e ast-tools: Use oxfmt to format generated code (#15064) (camc314)
+- 2de9f39 linter/plugins: Fall back to package name if meta.name is missing (#14938) (Peter Wagenet)
+
+### 🧪 Testing
+
+- bf898e5 linter: Increase stability of tsgolint test cases (#15063) (camc314)
+
+
+## [1.24.0] - 2025-10-22
+
+### 🚀 Features
+
+- 54ec8e3 linter: Add `cwd` property to JS plugin `Context` (#14814) (magic-akari)
+- 9700a56 linter/plugins: Comment-related APIs (#14715) (Arsh)
+- bec7a7d semantic: Add scope to `TSConstructorType` (#14676) (camc314)
+- b1a9a03 linter/plugins: Implement `SourceCode#getAllComments` (#14589) (Arsh)
+
+### 🐛 Bug Fixes
+
+- 28e76ec oxlint: Resolving JS plugin failing when `extends` is used (#14556) (camc314)
+- 78ee7b8 linter/plugins: Handle utf16 characters within comment spans (#14768) (Arsh)
+- 47d8db1 linter/plugins: Prevent `comments` being accessed after file is linted (#14727) (overlookmotel)
+- 5238891 linter/plugins: Add `comments` field to TS type def for `Program` (#14626) (overlookmotel)
+- 84b2605 linter/plugins: Remove `parent` property from comments (#14624) (overlookmotel)
+- 0961c3a oxlint,oxfmt: Skip traversing `.git` directories (#14590) (Boshen)
+
+### 🚜 Refactor
+
+- 4520695 linter/plugins: Reorganise `SourceCode` methods (#14773) (overlookmotel)
+- 6942d75 linter/plugins: Shorten import of comment-related `SourceCode` methods (#14772) (overlookmotel)
+- b9a3f46 linter/plugins: Move scope-related `SourceCode` methods into separate file (#14771) (overlookmotel)
+- cd068aa linter/plugins: Move token-related `SourceCode` methods into separate file (#14770) (overlookmotel)
+- ec816ba linter/plugins: Move comments-related code into separate file (#14753) (overlookmotel)
+- e9c3b18 linter/plugins: Update outdated comment (#14750) (overlookmotel)
+- 14de671 linter/plugins: Simplify `comments` getter (#14728) (overlookmotel)
+- b402024 linter/plugins: Rename function (#14726) (overlookmotel)
+- 85a2743 linter/plugins, napi/parser: Remove extraneous code from raw transfer deserializers (#14683) (overlookmotel)
+- 2b14abc napi/parser: Shorten raw transfer deserializer for `Comment` (#14623) (overlookmotel)
+
+### 📚 Documentation
+
+- 207b62b linter/plugins: Correct JSDoc comments for `SourceCode` tokens methods (#14776) (overlookmotel)
+- cd266b4 linter/plugins: Improve docs for comments APIs (#14754) (overlookmotel)
+
+### ⚡ Performance
+
+- 10182e8 linter/plugins: Use binary search (#14778) (Arsh)
+- e6f351d linter/plugins: Speed up `SourceCode#getAncestors` (#14747) (overlookmotel)
+- 58ba6d6 linter/plugins: Lazy deserialize comments array (#14637) (Arsh)
+
+### 🎨 Styling
+
+- 3029dfb linter/plugins: Reorder code (#14725) (overlookmotel)
+
+### 🧪 Testing
+
+- 5933097 oxlint: Add test for nested configs importing the same plugin 2x (#14646) (camc314)
+- 6570f36 linter/custom-plugins: Snapshot test start, end, range, and loc for comments (#14779) (Arsh)
+
+
+## [1.23.0] - 2025-10-13
+
+### 🐛 Bug Fixes
+
+- 6fce7f4 oxlint/changelog: Remove duplicate changelog entries (#14528) (camc314)
+- 74e52f3 linter/plugins: Resolve JS plugins with ESM condition names (#14541) (magic-akari)
+
+### 🚜 Refactor
+
+- 4f301de napi/parser, linter/plugins: Improve formatting of generated code (#14554) (overlookmotel)
+- 68c0252 napi/parser, linter/plugins: Shorten generated raw transfer deserializer code (#14553) (overlookmotel)
+- 20e884e linter: Store `LintService` in `LintRunner` (#14471) (Sysix)
+
+### ⚡ Performance
+
+- 31766fd linter/plugins: Provide `loc` via prototype (#14552) (overlookmotel)
+
+### 🧪 Testing
+
+- 8d8881d linter/plugins: Expand tests for module resolution of plugins (#14559) (overlookmotel)
+
+
+## [1.22.0] - 2025-10-08
+
+### 🐛 Bug Fixes
+
+- 0dcdbd1 oxlint: Bundle esquery (#14450) (camc314)
+
+
+## [1.21.0] - 2025-10-08
+
+### 🚀 Features
+
+- 576be20 linter/plugins: Support selectors DSL (#14435) (overlookmotel)
+- b2de44f linter/plugins: Support interpolation in normal diagnostic `message` (#14419) (overlookmotel)
+- 382c5be linter/plugins: Support placeholders in messageIds (#14416) (camc314)
+- 529e88e linter/plugins: Support `messageId`s (#14415) (camc314)
+- 0ec0847 ci: Run napi tests on windows (#14383) (camc314)
+
+### 🐛 Bug Fixes
+
+- 88ec1bd linter/plugins: Fix error messages (#14423) (overlookmotel)
+- 18616c2 oxlint: Ignore fixtures dir for vitest (#14414) (camc314)
+- ec02fe8 oxlint: Normalize path separators in snapshot tests (#14406) (camc314)
+- 96663fb linter/plugins: Do not call `before` hook if empty visitor (#14401) (overlookmotel)
+- 52f04bd linter: Use `pathToFileURL` for importing plugins to ensure correct URL format (#14394) (camc314)
+- 1ea0d46 oxlint: Resolve tsdown deprecation warning (#14389) (camc314)
+
+### 🚜 Refactor
+
+- 3b26bf3 linter/plugins: Split adding visit function to compiler visitor into multiple functions (#14433) (overlookmotel)
+- af3a75e linter/plugins: Track ancestors while walking AST (#14432) (overlookmotel)
+- f279f0b linter/plugins: Do not lazy-load visitor keys (#14431) (overlookmotel)
+- 5e99ed3 linter/plugins: Allow nullish values as `message` or `messageId` (#14422) (overlookmotel)
+- dc30938 linter/plugins: Remove default value from `Context` constructor (#14421) (overlookmotel)
+- 28cfae0 oxlint: Use `vitest`s built in file snapshot comparison (#14392) (camc314)
+- 06b0e9f linter/plugins: Convert generated files to TS (#14385) (overlookmotel)
+- 52f35c6 napi/parser, linter/plugins: Rename `types.js` to `type_ids.js` (#14384) (overlookmotel)
+
+### ⚡ Performance
+
+- 26435a1 linter/plugins: Small perf optimizations (#14420) (overlookmotel)
+- d8a8be1 linter/plugins: Avoid private methods (#14418) (overlookmotel)
+
+### 🧪 Testing
+
+- d8da4a4 linter/plugins: Clarify tests for message placeholders (#14417) (overlookmotel)
+
+
+## [1.20.0] - 2025-10-06
+
+### 🚀 Features
+
+- d16df93 linter: Support disable directives for type aware rules (#14052) (camc314)
+- a2914fe linter/plugins: Add `loc` field getter to all AST nodes (#14355) (overlookmotel)
+- 07193c2 linter/plugins: Implement `SourceCode#getAncestors` (#14346) (overlookmotel)
+- c8de6fe linter/plugins: Add `parent` field to AST nodes (#14345) (overlookmotel)
+- 5505a86 linter/plugins: Include `range` field in AST (#14321) (overlookmotel)
+- 1347de4 linter/plugins: Accept diagnostics with `loc` (#14304) (overlookmotel)
+- aefc8b3 linter/plugins: Implement `SourceCode#getIndexFromLoc` and `getLocFromIndex` (#14303) (overlookmotel)
+- 93807db linter/plugins: Implement `SourceCode#lines` property (#14290) (overlookmotel)
+- 2f8c985 linter/plugins: Implement `SourceCode#visitorKeys` property (#14289) (overlookmotel)
+- b69028f linter/plugins: Implement `SourceCode#ast` property (#14287) (overlookmotel)
+- bdf9010 linter/plugins: Add `SourceCode` API (#14281) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- 9a902c0 linter/plugins: Make `range` field non-optional on AST types (#14354) (overlookmotel)
+- 46cceb8 linter/rules-of-hooks: Correctly place primary span to fix disable directive (#14237) (camc314)
+
+### 🚜 Refactor
+
+- 1489376 napi/parser, linter/plugins: Minify walker code (#14376) (overlookmotel)
+- c8eeeb5 linter/plugins: Remove build-time dependency on `napi/parser` (#14374) (overlookmotel)
+- fb1a067 linter/plugins: Bundle walker and AST types map (#14373) (overlookmotel)
+- 93d8164 linter/plugins: Export AST types direct from `oxlint` package (#14353) (overlookmotel)
+- 230d996 linter/plugins: `SourceCode#getText` use `range` (#14352) (overlookmotel)
+- 6e52bbd linter/plugins: Move location-related code into separate file (#14350) (overlookmotel)
+- 13f1003 linter/plugins: Share `ast` between files (#14349) (overlookmotel)
+- 79eadf8 linter: Introduce `LintRunner` (#14051) (camc314)
+- 65873ba linter/plugins: Add stubs for all `SourceCode` methods (#14285) (overlookmotel)
+- 989ce2f linter/plugins: Convert `Node` type to interface (#14280) (overlookmotel)
+
+### ⚡ Performance
+
+- e75d42d napi/parser, linter/plugins: Remove runtime `preserveParens` option from raw transfer deserializers (#14338) (overlookmotel)
+- 2e57351 linter/plugins: Initialize `lineStartOffsets` as `[0]` (#14302) (overlookmotel)
+- c27a393 linter/plugins: Deserialize AST on demand (#14288) (overlookmotel)
+- 95a8cc4 linter/plugins: Use singleton for `SourceCode` (#14286) (overlookmotel)
+
+
+### 🧪 Testing
+
+- 0061ce7 linter: Add more tests for disable directives in partial loadable files (#14371) (camc314)
+- 1387aaa linter/plugins: Test `createOnce` returning no visitor functions (#14279) (overlookmotel)
+
+
+## [1.19.0] - 2025-09-29
+
+### 🚀 Features
+
+- acd1266 linter/plugins: `oxlint` export types (#14163) (overlookmotel)
+- 00954de linter/plugins: Remove `--js-plugins` CLI option (#14134) (overlookmotel)
+- b4d716f linter/plugins: Move custom JS plugin config to `jsPlugins` (#14133) (overlookmotel)
+- 9c3afea linter/plugins: Support fixes (#14094) (overlookmotel)
+- 1472147 linter: Move `no-unused-expressions` to correctness (#14099) (camchenry)
+- c796966 linter/plugins: Add `meta` property to rules (#14089) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- 39a171e linter: Get cli args on JS side, to avoid runtime inconsistencies (#14223) (camc314)
+- e045391 linter/plugins: Error on JS plugin with reserved name (#14226) (overlookmotel)
+- 37f6b09 linter/plugins: Make `null` a valid value for `meta.fixable` (#14204) (overlookmotel)
+- e9a14d1 linter/plugins: Allow `fix` function to return `undefined` (#14182) (overlookmotel)
+- ee9ecbe linter/plugins: Fix TS type for fixer methods (#14166) (overlookmotel)
+- 03d1684 linter/plugins: Output warning on first JS plugin load (#14165) (overlookmotel)
+- 9716f7c linter/plugins: Fix TS types (#14162) (overlookmotel)
+- 4a4fce8 linter: Fix cli argument parsing (#14112) (camc314)
+- 9f3e2bc linter/plugins: Output errors thrown in JS plugins (#14096) (overlookmotel)
+- d8e9cc5 linter/plugins: Validate type of `before` and `after` hooks (#14086) (overlookmotel)
+
+### 🚜 Refactor
+
+- 61ec0a7 linter/plugins: Simplify creation of `context` in `defineRule` ESLint shim (#14206) (overlookmotel)
+- 3b1fe6f linter/plugins: Flatten directory structure of `dist` (#14199) (overlookmotel)
+- d52cba6 linter: Bump TSDown to latest (#14198) (overlookmotel)
+- 983dd1b linter/plugins: Add `Fixer` type (#14180) (overlookmotel)
+- 2f8b076 linter/plugins: Remove dead code (#14178) (overlookmotel)
+- e69cd86 linter/plugins: `loadPluginImpl` return an object (#14087) (overlookmotel)
+
+### 📚 Documentation
+
+- b19f5bc linter/plugins: Improve JSDoc comments for `definePlugin` and `defineRule` (#14159) (overlookmotel)
+
+### ⚡ Performance
+
+- 2575065 linter/plugins: Store if rule is fixable as boolean (#14205) (overlookmotel)
+
+### 🧪 Testing
+
+- a9b603e linter/plugins: Convert all plugins in tests to TS (#14200) (overlookmotel)
+- 6ff3a23 linter/plugins: Add tests for `.ts`, `.mts`, `.cts` plugin files (#14164) (overlookmotel)
+- 8988d64 linter/plugins: Add line breaks to plugins files (#14181) (overlookmotel)
+- 52db331 linter/plugins: Type-check test fixtures (#14158) (overlookmotel)
+- aca083a linter/plugins: Include stderr output in snapshots (#14155) (overlookmotel)
+- a3c8f46 linter/plugins: Do not run `pnpm` in tests (#14157) (overlookmotel)
+- 0029b7f linter/plugins: Normalize line breaks in snapshots (#14154) (overlookmotel)
+- 7f2c101 linter/plugins: Specify path to `node` in tests (#14152) (overlookmotel)
+- fc14abc linter/plugins: Format test fixtures (#14125) (overlookmotel)
+- a6f965f linter/plugins: Simplify configs in test fixtures (#14124) (overlookmotel)
+- b1685f7 linter/plugins: Refactor tests (#14123) (overlookmotel)
+- 788e495 linter/plugins: Improve ESLint compat tests (#14119) (overlookmotel)
+- 5750077 linter/plugins: Fix file paths in snapshots (#14115) (overlookmotel)
+- 5c862f9 linter/plugins: Standardize test fixture structure (#14114) (overlookmotel)
+
+
+## [1.18.0] - 2025-09-24
+
+### 🐛 Bug Fixes
+
+- 314c27d linter/plugins: `definePlugin` apply `defineRule` to rules (#14065) (overlookmotel)
+- 7bd01ed linter/plugins: `defineRule` call `createOnce` lazily (#14062) (overlookmotel)
+- fb3e7e3 linter/plugins: `defineRule` accept visitor with no `before` / `after` hooks (#14060) (overlookmotel)
+
+### 🚜 Refactor
+
+- 3a706a7 linter: Rename `LintRunner` to `CliRunner` (#14050) (camc314)
+
+### ⚡ Performance
+
+- ce538c7 linter/plugins: Load methods of globals into local vars (#14073) (overlookmotel)
+
+### 🧪 Testing
+
+- 2fd4b1e linter/plugins: Rename test (#14064) (overlookmotel)
+- f2b3934 linter/plugins: Test returning `false` from `before` hook skips visitation in ESLint (#14061) (overlookmotel)
+- b109419 linter/plugins: Align ESLint plugin with Oxlint (#14059) (overlookmotel)
+
+
+## [1.17.0] - 2025-09-23
+
+### 🚀 Features
+
+- f47f978 linter/plugins: Add `definePlugin` API (#14008) (overlookmotel)
+- 3e117c6 linter/plugins: Add `defineRule` API (#13945) (overlookmotel)
+- 2dc8adb linter/plugins: Add `createOnce` API (#13944) (overlookmotel)
+- bef8753 linter/plugins: ESTree-compatible AST for JS plugins (#13942) (overlookmotel)
+- a14aa79 npm/oxlint: Convert to ES modules (#13876) (Boshen)
+- b52389a node: Bump `engines` field to require Node.js 20.19.0+ for ESM support (#13879) (Copilot)
+- c75ae8c linter/plugins: Add options to `Context` (#13810) (overlookmotel)
+- 53d04dd linter: Convert `oxlint` to NAPI app (#13723) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- 1f4be38 napi/parser: Generate `.d.mts` extension for types (#14038) (Daniel Roe)
+- a018756 linter/plugins: Pin `tsdown` dependency to 0.15.1 (#14005) (overlookmotel)
+- a34918a linter/plugins: Avoid lint warnings compiling WASM or big-endian (#13968) (overlookmotel)
+- dd3843f linter: Set package version in `package.json` (#13890) (overlookmotel)
+- fac7624 linter/plugins: Improve error for no JS plugins (#13858) (overlookmotel)
+
+### 🚜 Refactor
+
+- bb040bc parser, linter: Replace `.mjs` files with `.js` (#14045) (overlookmotel)
+- 0d48511 linter/plugins: Improve handling `Context` method calls in `createOnce` (#14032) (overlookmotel)
+- 6bc7664 oxlint: Run oxlint before tsgolint (#13519) (camc314)
+- ac3e9e9 napi/parser: Move JS code into `src-js` directory (#13899) (overlookmotel)
+- 7e0d736 linter/plugins: Rename `--experimental-js-plugins` to `--js-plugins` (#13860) (overlookmotel)
+- 6245c8c linter/plugins: Make `Context` properties getters (#13809) (overlookmotel)
+- a2342a6 linter/plugins: Import named in tests (#13807) (overlookmotel)
+
+### 📚 Documentation
+
+- 601c876 linter: Add comment explaining why Mimalloc is feature-gated (#14037) (overlookmotel)
+
+### ⚡ Performance
+
+- 4d04c6e linter/plugins: Flatten `LintFileResult` fields (#14033) (overlookmotel)
+- a79af0a linter: Replace `for (... of ...)` loops (#13913) (overlookmotel)
+
+### 🎨 Styling
+
+- 8083740 linter: Import `Serialize` at top level (#14030) (overlookmotel)
+
+### 🧪 Testing
+
+- f51240e linter/plugins: Tests for different import styles (#13859) (overlookmotel)
+- 407c95e linter/plugins: Check `this` is undefined in visit functions (#13811) (overlookmotel)
+- f023a22 linter/plugins: Include stack trace in plugin loading errors (#13808) (overlookmotel)
+
+### 💼 Other
+
+- 0630d68 linter: Build `oxlint` locally with Mimalloc in release mode (#14034) (overlookmotel)
+
+
+## [1.16.0] - 2025-09-16
+
+### 🐛 Bug Fixes
+
+- 3af1e5d linter/no-unsafe-declaration-merging: Always mark first span as primary (#13830) (camc314)
+- 12baf5e linter/exhaustive-deps: Respect primary span when identifying disable directive location (#13781) (camc314)
+- 09428f6 linter/plugins: Remove outdated comment (#13691) (overlookmotel)
+- a294721 linter/plugins: Exit early if JS plugins enabled on unsupported platforms (#13689) (overlookmotel)
+- 68a2280 linter/plugins: More graceful exit for `--experimental-js-plugins` CLI option (#13688) (overlookmotel)
+
+### 🚜 Refactor
+
+- 7346099 linter: Move `oxlint` application code into separate module (#13745) (overlookmotel)
+- 6dd4107 linter: Remove `#[cfg(test)]` attributes from `tester` module (#13714) (overlookmotel)
+- c40c6ef linter/plugins: Directory for JS plugins-related code (#13701) (overlookmotel)
+- 1fd993f napi/oxlint: Rename `napi/oxlint2` to `napi/oxlint` (#13682) (overlookmotel)
+
+### 🎨 Styling
+
+- 99a7638 linter: Add comments + re-organise imports (#13715) (overlookmotel)
+
+### 🧪 Testing
+
+- fb2d087 linter: Set CWD for tests (#13722) (overlookmotel)
+
+
+## [1.15.0] - 2025-09-11
+
+### 💥 BREAKING CHANGES
+
+- edc70ea allocator/pool: [**BREAKING**] Remove `disable_fixed_size` Cargo feature (#13625) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- 0d867b1 linter: Skip running tsgolint when no files need type aware linting (#13502) (Copilot)
+
+### 🚜 Refactor
+
+- 7775c21 linter/plugins: Remove `oxlint2` Cargo feature (#13648) (overlookmotel)
+- 6cd6be2 linter: Add `--experimental-js-plugins` CLI arg (#13658) (overlookmotel)
+- 2f02ac6 linter/plugins: Remove `disable_oxlint2` Cargo feature (#13626) (overlookmotel)
+- ff9e4fb linter/plugins: Use fixed-size allocators when `ExternalLinter` exists (#13623) (overlookmotel)
+- 91759c6 linter/plugins: Only use `RawTransferFileSystem` if JS plugins registered (#13599) (overlookmotel)
+- 118020c linter/plugins: Discard `ExternalLinter` if no JS plugins registered (#13598) (overlookmotel)
+- 8d30bce linter/tsgolint: Report an error if the tsgolint exe could not be found (#13590) (camc314)
+- d245376 oxlint: Remove unused `runner` module (#13561) (camc314)
+
+### 🧪 Testing
+
+- 58e6c94 oxlint: Add test for ignorePatterns whitelist (#13372) (Sysix)
+
+
+## [1.14.0] - 2025-08-30
+
+### 🚜 Refactor
+
+- 6431033 linter: Move ignore logic to `LintIgnoreMatcher` (#13222) (Sysix)
+
+### 📚 Documentation
+
+- 51d3840 linter: Update oxlint CLI help message on `.oxlintrc.json` config file (#13334) (0xCLARITY)
+
+### 🧪 Testing
+
+- 6eeeb67 oxlint: Add test for ignore patterns referenced by symlink file (#13356) (Sysix)
+
+
+## [1.13.0] - 2025-08-26
+
+### 💥 BREAKING CHANGES
+
+- 63abd7c oxlint: [**BREAKING**] Do not ignore hidden dot directories by default (#13194) (Sysix)
+
+### 🐛 Bug Fixes
+
+- 648e939 linter: Parse `ignorePatterns` with gitignore syntax (#13221) (Sysix)
+
+### 🚜 Refactor
+
+- c138fad linter: Avoid fs reads in `TsGoLintState` when `--silent` is used (#13199) (Sysix)
+
+
+## [1.12.0] - 2025-08-17
+
+### 🚀 Features
+
+- da3c7fb oxlint: Oxlint v0.0.3 (#13148) (Boshen)
+- aecacae linter: Support `ignorePatterns` for nested configs (#12210) (Sysix)
+- 61112a3 linter: Add 36 new TypeScript ESLint rules with comprehensive test fixtures (#12893) (Copilot)
+
+### 🐛 Bug Fixes
+
+- 66a350e oxlint: Should type linting files after ignore (#13149) (Boshen)
+- 43b1c5a linter: Do not count type-aware rules, when not enabled (#13062) (Sysix)
+- a0ccada tsgolint: Handle non-zero exit status from tsgolint process (#13087) (camc314)
+
+### 🚜 Refactor
+
+- 8459a12 linter: Pass paths to `TsGoLintState.lint` method (#13131) (Sysix)
+- f0a517f linter: Pass cwd instead of `LintServiceOptions` into `TsGoLintState` (#13127) (Sysix)
+- 34ae2f0 linter: Move `tsgolint.rs` to `oxc_linter` crate (#13126) (Sysix)
+- 9f924f6 linter: Always explicitly initialize Rayon thread pool (#13122) (overlookmotel)
+- 6c5b8be linter: Create `AllocatorPool` in `Runtime::new` (#13106) (overlookmotel)
+- cc2a85b linter: Remove `CliRunResult` from `TsGoLintState` (#13119) (Sysix)
+- 23e5642 linter: Move `TsGoLintInput` creation into own function (#13118) (Sysix)
+
+### ⚡ Performance
+
+- 3bfb235 linter: Implement streaming diagnostics for tsgolint instead of waiting for output to finish (#13098) (copilot-swe-agent)
+
+### 🎨 Styling
+
+- 4f2cc96 linter: Add line break (#13061) (overlookmotel)
+
+
+## [1.11.2] - 2025-08-12
+
+### 🐛 Bug Fixes
+
+- c461a86 oxlint: Fix type-aware linting crash when Vue files are present (#13007) (Copilot)
+- 2936545 linter/tsgolint: Report an error if tsgolint executable failed to spawn (#12984) (camc314)
+- a13b3ee oxlint: Run `tsgolint.CMD` under windows (#12932) (Sysix)
+
+### 🚜 Refactor
+
+- 69303de oxlint: Pass `DiagnosticService` as a parameter for `TsGoLintState.lint()` (#13004) (Sysix)
+
+### 🧪 Testing
+
+- fb8cbbf oxlint: Enable tsgolint test with config parameter for windows (#13001) (Alexander S.)
+- d59f3bb oxlint: Match `x.ys` when replacing var (#12990) (camc314)
+- d7cca12 linter: Add test for extended configs and overrides for tsgolint (#12924) (camchenry)
+
+
+## [1.11.1] - 2025-08-09
+
+### 🐛 Bug Fixes
+
+- 7fc907f linter: Resolve configured rules for every file linted by `tsgolint` (#12886) (camchenry)
+
+### 🚜 Refactor
+
+- c072e01 all: Add missing lifetimes in function return types (#12895) (overlookmotel)
+
+### 🧪 Testing
+
+- 9d946aa oxlint: Skip `--type--aware` test for `big-endian` (#12911) (Sysix)
+- 695fbdd oxlint: Fix `--type-aware` test on `big-endian` and skip for `windows` (#12910) (Sysix)
+- 38118ab oxlint: Fix `--type-aware` snapshot + add non tsgolint rule (#12909) (Sysix)
+
+
+## [1.11.0] - 2025-08-07
+
+### 🚀 Features
+
+- ac46347 oxlint: Add `tsgolint` integration (#12485) (camchenry)
+
+
+## [1.10.0] - 2025-08-06
+
+### 🚀 Features
+
+- 9b35600 linter/jsx-a11y: Add support for mapped attributes in label association checks (#12805) (camc314)
+
+### 🐛 Bug Fixes
+
+- 45206dd linter: Apply fix span offset after fixing the section source text (#12758) (Sysix)
+
+### 🚜 Refactor
+
+- 030e397 linter: Simplify parsing CLI args (#12802) (overlookmotel)
+- c0e224a linter: Store `ExternalRuleId` in `OxlintOverrides` not raw names (#12502) (camc314)
+
+### ⚡ Performance
+
+- 693673b linter: Reduce iterations when collecting directories for nested configs (#12329) (overlookmotel)
+
+### 🎨 Styling
+
+- c15da81 codegen, formatter, linter, minifier, transformer: Re-order imports (#12725) (Copilot)
+
+### 🧪 Testing
+
+- d8ccff7 oxlint: Add `Tester::test_fix` mehod (#12754) (Sysix)
+
+
+## [1.9.0] - 2025-07-29
+
+### 🚜 Refactor
+
+- 543fd53 napi/oxlint: Rename `run` to `lintFile` (#12567) (overlookmotel)
+- 491c401 linter: Remove `#[must_use]` from `LintService::with_*` methods (#12560) (overlookmotel)
+- d44b0ac linter: Remove `Runner` trait (#12559) (overlookmotel)
+- bea652f linter: Add `vue` and `regex` to `BuiltinLintPlugins` (#12542) (Sysix)
+- 5c33fc7 diagnostics: Implement `Eq` and `Ord` for `InfoPosition` (#12505) (overlookmotel)
+- 7a0da04 diagnostics: Remove Option wrapper from MPSC channel and sender field (#12467) (camc314)
+
+### 🧪 Testing
+
+- d31adcf linter: Improve sorting diagnostics (#12504) (overlookmotel)
+
+
+## [1.8.0] - 2025-07-22
+
+### 🐛 Bug Fixes
+
+- 46e33d5 linter: Improve error handling in config file lookup (#12391) (camc314)
+
+
+## [1.7.0] - 2025-07-16
+
+### 🚀 Features
+
+- 5e428a4 linter/eslint-plugin-next: No-html-link-for-pages rule addition (#12194) (Gabriel Díaz Aguilera)
+- c551b8f linter: Report diagnostics from custom plugins (#12219) (camc314)
+- d387729 linter: JS custom rules config (#12160) (camc314)
+- 152e59d napi/oxlint: Read source text into start of allocator (#12122) (overlookmotel)
+- d4ebd14 linter: Add `oxlint2`/`disable_oxlint2` feature flags (#12130) (camc314)
+- a4dae73 linter: Introduce `LintPlugins` to store builtin + custom plugins (#12117) (camc314)
+
+### 🐛 Bug Fixes
+
+- 9720774 linter: Report implicit config parse errors (#12260) (Simon Buchan)
+- 853d2bc linter, language_server: Correctly identify usage of `import` plugin (#12157) (overlookmotel)
+
+### 🚜 Refactor
+
+- 6e54645 language_server: Store `LintService` instead of `Linter` (#12016) (Sysix)
+- 113cf8c linter: Move `LintServiceOptions.paths` to `LintService.with_paths` (#12015) (Sysix)
+- acfac68 oxlint: Adjust ignore patterns by counting bytes instead of chars (#12209) (Sysix)
+- 1d2eaca oxlint2: Introduce `force_test_reporter` feature for consistent graphical outputs (#12133) (camc314)
+- f7c675d linter: Rename `LintPlugins` to `BuiltinLintPlugins` (#12116) (camc314)
+
+### 🧪 Testing
+
+- d1194e8 oxlint: Ignore test on windows (#12262) (camc314)
+
+
+## [1.6.0] - 2025-07-07
+
+### 🚀 Features
+
+- f81d336 linter: Introduce `ExternalLinter` struct (#12052) (camc314)
+
+### 🐛 Bug Fixes
+
+- 5851d2c oxlint: Always follow symlinks; remove cli flag `--symlinks` (#12048) (Boshen)
+
+### 🚜 Refactor
+
+- 2f7cbda linter: Move napi bindings out of oxc_linter (#12072) (camc314)
+- 9254252 linter: Move code (#12071) (overlookmotel)
+
+
+## [1.5.0] - 2025-07-02
+
+### 🐛 Bug Fixes
+
+- 4b2c658 oxlint: Make `--version` exit code be `0` (#11986) (camc314)
+
+
+## [1.4.0] - 2025-06-30
+
+### 🚀 Features
+
+- 9b19b40 napi: Add basic oxlint napi bindings (#11877) (camc314)
+- f102cb1 linter: Add `import/prefer-default-export` rule (#11891) (yefan)
+
+### 🐛 Bug Fixes
+
+- d991fed linter: Fix `jsx-a11y/label-has-associated-control` default values (#11832) (Sysix)
+
+### 🚜 Refactor
+
+- 2cf9fa3 linter: Derive debug for `extensions` (#11938) (camc314)
+
+
 ## [1.3.0] - 2025-06-23
 
 ### 🚜 Refactor

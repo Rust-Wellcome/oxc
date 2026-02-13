@@ -3,16 +3,26 @@ use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
 use oxc_syntax::operator::{BinaryOperator, UnaryOperator};
+use schemars::JsonSchema;
+use serde::Deserialize;
 
-use crate::{AstNode, ast_util::get_declaration_of_variable, context::LintContext, rule::Rule};
+use crate::{
+    AstNode,
+    ast_util::get_declaration_of_variable,
+    context::LintContext,
+    rule::{DefaultRuleConfig, Rule},
+};
 
 fn no_typeof_undefined_diagnostic(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Compare with `undefined` directly instead of using `typeof`.")
         .with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct NoTypeofUndefined {
+    /// If set to `true`, also report `typeof x === "undefined"` when `x` may be a global
+    /// variable that is not declared (commonly checked via `typeof foo === "undefined"`).
     check_global_variables: bool,
 }
 
@@ -39,7 +49,8 @@ declare_oxc_lint!(
     NoTypeofUndefined,
     unicorn,
     pedantic,
-    pending
+    pending,
+    config = NoTypeofUndefined,
 );
 
 impl Rule for NoTypeofUndefined {
@@ -77,11 +88,8 @@ impl Rule for NoTypeofUndefined {
         ctx.diagnostic(no_typeof_undefined_diagnostic(bin_expr.span));
     }
 
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let check_global_variables =
-            value.get("checkGlobalVariables").and_then(serde_json::Value::as_bool).unwrap_or(false);
-
-        Self { check_global_variables }
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 }
 
@@ -134,11 +142,11 @@ fn test() {
         (r#"typeof foo.bar === "undefined""#, None),
         (
             r#"let foo; typeof foo === "undefined""#,
-            Some(serde_json::json!({ "checkGlobalVariables": false })),
+            Some(serde_json::json!([{ "checkGlobalVariables": false }])),
         ),
         (
             r#"typeof foo === "undefined""#,
-            Some(serde_json::json!({ "checkGlobalVariables": true })),
+            Some(serde_json::json!([{ "checkGlobalVariables": true }])),
         ),
     ];
 

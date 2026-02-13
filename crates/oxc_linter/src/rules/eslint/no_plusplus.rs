@@ -2,8 +2,14 @@ use oxc_ast::{AstKind, ast::UpdateOperator};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, Span};
+use schemars::JsonSchema;
+use serde::Deserialize;
 
-use crate::{AstNode, context::LintContext, rule::Rule};
+use crate::{
+    AstNode,
+    context::LintContext,
+    rule::{DefaultRuleConfig, Rule},
+};
 
 fn no_plusplus_diagnostic(span: Span, operator: UpdateOperator) -> OxcDiagnostic {
     let diagnostic = OxcDiagnostic::warn(format!(
@@ -22,7 +28,8 @@ fn no_plusplus_diagnostic(span: Span, operator: UpdateOperator) -> OxcDiagnostic
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct NoPlusplus {
     /// Whether to allow `++` and `--` in for loop afterthoughts.
     allow_for_loop_afterthoughts: bool,
@@ -75,21 +82,6 @@ declare_oxc_lint!(
     /// for (let i = 0; i < l; i += 1) {
     ///    doSomething(i);
     /// }
-    ///
-    /// ### Options
-    ///
-    /// #### allowForLoopAfterthoughts
-    ///
-    /// `{ type: boolean, default: false }`
-    ///
-    /// Pass `"allowForLoopAfterthoughts": true` to allow `++` and `--` in for loop afterthoughts.
-    ///
-    /// Example:
-    /// ```json
-    /// "no-plusplus": [
-    ///   "error",
-    ///   { "allowForLoopAfterthoughts": true }
-    /// ]
     /// ```
     NoPlusplus,
     eslint,
@@ -98,17 +90,12 @@ declare_oxc_lint!(
     // For example, `++i` and `i++` will be rewritten as `i += 1` even though they are not the same.
     // If the code depends on the order of evaluation, then this might break it.
     conditional_suggestion,
+    config = NoPlusplus,
 );
 
 impl Rule for NoPlusplus {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let obj = value.get(0);
-        Self {
-            allow_for_loop_afterthoughts: obj
-                .and_then(|v| v.get("allowForLoopAfterthoughts"))
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false),
-        }
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -116,8 +103,7 @@ impl Rule for NoPlusplus {
             return;
         };
 
-        if self.allow_for_loop_afterthoughts && is_for_loop_afterthought(node, ctx).unwrap_or(false)
-        {
+        if self.allow_for_loop_afterthoughts && is_for_loop_afterthought(node, ctx) {
             return;
         }
 
@@ -144,14 +130,14 @@ impl Rule for NoPlusplus {
 ///   - An operand of a sequence expression that is the update node: for (;; foo(), i++) {}
 ///   - An operand of a sequence expression that is child of another sequence expression, etc.,
 ///     up to the sequence expression that is the update node: for (;; foo(), (bar(), (baz(), i++))) {}
-fn is_for_loop_afterthought(node: &AstNode, ctx: &LintContext) -> Option<bool> {
-    let mut cur = ctx.nodes().parent_node(node.id())?;
+fn is_for_loop_afterthought(node: &AstNode, ctx: &LintContext) -> bool {
+    let mut cur = ctx.nodes().parent_node(node.id());
 
     while let AstKind::SequenceExpression(_) | AstKind::ParenthesizedExpression(_) = cur.kind() {
-        cur = ctx.nodes().parent_node(cur.id())?;
+        cur = ctx.nodes().parent_node(cur.id());
     }
 
-    Some(matches!(cur.kind(), AstKind::ForStatement(stmt) if stmt.update.is_some()))
+    matches!(cur.kind(), AstKind::ForStatement(stmt) if stmt.update.is_some())
 }
 
 #[test]

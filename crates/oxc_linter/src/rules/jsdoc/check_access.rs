@@ -13,7 +13,7 @@ fn invalid_access_level(span: Span) -> OxcDiagnostic {
 
 fn redundant_access_tags(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn(
-        "Mixing of @access with @public, @private, @protected, or @package on the same doc block.",
+        "Mixing of `@access` with `@public`, `@private`, `@protected`, or `@package` on the same doc block.",
     )
     .with_help("There should be only one instance of access tag in a JSDoc comment.")
     .with_label(span)
@@ -34,7 +34,11 @@ declare_oxc_lint!(
     ///
     /// ### Why is this bad?
     ///
-    /// It is important to have a consistent way of specifying access levels.
+    /// It is important to have a consistent way of specifying access levels in JSDoc
+    /// comments. Using invalid or multiple access level tags creates confusion about
+    /// the intended visibility of documented elements and can lead to inconsistencies
+    /// in API documentation generation. Mixing different access tags or using invalid
+    /// values makes the documentation unclear and potentially misleading.
     ///
     /// ### Examples
     ///

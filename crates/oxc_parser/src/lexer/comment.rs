@@ -1,6 +1,7 @@
 use memchr::memmem::Finder;
 
-use oxc_syntax::identifier::is_line_terminator;
+use oxc_ast::CommentKind;
+use oxc_syntax::line_terminator::is_line_terminator;
 
 use crate::diagnostics;
 
@@ -82,9 +83,13 @@ impl<'a> Lexer<'a> {
     /// Section 12.4 Multi Line Comment
     pub(super) fn skip_multi_line_comment(&mut self) -> Kind {
         // If `is_on_new_line` is already set, go directly to faster search which only looks for `*/`
-        if self.token.is_on_new_line() {
-            return self.skip_multi_line_comment_after_line_break(self.source.position());
-        }
+        // We need to identify if comment contains line breaks or not
+        // (`CommentKind::Block` or `CommentKind::MultilineBlock`).
+        // So we have to use the loop below for the first line of the comment even if
+        // `Token`'s `is_on_new_line` flag is already set.
+        // If the loop finds a line break before end of the comment, we then switch to
+        // the faster `skip_multi_line_comment_after_line_break` which searches
+        // for the end of the comment using `memchr`.
 
         byte_search! {
             lexer: self,
@@ -149,6 +154,7 @@ impl<'a> Lexer<'a> {
         self.trivia_builder.add_block_comment(
             self.token.start(),
             self.offset(),
+            CommentKind::SingleLineBlock,
             self.source.whole(),
         );
         Kind::Skip
@@ -170,6 +176,7 @@ impl<'a> Lexer<'a> {
             self.trivia_builder.add_block_comment(
                 self.token.start(),
                 self.offset(),
+                CommentKind::MultiLineBlock,
                 self.source.whole(),
             );
             Kind::Skip
@@ -180,15 +187,25 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Section 12.5 Hashbang Comments
-    pub(super) fn read_hashbang_comment(&mut self) -> Kind {
+    /// Section 12.5 Hashbang Comments.
+    ///
+    /// # SAFETY
+    /// Next 2 bytes must be `#!`.
+    pub(super) unsafe fn read_hashbang_comment(&mut self) -> Kind {
+        debug_assert!(self.peek_2_bytes() == Some([b'#', b'!']));
+
+        // SAFETY: Caller guarantees next 2 bytes are `#!`
+        unsafe {
+            self.source.next_byte_unchecked();
+            self.source.next_byte_unchecked();
+        }
+
         while let Some(c) = self.peek_char() {
             if is_line_terminator(c) {
                 break;
             }
             self.consume_char();
         }
-        self.token.set_is_on_new_line(true);
         Kind::HashbangComment
     }
 }

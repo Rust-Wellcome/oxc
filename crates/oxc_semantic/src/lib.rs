@@ -8,8 +8,10 @@
 use std::ops::RangeBounds;
 
 use oxc_ast::{
-    AstKind, Comment, CommentsRange, ast::IdentifierReference, comments_range, has_comments_between,
+    AstKind, Comment, CommentsRange, ast::IdentifierReference, comments_range, get_comment_at,
+    has_comments_between, is_inside_comment,
 };
+#[cfg(feature = "cfg")]
 use oxc_cfg::ControlFlowGraph;
 use oxc_span::{GetSpan, SourceType, Span};
 // Re-export flags and ID types
@@ -20,14 +22,18 @@ pub use oxc_syntax::{
     symbol::{SymbolFlags, SymbolId},
 };
 
+#[cfg(feature = "cfg")]
 pub mod dot;
 
+#[cfg(feature = "linter")]
+mod ast_types_bitset;
 mod binder;
 mod builder;
 mod checker;
 mod class;
 mod diagnostics;
 mod is_global_reference;
+#[cfg(feature = "linter")]
 mod jsdoc;
 mod label;
 mod node;
@@ -35,8 +41,11 @@ mod scoping;
 mod stats;
 mod unresolved_stack;
 
+#[cfg(feature = "linter")]
+pub use ast_types_bitset::AstTypesBitset;
 pub use builder::{SemanticBuilder, SemanticBuilderReturn};
 pub use is_global_reference::IsGlobalReference;
+#[cfg(feature = "linter")]
 pub use jsdoc::{JSDoc, JSDocFinder, JSDocTag};
 pub use node::{AstNode, AstNodes};
 pub use scoping::Scoping;
@@ -54,6 +63,7 @@ use class::ClassTable;
 /// [`Abstract Syntax Tree (AST)`]: crate::AstNodes
 /// [`scoping`]: crate::Scoping
 /// [`control flow graph (CFG)`]: crate::ControlFlowGraph
+#[derive(Default)]
 pub struct Semantic<'a> {
     /// Source code of the JavaScript/TypeScript program being analyzed.
     source_text: &'a str,
@@ -69,17 +79,22 @@ pub struct Semantic<'a> {
     classes: ClassTable<'a>,
 
     /// Parsed comments.
-    comments: &'a oxc_allocator::Vec<'a, Comment>,
+    comments: &'a [Comment],
     irregular_whitespaces: Box<[Span]>,
 
     /// Parsed JSDoc comments.
+    #[cfg(feature = "linter")]
     jsdoc: JSDocFinder<'a>,
 
     unused_labels: Vec<NodeId>,
 
     /// Control flow graph. Only present if [`Semantic`] is built with cfg
     /// creation enabled using [`SemanticBuilder::with_cfg`].
+    #[cfg(feature = "cfg")]
     cfg: Option<ControlFlowGraph>,
+    #[cfg(not(feature = "cfg"))]
+    #[expect(unused)]
+    cfg: (),
 }
 
 impl<'a> Semantic<'a> {
@@ -120,7 +135,7 @@ impl<'a> Semantic<'a> {
         (&mut self.scoping, &self.nodes)
     }
 
-    pub fn classes(&self) -> &ClassTable {
+    pub fn classes(&self) -> &ClassTable<'_> {
         &self.classes
     }
 
@@ -144,6 +159,15 @@ impl<'a> Semantic<'a> {
         has_comments_between(self.comments, span)
     }
 
+    pub fn is_inside_comment(&self, pos: u32) -> bool {
+        is_inside_comment(self.comments, pos)
+    }
+
+    /// Get the comment containing a position, if any.
+    pub fn get_comment_at(&self, pos: u32) -> Option<&Comment> {
+        get_comment_at(self.comments, pos)
+    }
+
     pub fn irregular_whitespaces(&self) -> &[Span] {
         &self.irregular_whitespaces
     }
@@ -151,6 +175,7 @@ impl<'a> Semantic<'a> {
     /// Parsed [`JSDoc`] comments.
     ///
     /// Will be empty if JSDoc parsing is disabled.
+    #[cfg(feature = "linter")]
     pub fn jsdoc(&self) -> &JSDocFinder<'a> {
         &self.jsdoc
     }
@@ -163,8 +188,15 @@ impl<'a> Semantic<'a> {
     ///
     /// Only present if [`Semantic`] is built with cfg creation enabled using
     /// [`SemanticBuilder::with_cfg`].
+    #[cfg(feature = "cfg")]
     pub fn cfg(&self) -> Option<&ControlFlowGraph> {
         self.cfg.as_ref()
+    }
+
+    #[cfg(not(feature = "cfg"))]
+    #[expect(clippy::unused_self)]
+    pub fn cfg(&self) -> Option<&()> {
+        None
     }
 
     /// Get statistics about data held in `Semantic`.

@@ -51,6 +51,17 @@ declare_oxc_lint!(
     ///   `${interpolated}`,
     /// );
     /// ```
+    ///
+    /// This rule is compatible with [eslint-plugin-vitest](https://github.com/vitest-dev/eslint-plugin-vitest/blob/main/docs/rules/no-interpolation-in-snapshots.md),
+    /// to use it, add the following configuration to your `.oxlintrc.json`:
+    ///
+    /// ```json
+    /// {
+    ///   "rules": {
+    ///      "vitest/no-interpolation-in-snapshots": "error"
+    ///   }
+    /// }
+    /// ```
     NoInterpolationInSnapshots,
     jest,
     style
@@ -87,10 +98,10 @@ fn run<'a>(possible_jest_node: &PossibleJestNode<'a, '_>, ctx: &LintContext<'a>)
     // Check all since the optional 'propertyMatchers' argument might be present
     // `.toMatchInlineSnapshot(propertyMatchers?, inlineSnapshot)`
     for arg in jest_fn_call.args {
-        if let Argument::TemplateLiteral(template_lit) = arg {
-            if !template_lit.expressions.is_empty() {
-                ctx.diagnostic(no_interpolation_in_snapshots_diagnostic(template_lit.span));
-            }
+        if let Argument::TemplateLiteral(template_lit) = arg
+            && !template_lit.expressions.is_empty()
+        {
+            ctx.diagnostic(no_interpolation_in_snapshots_diagnostic(template_lit.span));
         }
     }
 }

@@ -12,7 +12,7 @@ use crate::{
 
 fn no_var_requires_diagnostic(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Require statement not part of import statement.")
-        .with_help("Use ES6 style imports or import instead.")
+        .with_help("Use ES module imports or `import = require` instead.")
         .with_label(span)
 }
 
@@ -22,11 +22,15 @@ pub struct NoVarRequires;
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// Disallow `require` statements except in import statements
+    /// Disallow `require` statements except in import statements.
+    ///
+    /// **NOTE**: This rule is intentionally missing the `allow` option from the original typescript-eslint rule.
+    /// This rule is deprecated in the upstream plugin and the `typescript/no-require-imports` rule should be
+    /// used instead.
     ///
     /// ### Why is this bad?
     ///
-    /// In other words, the use of forms such as var foo = require("foo") are banned. Instead use ES6 style imports or import foo = require("foo") imports.
+    /// In other words, the use of forms such as var foo = require("foo") are banned. Instead use ES module imports or import foo = require("foo") imports.
     ///
     /// ```typescript
     /// var foo = require('foo');
@@ -50,17 +54,11 @@ impl Rule for NoVarRequires {
             // the grandparent is an expression statement => this is a top level require()
             let is_expression_statement = {
                 let parent_node = ctx.nodes().parent_node(node.id());
-                let grandparent_node = parent_node.and_then(|x| ctx.nodes().parent_node(x.id()));
+                let grandparent_node = ctx.nodes().parent_node(parent_node.id());
                 matches!(
-                    (
-                        parent_node.map(oxc_semantic::AstNode::kind),
-                        grandparent_node.map(oxc_semantic::AstNode::kind)
-                    ),
-                    (Some(AstKind::ExpressionStatement(_)), _)
-                        | (
-                            Some(AstKind::ChainExpression(_)),
-                            Some(AstKind::ExpressionStatement(_))
-                        )
+                    (parent_node.kind(), grandparent_node.kind()),
+                    (AstKind::ExpressionStatement(_), _)
+                        | (AstKind::ChainExpression(_), AstKind::ExpressionStatement(_))
                 )
             };
 

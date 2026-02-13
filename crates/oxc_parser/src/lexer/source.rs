@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, marker::PhantomData, slice, str};
 
-use oxc_data_structures::pointer_ext::PointerExt;
+use oxc_data_structures::assert_unchecked;
 
 use crate::{MAX_LEN, UniquePromise};
 
@@ -373,20 +373,39 @@ impl<'a> Source<'a> {
             // So incrementing `ptr` cannot result in `ptr > end`.
             // Current byte is ASCII, so incremented `ptr` must be on a UTF-8 character boundary.
             unsafe { self.ptr = self.ptr.add(1) };
-            return Some(byte as char);
+            Some(byte as char)
+        } else {
+            // Multi-byte Unicode character.
+            // Check invariant that `ptr` is on a UTF-8 character boundary.
+            debug_assert!(!is_utf8_cont_byte(byte));
+
+            // SAFETY: `Source` is not empty, and we just checked next byte is not ASCII
+            unsafe { self.next_unicode_char() }
         }
+    }
 
-        // Multi-byte Unicode character.
-        // Check invariant that `ptr` is on a UTF-8 character boundary.
-        debug_assert!(!is_utf8_cont_byte(byte));
-
+    /// Get next char of source, and advance position to after it, when next char is a unicode character.
+    ///
+    /// # SAFETY
+    /// * `Source` must not be empty.
+    /// * Next character in source must not be ASCII.
+    #[expect(clippy::unnecessary_wraps)]
+    #[cold] // Unicode is rare
+    unsafe fn next_unicode_char(&mut self) -> Option<char> {
         // Create a `Chars` iterator, get next char from it, and then update `self.ptr`
         // to match `Chars` iterator's updated pointer afterwards.
         // `Chars` iterator upholds same invariants as `Source`, so its pointer is guaranteed
         // to be valid as `self.ptr`.
-        let mut chars = self.remaining().chars();
-        // SAFETY: We know that there's a byte to be consumed, so `chars.next()` must return `Some(_)`
-        let c = unsafe { chars.next().unwrap_unchecked() };
+        let remaining = self.remaining();
+        // Inform compiler that next char in `Source` is non-ASCII, so it can remove some branches from
+        // `chars.next().unwrap()`. Compiler will not be aware of these invariants if this function is not inlined.
+        // SAFETY: Caller guarantees these invariants.
+        unsafe {
+            assert_unchecked!(!remaining.is_empty());
+            assert_unchecked!(!remaining.as_bytes()[0].is_ascii());
+        }
+        let mut chars = remaining.chars();
+        let c = chars.next().unwrap();
         self.ptr = chars.as_str().as_ptr();
         Some(c)
     }
@@ -401,21 +420,34 @@ impl<'a> Source<'a> {
             // and next 2 bytes are ASCII, so advancing by 2 bytes must put `ptr`
             // in bounds and on a UTF-8 character boundary
             unsafe { self.ptr = self.ptr.add(2) };
-            return Some([byte1 as char, byte2 as char]);
+            Some([byte1 as char, byte2 as char])
+        } else {
+            // Multi-byte Unicode character.
+            // Check invariant that `ptr` is on a UTF-8 character boundary.
+            debug_assert!(!is_utf8_cont_byte(byte1));
+
+            // SAFETY: `Source` is not empty
+            unsafe { self.next_2_unicode_chars() }
         }
+    }
 
-        // Multi-byte Unicode character.
-        // Check invariant that `ptr` is on a UTF-8 character boundary.
-        debug_assert!(!is_utf8_cont_byte(byte1));
-
+    /// Get next 2 chars of source, and advance position to after them, when one of next 2 chars is non-ASCII.
+    ///
+    /// # SAFETY
+    /// `Source` must not be empty.
+    #[cold] // Unicode is rare
+    unsafe fn next_2_unicode_chars(&mut self) -> Option<[char; 2]> {
         // Create a `Chars` iterator, get next 2 chars from it, and then update `self.ptr`
         // to match `Chars` iterator's updated pointer afterwards.
         // `Chars` iterator upholds same invariants as `Source`, so its pointer is guaranteed
         // to be valid as `self.ptr`.
-        let mut chars = self.remaining().chars();
-        // SAFETY: We know that there's 2 bytes to be consumed, so first call to
-        // `chars.next()` must return `Some(_)`
-        let c1 = unsafe { chars.next().unwrap_unchecked() };
+        let remaining = self.remaining();
+        // Inform compiler that `Source` is not empty, to remove check from `chars.next().unwrap()`.
+        // Compiler will not be aware of this invariant if this function is not inlined.
+        // SAFETY: Caller guarantees `Source` is not empty.
+        unsafe { assert_unchecked!(!remaining.is_empty()) };
+        let mut chars = remaining.chars();
+        let c1 = chars.next().unwrap();
         let c2 = chars.next()?;
         self.ptr = chars.as_str().as_ptr();
         Some([c1, c2])
@@ -503,20 +535,39 @@ impl<'a> Source<'a> {
         // Check not at EOF and handle ASCII bytes
         let byte = self.peek_byte()?;
         if byte.is_ascii() {
-            return Some(byte as char);
+            Some(byte as char)
+        } else {
+            // Multi-byte Unicode character.
+            // Check invariant that `ptr` is on a UTF-8 character boundary.
+            debug_assert!(!is_utf8_cont_byte(byte));
+
+            // SAFETY: `Source` is not empty, and we just checked next byte is not ASCII
+            unsafe { self.peek_unicode_char() }
         }
+    }
 
-        // Multi-byte Unicode character.
-        // Check invariant that `ptr` is on a UTF-8 character boundary.
-        debug_assert!(!is_utf8_cont_byte(byte));
-
-        // Create a `Chars` iterator, and get next char from it
-        let mut chars = self.remaining().chars();
-        // SAFETY: We know that there's a byte to be consumed, so `chars.next()` must return `Some(_)`.
+    /// Peek next char of source, without consuming it, when next char is a unicode character.
+    ///
+    /// # SAFETY
+    /// * `Source` must not be empty.
+    /// * Next character in source must not be ASCII.
+    #[expect(clippy::unnecessary_wraps)]
+    #[cold] // Unicode is rare
+    unsafe fn peek_unicode_char(&self) -> Option<char> {
+        // Create a `Chars` iterator, and get next char from it.
+        let remaining = self.remaining();
+        // Inform compiler that next char in `Source` is non-ASCII, so it can remove some branches from
+        // `chars.next().unwrap()`. Compiler will not be aware of these invariants if this function is not inlined.
+        // SAFETY: Caller guarantees these invariants.
+        unsafe {
+            assert_unchecked!(!remaining.is_empty());
+            assert_unchecked!(!remaining.as_bytes()[0].is_ascii());
+        }
+        let mut chars = remaining.chars();
+        // We know that there's a byte to be consumed, so `chars.next()` must return `Some(_)`.
         // Could just return `chars.next()` here, but making it clear to compiler that this branch
-        // always returns `Some(_)` may help it optimize the caller. Compiler seems to have difficulty
-        // "seeing into" `Chars` iterator and making deductions.
-        let c = unsafe { chars.next().unwrap_unchecked() };
+        // always returns `Some(_)` may help it optimize the caller.
+        let c = chars.next().unwrap();
         Some(c)
     }
 
@@ -621,7 +672,7 @@ impl<'a> SourcePosition<'a> {
     pub(super) unsafe fn offset_from(self, origin: Self) -> usize {
         // SAFETY: Caller guarantees `self` is not before `origin`.
         // All `SourcePosition<'a>`s are within bounds of same source text.
-        unsafe { self.ptr.offset_from_usize(origin.ptr) }
+        unsafe { self.ptr.offset_from_unsigned(origin.ptr) }
     }
 
     /// Get the distance between this [`SourcePosition`] and another [`SourcePosition`] as `u32`.
@@ -714,11 +765,9 @@ impl<'a> SourcePosition<'a> {
         // `Source` is created from a valid `&str`, so points to allocated, initialized memory.
         // `Source` conceptually holds the source text `&str`, which guarantees no mutable references
         // to the same memory can exist, as that would violate Rust's aliasing rules.
-        // Pointer is "dereferenceable" by definition as a `u8` is 1 byte and cannot span multiple objects.
         // Alignment is not relevant as `u8` is aligned on 1 (i.e. no alignment requirements).
-        #[expect(clippy::ptr_as_ptr)]
         unsafe {
-            let p = self.ptr as *const [u8; 2];
+            let p = self.ptr.cast::<[u8; 2]>();
             *p.as_ref().unwrap_unchecked()
         }
     }

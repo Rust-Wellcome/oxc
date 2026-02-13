@@ -2,13 +2,15 @@ use oxc_ast::{AstKind, ast::Argument};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{CompactStr, Span};
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 #[cfg(test)]
 mod tests;
 
 use crate::{
     context::LintContext,
-    rule::Rule,
+    rule::{DefaultRuleConfig, Rule},
     utils::{
         JestFnKind, JestGeneralFnKind, ParsedJestFnCallNew, PossibleJestNode, parse_jest_fn_call,
     },
@@ -20,12 +22,100 @@ fn prefer_lowercase_title_diagnostic(title: &str, span: Span) -> OxcDiagnostic {
         .with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct PreferLowercaseTitleConfig {
+    /// This array option allows specifying prefixes, which contain capitals that titles
+    /// can start with. This can be useful when writing tests for API endpoints, where
+    /// you'd like to prefix with the HTTP method.
+    /// By default, nothing is allowed (the equivalent of `{ "allowedPrefixes": [] }`).
+    ///
+    /// Example of **correct** code for the `{ "allowedPrefixes": ["GET"] }` option:
+    /// ```js
+    /// /* jest/prefer-lowercase-title: ["error", { "allowedPrefixes": ["GET"] }] */
+    /// describe('GET /live');
+    /// ```
     allowed_prefixes: Vec<CompactStr>,
+    /// This array option controls which Jest or Vitest functions are checked by this rule. There
+    /// are four possible values:
+    /// - `"describe"`
+    /// - `"test"`
+    /// - `"it"`
+    /// - `"bench"`
+    ///
+    /// By default, none of these options are enabled (the equivalent of
+    /// `{ "ignore": [] }`).
+    ///
+    /// Example of **correct** code for the `{ "ignore": ["describe"] }` option:
+    /// ```js
+    /// /* jest/prefer-lowercase-title: ["error", { "ignore": ["describe"] }] */
+    /// describe('Uppercase description');
+    /// ```
+    ///
+    /// Example of **correct** code for the `{ "ignore": ["test"] }` option:
+    /// ```js
+    /// /* jest/prefer-lowercase-title: ["error", { "ignore": ["test"] }] */
+    /// test('Uppercase description');
+    /// ```
+    ///
+    /// Example of **correct** code for the `{ "ignore": ["it"] }` option:
+    /// ```js
+    /// /* jest/prefer-lowercase-title: ["error", { "ignore": ["it"] }] */
+    /// it('Uppercase description');
+    /// ```
     ignore: Vec<CompactStr>,
+    /// This option can be set to allow only the top-level `describe` blocks to have a
+    /// title starting with an upper-case letter.
+    ///
+    /// Example of **correct** code for the `{ "ignoreTopLevelDescribe": true }` option:
+    /// ```js
+    /// /* jest/prefer-lowercase-title: ["error", { "ignoreTopLevelDescribe": true }] */
+    /// describe('MyClass', () => {
+    ///     describe('#myMethod', () => {
+    ///         it('does things', () => {
+    ///             //
+    ///         });
+    ///     });
+    /// });
+    /// ```
     ignore_top_level_describe: bool,
+    /// This option can be set to only validate that the first character of a test name is lowercased.
+    ///
+    /// Example of **correct** code for the `{ "lowercaseFirstCharacterOnly": true }` option:
+    /// ```js
+    /// /* vitest/prefer-lowercase-title: ["error", { "lowercaseFirstCharacterOnly": true }] */
+    /// describe('myClass', () => {
+    ///     describe('myMethod', () => {
+    ///         it('does things', () => {
+    ///             //
+    ///         });
+    ///     });
+    /// });
+    /// ```
+    ///
+    /// Example of **incorrect** code for the `{ "lowercaseFirstCharacterOnly": true }` option:
+    /// ```js
+    /// /* vitest/prefer-lowercase-title: ["error", { "lowercaseFirstCharacterOnly": true }] */
+    /// describe('MyClass', () => {
+    ///     describe('MyMethod', () => {
+    ///         it('does things', () => {
+    ///             //
+    ///         });
+    ///     });
+    /// });
+    /// ```
     lowercase_first_character_only: bool,
+}
+
+impl Default for PreferLowercaseTitleConfig {
+    fn default() -> Self {
+        Self {
+            allowed_prefixes: Vec::new(),
+            ignore: Vec::new(),
+            ignore_top_level_describe: false,
+            lowercase_first_character_only: true,
+        }
+    }
 }
 
 impl std::ops::Deref for PreferLowercaseTitle {
@@ -36,15 +126,19 @@ impl std::ops::Deref for PreferLowercaseTitle {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct PreferLowercaseTitle(Box<PreferLowercaseTitleConfig>);
 
 declare_oxc_lint!(
     /// ### What it does
     ///
     /// Enforce `it`, `test`, `describe`, and `bench` to have descriptions that begin with a
-    /// lowercase letter. This provides more readable test failures. This rule is not
-    /// enabled by default.
+    /// lowercase letter. This provides more readable test failures.
+    ///
+    /// ### Why is this bad?
+    ///
+    /// Lowercase messages for test failures generally result in more grammatically correct
+    /// failure messages when you have a test failure.
     ///
     /// ### Examples
     ///
@@ -62,139 +156,26 @@ declare_oxc_lint!(
     /// });
     /// ```
     ///
-    /// ### Options
+    /// This rule is compatible with [eslint-plugin-vitest](https://github.com/vitest-dev/eslint-plugin-vitest/blob/main/docs/rules/prefer-lowercase-title.md),
+    /// to use it, add the following configuration to your `.oxlintrc.json`:
+    ///
     /// ```json
     /// {
-    ///     "jest/prefer-lowercase-title": [
-    ///         "error",
-    ///         {
-    ///             "ignore": ["describe", "test"]
-    ///         }
-    ///     ]
+    ///   "rules": {
+    ///      "vitest/prefer-lowercase-title": "error"
+    ///   }
     /// }
-    /// ```
-    ///
-    /// #### `ignore`
-    ///
-    /// This array option controls which Jest or Vitest functions are checked by this rule. There
-    /// are four possible values:
-    /// - `"describe"`
-    /// - `"test"`
-    /// - `"it"`
-    /// - `"bench"`
-    ///
-    /// By default, none of these options are enabled (the equivalent of
-    /// `{ "ignore": [] }`).
-    ///
-    /// Example of **correct** code for the `{ "ignore": ["describe"] }` option:
-    /// ```js
-    /// /* eslint jest/prefer-lowercase-title: ["error", { "ignore": ["describe"] }] */
-    /// describe('Uppercase description');
-    /// ```
-    ///
-    /// Example of **correct** code for the `{ "ignore": ["test"] }` option:
-    /// ```js
-    /// /* eslint jest/prefer-lowercase-title: ["error", { "ignore": ["test"] }] */
-    /// test('Uppercase description');
-    /// ```
-    ///
-    /// Example of **correct** code for the `{ "ignore": ["it"] }` option:
-    /// ```js
-    /// /* eslint jest/prefer-lowercase-title: ["error", { "ignore": ["it"] }] */
-    /// it('Uppercase description');
-    /// ```
-    ///
-    /// #### `allowedPrefixes`
-    ///
-    /// This array option allows specifying prefixes, which contain capitals that titles
-    /// can start with. This can be useful when writing tests for API endpoints, where
-    /// you'd like to prefix with the HTTP method.
-    /// By default, nothing is allowed (the equivalent of `{ "allowedPrefixes": [] }`).
-    ///
-    /// Example of **correct** code for the `{ "allowedPrefixes": ["GET"] }` option:
-    /// ```js
-    /// /* eslint jest/prefer-lowercase-title: ["error", { "allowedPrefixes": ["GET"] }] */
-    /// describe('GET /live');
-    /// ```
-    ///
-    /// #### `ignoreTopLevelDescribe`
-    ///
-    /// This option can be set to allow only the top-level `describe` blocks to have a
-    /// title starting with an upper-case letter.
-    ///
-    /// Example of **correct** code for the `{ "ignoreTopLevelDescribe": true }` option:
-    /// ```js
-    /// /* eslint jest/prefer-lowercase-title: ["error", { "ignoreTopLevelDescribe": true }] */
-    /// describe('MyClass', () => {
-    ///     describe('#myMethod', () => {
-    ///         it('does things', () => {
-    ///             //
-    ///         });
-    ///     });
-    /// });
-    /// ```
-    ///
-    /// #### `lowercaseFirstCharacterOnly`
-    ///
-    /// This option can be set to only validate that the first character of a test name is lowercased.
-    ///
-    /// Example of **correct** code for the `{ "lowercaseFirstCharacterOnly": true }` option:
-    /// ```js
-    /// /* eslint vitest/prefer-lowercase-title: ["error", { "lowercaseFirstCharacterOnly": true }] */
-    /// describe('myClass', () => {
-    ///     describe('myMethod', () => {
-    ///         it('does things', () => {
-    ///             //
-    ///         });
-    ///     });
-    /// });
-    /// ```
-    ///
-    /// Example of **incorrect** code for the `{ "lowercaseFirstCharacterOnly": true }` option:
-    /// ```js
-    /// /* eslint vitest/prefer-lowercase-title: ["error", { "lowercaseFirstCharacterOnly": true }] */
-    /// describe('MyClass', () => {
-    ///     describe('MyMethod', () => {
-    ///         it('does things', () => {
-    ///             //
-    ///         });
-    ///     });
-    /// });
     /// ```
     PreferLowercaseTitle,
     jest,
     style,
-    fix
+    fix,
+    config = PreferLowercaseTitleConfig
 );
 
 impl Rule for PreferLowercaseTitle {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let obj = value.get(0);
-        let ignore_top_level_describe = obj
-            .and_then(|config| config.get("ignoreTopLevelDescribe"))
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
-        let lowercase_first_character_only = obj
-            .and_then(|config| config.get("lowercaseFirstCharacterOnly"))
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(true);
-        let ignore = obj
-            .and_then(|config| config.get("ignore"))
-            .and_then(serde_json::Value::as_array)
-            .map(|v| v.iter().filter_map(serde_json::Value::as_str).map(CompactStr::from).collect())
-            .unwrap_or_default();
-        let allowed_prefixes = obj
-            .and_then(|config| config.get("allowedPrefixes"))
-            .and_then(serde_json::Value::as_array)
-            .map(|v| v.iter().filter_map(serde_json::Value::as_str).map(CompactStr::from).collect())
-            .unwrap_or_default();
-
-        Self(Box::new(PreferLowercaseTitleConfig {
-            allowed_prefixes,
-            ignore,
-            ignore_top_level_describe,
-            lowercase_first_character_only,
-        }))
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run_on_jest_node<'a, 'c>(
@@ -238,7 +219,7 @@ impl Rule for PreferLowercaseTitle {
         if let Argument::StringLiteral(string_expr) = arg {
             self.lint_string(ctx, string_expr.value.as_str(), string_expr.span);
         } else if let Argument::TemplateLiteral(template_expr) = arg {
-            let Some(template_string) = template_expr.quasi() else {
+            let Some(template_string) = template_expr.single_quasi() else {
                 return;
             };
             self.lint_string(ctx, template_string.as_str(), template_expr.span);
@@ -287,7 +268,7 @@ impl PreferLowercaseTitle {
         let replacement_len = replacement.len() as u32;
 
         ctx.diagnostic_with_fix(prefer_lowercase_title_diagnostic(literal, span), |fixer| {
-            fixer.replace(Span::sized(span.start + 1, replacement_len), replacement)
+            fixer.replace(Span::sized(span.start + 1, replacement_len), replacement.into_owned())
         });
     }
 

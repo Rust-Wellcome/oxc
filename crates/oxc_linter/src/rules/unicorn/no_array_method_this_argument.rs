@@ -1,6 +1,6 @@
 use oxc_ast::{
     AstKind,
-    ast::{Argument, Expression},
+    ast::{Argument, CallExpression, Expression},
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
@@ -20,7 +20,6 @@ fn no_array_method_this_argument_diagnostic(span: Span) -> OxcDiagnostic {
 #[derive(Debug, Default, Clone)]
 pub struct NoArrayMethodThisArgument;
 
-// See <https://github.com/oxc-project/oxc/issues/6050> for documentation details.
 declare_oxc_lint!(
     /// ### What it does
     ///
@@ -56,14 +55,14 @@ declare_oxc_lint!(
 
 impl Rule for NoArrayMethodThisArgument {
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
-        check_array_prototype_methods(node, ctx);
-        check_array_from(node, ctx);
+        let AstKind::CallExpression(call_expr) = node.kind() else { return };
+
+        check_array_prototype_methods(call_expr, ctx);
+        check_array_from(call_expr, ctx);
     }
 }
 
-fn check_array_prototype_methods<'a>(node: &AstNode<'a>, ctx: &LintContext<'a>) {
-    let AstKind::CallExpression(call_expr) = node.kind() else { return };
-
+fn check_array_prototype_methods(call_expr: &CallExpression, ctx: &LintContext) {
     if !is_method_call(
         call_expr,
         None,
@@ -96,9 +95,7 @@ fn check_array_prototype_methods<'a>(node: &AstNode<'a>, ctx: &LintContext<'a>) 
     ));
 }
 
-fn check_array_from<'a>(node: &AstNode<'a>, ctx: &LintContext<'a>) {
-    let AstKind::CallExpression(call_expr) = node.kind() else { return };
-
+fn check_array_from(call_expr: &CallExpression, ctx: &LintContext) {
     if !is_method_call(call_expr, Some(&["Array"]), Some(&["from", "fromAsync"]), Some(3), Some(3))
         || call_expr.arguments.first().is_some_and(|arg| matches!(arg, Argument::SpreadElement(_)))
         || call_expr.arguments.get(2).is_some_and(|arg| matches!(arg, Argument::SpreadElement(_)))
@@ -189,19 +186,26 @@ const IGNORED: &[&[&str]] = &[
 fn test() {
     use crate::tester::Tester;
 
+    // TODO: Get the commented-out test cases passing here.
     let pass = vec![
         "array.unknownMethod(() => {}, thisArgument)",
         "new array.map(() => {}, thisArgument)",
+        // "array.map?.(() => {}, thisArgument)",
         "Array.unknownMethod(iterableOrArrayLike, () => {}, thisArgument)",
         "new Array.from(iterableOrArrayLike, () => {}, thisArgument)",
+        // "Array.from?.(iterableOrArrayLike, () => {}, thisArgument)",
+        // "Array?.from(iterableOrArrayLike, () => {}, thisArgument)",
         "NotArray.from(iterableOrArrayLike, () => {}, thisArgument)",
         "new Array.fromAsync(iterableOrArrayLike, () => {}, thisArgument)",
+        // "Array.fromAsync?.(iterableOrArrayLike, () => {}, thisArgument)",
+        // "Array?.fromAsync(iterableOrArrayLike, () => {}, thisArgument)",
         "NotArray.fromAsync(iterableOrArrayLike, () => {}, thisArgument)",
         "array.map()",
         "array.map(() => {},)",
         "array.map(() => {}, ...thisArgument)",
         "array.map(...() => {}, thisArgument)",
         "array.map(() => {}, thisArgument, extraArgument)",
+        // "Array?.from(iterableOrArrayLike, () => {}, thisArgument)",
         "Array.from()",
         "Array.from(iterableOrArrayLike)",
         "Array.from(iterableOrArrayLike, () => {},)",
@@ -239,8 +243,8 @@ fn test() {
         "Array.fromAsync(iterableOrArrayLike, new Callback, thisArgument)",
         "Array.from(iterableOrArrayLike, 1, thisArgument)",
         "Array.fromAsync(iterableOrArrayLike, 1, thisArgument)",
-        "Array.from(iterableOrArrayLike, await callback, thisArgument)",
-        "Array.fromAsync(iterableOrArrayLike, await callback, thisArgument)",
+        "async () => Array.from(iterableOrArrayLike, await callback, thisArgument)",
+        "async () => Array.fromAsync(iterableOrArrayLike, await callback, thisArgument)",
     ];
 
     let fail = vec![
@@ -253,6 +257,7 @@ fn test() {
         "array.flatMap(() => {}, thisArgument)",
         "array.forEach(() => {}, thisArgument)",
         "array.map(() => {}, thisArgument)",
+        "array?.map(() => {}, thisArgument)",
         "Array.from(iterableOrArrayLike, () => {}, thisArgument)",
         "Array.fromAsync(iterableOrArrayLike, () => {}, thisArgument)",
         "array.map(() => {}, thisArgument,)",
@@ -260,6 +265,7 @@ fn test() {
         "Array.from(iterableOrArrayLike, () => {}, thisArgument,)",
         "Array.fromAsync(iterableOrArrayLike, () => {}, thisArgument,)",
         "array.map(() => {}, thisArgumentHasSideEffect())",
+        "array?.map(() => {}, thisArgumentHasSideEffect())",
         "Array.from(iterableOrArrayLike, () => {}, thisArgumentHasSideEffect())",
         "Array.fromAsync(iterableOrArrayLike, () => {}, thisArgumentHasSideEffect())",
         "array.map(callback, thisArgument)",

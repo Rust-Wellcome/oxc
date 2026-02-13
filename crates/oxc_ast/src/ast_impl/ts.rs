@@ -16,10 +16,10 @@ impl<'a> TSEnumMemberName<'a> {
     /// Panics if `self` is a `TemplateString` with no quasi.
     pub fn static_name(&self) -> Atom<'a> {
         match self {
-            Self::Identifier(ident) => ident.name,
+            Self::Identifier(ident) => ident.name.into(),
             Self::String(lit) | Self::ComputedString(lit) => lit.value,
             Self::ComputedTemplateString(template) => template
-                .quasi()
+                .single_quasi()
                 .expect("`TSEnumMemberName::TemplateString` should have no substitution and at least one quasi"),
         }
     }
@@ -32,9 +32,7 @@ impl<'a> TSType<'a> {
     /// returned.
     pub fn get_identifier_reference(&self) -> Option<&IdentifierReference<'a>> {
         match self {
-            TSType::TSTypeReference(reference) => {
-                Some(reference.type_name.get_identifier_reference())
-            }
+            TSType::TSTypeReference(reference) => reference.type_name.get_identifier_reference(),
             TSType::TSTypeQuery(query) => match &query.expr_name {
                 TSTypeQueryExprName::IdentifierReference(ident) => Some(ident),
                 _ => None,
@@ -86,19 +84,20 @@ impl<'a> TSTypeName<'a> {
     /// type Foo = Bar; // -> Bar
     /// type Foo = Bar.Baz; // -> Bar
     /// ```
-    pub fn get_identifier_reference(&self) -> &IdentifierReference<'a> {
+    pub fn get_identifier_reference(&self) -> Option<&IdentifierReference<'a>> {
         match self {
-            TSTypeName::IdentifierReference(ident) => ident,
+            TSTypeName::IdentifierReference(ident) => Some(ident),
             TSTypeName::QualifiedName(name) => name.left.get_identifier_reference(),
+            TSTypeName::ThisExpression(_) => None,
         }
     }
 
     /// Returns `true` if this is a reference to `const`.
     pub fn is_const(&self) -> bool {
-        if let TSTypeName::IdentifierReference(ident) = self {
-            if ident.name == "const" {
-                return true;
-            }
+        if let TSTypeName::IdentifierReference(ident) = self
+            && ident.name == "const"
+        {
+            return true;
         }
         false
     }
@@ -120,6 +119,7 @@ impl fmt::Display for TSTypeName<'_> {
         match self {
             TSTypeName::IdentifierReference(ident) => ident.fmt(f),
             TSTypeName::QualifiedName(qualified) => qualified.fmt(f),
+            TSTypeName::ThisExpression(_) => "this".fmt(f),
         }
     }
 }
@@ -171,22 +171,25 @@ impl fmt::Display for TSAccessibility {
 
 impl TSModuleDeclaration<'_> {
     /// Returns `true` if this module's body exists and has a `"use strict"` directive.
+    ///
+    /// Note that for a nested [`TSModuleDeclaration`], only returns `true` for the innermost `TSModuleDeclaration`.
+    /// e.g. this AST has 3 x `TSModuleDeclaration`s:
+    /// ```ts
+    /// namespace X.Y.Z {
+    ///   "use strict";
+    /// }
+    /// ```
+    /// This method will only return `true` for the innermost one (`Z`).
     pub fn has_use_strict_directive(&self) -> bool {
         self.body.as_ref().is_some_and(TSModuleDeclarationBody::has_use_strict_directive)
     }
 }
 
 impl TSModuleDeclarationKind {
-    /// Returns `true` for `declare global { ... }`
-    pub fn is_global(self) -> bool {
-        matches!(self, TSModuleDeclarationKind::Global)
-    }
-
     /// Declaration keyword as a string, identical to how it would appear in the
     /// source code.
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Global => "global",
             Self::Module => "module",
             Self::Namespace => "namespace",
         }
@@ -215,7 +218,7 @@ impl<'a> TSModuleDeclarationName<'a> {
     /// Get the static name of this module declaration name.
     pub fn name(&self) -> Atom<'a> {
         match self {
-            Self::Identifier(ident) => ident.name,
+            Self::Identifier(ident) => ident.name.into(),
             Self::StringLiteral(lit) => lit.value,
         }
     }
@@ -232,6 +235,15 @@ impl fmt::Display for TSModuleDeclarationName<'_> {
 
 impl<'a> TSModuleDeclarationBody<'a> {
     /// Returns `true` if this module has a `"use strict"` directive.
+    ///
+    /// Note that for a nested [`TSModuleDeclaration`], only returns `true` for the innermost [`TSModuleDeclarationBody`].
+    /// e.g. this AST has 3 x `TSModuleDeclarationBody`s:
+    /// ```ts
+    /// namespace X.Y.Z {
+    ///   "use strict";
+    /// }
+    /// ```
+    /// This method will only return `true` for the innermost one (`Z`).
     pub fn has_use_strict_directive(&self) -> bool {
         matches!(self, Self::TSModuleBlock(block) if block.has_use_strict_directive())
     }
@@ -247,10 +259,13 @@ impl<'a> TSModuleDeclarationBody<'a> {
     /// Get a mutable reference to `self` as a [`TSModuleBlock`]. Returns
     /// [`None`] if the body is something other than a block.
     pub fn as_module_block_mut(&mut self) -> Option<&mut TSModuleBlock<'a>> {
-        match self {
-            TSModuleDeclarationBody::TSModuleBlock(block) => Some(block.as_mut()),
-            TSModuleDeclarationBody::TSModuleDeclaration(decl) => {
-                decl.body.as_mut().and_then(|body| body.as_module_block_mut())
+        let mut body = self;
+        loop {
+            match body {
+                TSModuleDeclarationBody::TSModuleBlock(block) => return Some(block.as_mut()),
+                TSModuleDeclarationBody::TSModuleDeclaration(decl) => {
+                    body = decl.body.as_mut()?;
+                }
             }
         }
     }

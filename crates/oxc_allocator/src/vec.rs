@@ -10,17 +10,17 @@ use std::{
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     ops,
+    ptr::NonNull,
     slice::SliceIndex,
 };
 
-use bumpalo::Bump;
 #[cfg(any(feature = "serialize", test))]
 use serde::{Serialize, Serializer as SerdeSerializer};
 
 #[cfg(any(feature = "serialize", test))]
 use oxc_estree::{ConcatElement, ESTree, SequenceSerializer, Serializer as ESTreeSerializer};
 
-use crate::{Allocator, Box, vec2::Vec as InnerVecGeneric};
+use crate::{Allocator, Box, bump::Bump, vec2::Vec as InnerVecGeneric};
 
 type InnerVec<'a, T> = InnerVecGeneric<'a, T, Bump>;
 
@@ -37,12 +37,23 @@ type InnerVec<'a, T> = InnerVecGeneric<'a, T, Bump>;
 /// Static checks make this impossible to do. [`Vec::new_in`] and all other methods which create
 /// a [`Vec`] will refuse to compile if called with a [`Drop`] type.
 #[derive(PartialEq, Eq)]
+#[repr(transparent)]
 pub struct Vec<'alloc, T>(InnerVec<'alloc, T>);
 
-/// SAFETY: Not actually safe, but for enabling `Send` for downstream crates.
-unsafe impl<T> Send for Vec<'_, T> {}
-/// SAFETY: Not actually safe, but for enabling `Sync` for downstream crates.
-unsafe impl<T> Sync for Vec<'_, T> {}
+/// SAFETY: Even though `Bump` is not `Sync`, we can make `Vec<T>` `Sync` if `T` is `Sync` because:
+///
+/// 1. No public methods allow access to the `&Bump` that `Vec` contains (in `RawVec`),
+///    so user cannot illegally obtain 2 `&Bump`s on different threads via `Vec`.
+///
+/// 2. All internal methods which access the `&Bump` take a `&mut self`.
+///    `&mut Vec` cannot be transferred across threads, and nor can an owned `Vec` (`Vec` is not `Send`).
+///    Therefore these methods taking `&mut self` can be sure they're not operating on a `Vec`
+///    which has been moved across threads.
+///
+/// Note: `Vec` CANNOT be `Send`, even if `T` is `Send`, because that would allow 2 `Vec`s on different
+/// threads to both allocate into same arena simultaneously. `Bump` is not thread-safe, and this would
+/// be undefined behavior.
+unsafe impl<T: Sync> Sync for Vec<'_, T> {}
 
 impl<'alloc, T> Vec<'alloc, T> {
     /// Const assertion that `T` is not `Drop`.
@@ -58,9 +69,9 @@ impl<'alloc, T> Vec<'alloc, T> {
     /// ```
     /// use oxc_allocator::{Allocator, Vec};
     ///
-    /// let arena = Allocator::default();
+    /// let allocator = Allocator::default();
     ///
-    /// let mut vec: Vec<i32> = Vec::new_in(&arena);
+    /// let mut vec: Vec<i32> = Vec::new_in(&allocator);
     /// assert!(vec.is_empty());
     /// ```
     #[inline(always)]
@@ -91,9 +102,9 @@ impl<'alloc, T> Vec<'alloc, T> {
     /// ```
     /// use oxc_allocator::{Allocator, Vec};
     ///
-    /// let arena = Allocator::default();
+    /// let allocator = Allocator::default();
     ///
-    /// let mut vec = Vec::with_capacity_in(10, &arena);
+    /// let mut vec = Vec::with_capacity_in(10, &allocator);
     ///
     /// // The vector contains no items, even though it has capacity for more
     /// assert_eq!(vec.len(), 0);
@@ -113,7 +124,7 @@ impl<'alloc, T> Vec<'alloc, T> {
     ///
     /// // A vector of a zero-sized type will always over-allocate, since no
     /// // allocation is necessary
-    /// let vec_units = Vec::<()>::with_capacity_in(10, &arena);
+    /// let vec_units = Vec::<()>::with_capacity_in(10, &allocator);
     /// assert_eq!(vec_units.capacity(), usize::MAX);
     /// ```
     #[inline(always)]
@@ -166,6 +177,40 @@ impl<'alloc, T> Vec<'alloc, T> {
         // Allocated size cannot be larger than `isize::MAX`, or `Box::new_in` would have failed.
         let vec = unsafe { InnerVec::from_raw_parts_in(ptr, N, N, allocator.bump()) };
         Self(vec)
+    }
+
+    /// Convert [`Vec<T>`] into [`Box<[T]>`].
+    ///
+    /// Any spare capacity in the `Vec` is lost.
+    ///
+    /// [`Box<[T]>`]: Box
+    #[inline]
+    pub fn into_boxed_slice(self) -> Box<'alloc, [T]> {
+        let slice = self.0.into_bump_slice_mut();
+        let ptr = NonNull::from(slice);
+        // SAFETY: `ptr` points to a valid `[T]`.
+        // Contents of the `Vec` are in an arena.
+        // The returned `Box` has same lifetime as the `Vec`.
+        // `Vec` is not `Drop`, so we don't need to free any unused capacity in the `Vec`.
+        unsafe { Box::from_non_null(ptr) }
+    }
+
+    /// Converts [`Vec<T>`] into [`&'alloc [T]`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use oxc_allocator::{Allocator, Vec};
+    ///
+    /// let allocator = Allocator::default();
+    ///
+    /// let mut vec = Vec::from_iter_in([1, 2, 3], &allocator);
+    /// let slice = vec.into_bump_slice();
+    /// assert_eq!(slice, [1, 2, 3]);
+    /// ```
+    #[inline]
+    pub fn into_bump_slice(self) -> &'alloc [T] {
+        self.0.into_bump_slice()
     }
 }
 
@@ -237,6 +282,13 @@ where
     }
 }
 
+impl<'a, T: 'a> From<Vec<'a, T>> for Box<'a, [T]> {
+    #[inline(always)]
+    fn from(v: Vec<'a, T>) -> Box<'a, [T]> {
+        v.into_boxed_slice()
+    }
+}
+
 #[cfg(any(feature = "serialize", test))]
 impl<T: Serialize> Serialize for Vec<'_, T> {
     fn serialize<S: SerdeSerializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -295,6 +347,16 @@ mod test {
     }
 
     #[test]
+    fn vec_into_boxed_slice() {
+        let allocator = Allocator::default();
+        let mut v = Vec::with_capacity_in(4, &allocator);
+        v.push("x");
+        v.push("y");
+        let boxed_slice = v.into_boxed_slice();
+        assert_eq!(boxed_slice.as_ref(), &["x", "y"]);
+    }
+
+    #[test]
     fn vec_serialize() {
         let allocator = Allocator::default();
         let mut v = Vec::new_in(&allocator);
@@ -311,7 +373,7 @@ mod test {
         let mut v = Vec::new_in(&allocator);
         v.push("x");
 
-        let mut serializer = CompactTSSerializer::new(false);
+        let mut serializer = CompactTSSerializer::default();
         v.serialize(&mut serializer);
         let s = serializer.into_string();
         assert_eq!(s, r#"["x"]"#);

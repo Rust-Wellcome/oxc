@@ -4,6 +4,331 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.112.0] - 2026-02-02
+
+### 📚 Documentation
+
+- 3d01fa1 transformer: Update links to use Oxc docs (#18722) (sapphi-red)
+
+## [0.111.0] - 2026-01-26
+
+### 📚 Documentation
+
+- 8ccd853 npm: Update package homepage URLs and add keywords (#18509) (Boshen)
+
+## [0.109.0] - 2026-01-19
+
+### 🚀 Features
+
+- 6e8fa80 napi/parser, napi/transform: Accept `sourceType: "commonjs"` (#18197) (overlookmotel)
+- 66b8c02 parser: Implement unambiguous module parsing for JS/TS files (#18124) (Boshen)
+
+## [0.102.0] - 2025-12-08
+
+### 💥 BREAKING CHANGES
+
+- 083fea9 napi/parser: [**BREAKING**] Represent empty optional fields on JS side as `null` (#16411) (overlookmotel)
+
+## [0.100.0] - 2025-12-01
+
+### 💥 BREAKING CHANGES
+
+- 934d873 napi: [**BREAKING**] Drop `armv7-unknown-linux-musleabihf` support (#16105) (Boshen)
+
+## [0.98.0] - 2025-11-17
+
+### 💥 BREAKING CHANGES
+
+- ea51b0b napi: [**BREAKING**] Standardize function naming with sync suffixes (#15661) (Boshen)
+
+## [0.97.0] - 2025-11-11
+
+### 📚 Documentation
+
+- 4b904b1 transformer: Clarify `jsx.pure` option would affect JSX elements (#15376) (sapphi-red)
+
+
+
+## [0.94.0] - 2025-10-06
+
+### 🚀 Features
+
+- 588acd5 transformer: Add ES2026 target for explicit resource management (#14330) (Boshen)
+
+### 🐛 Bug Fixes
+
+- 013e053 napi/transform: Fix define plugin not applying DCE correctly (#14264) (Boshen)
+
+
+## [0.94.0] - 2025-10-06
+
+### 🚀 Features
+
+- 588acd5 transformer: Add ES2026 target for explicit resource management (#14330) (Boshen)
+
+### 🐛 Bug Fixes
+
+- 013e053 napi/transform: Fix define plugin not applying DCE correctly (#14264) (Boshen)
+
+
+
+
+## [0.92.0] - 2025-09-24
+
+### 🐛 Bug Fixes
+
+- 2f9e16d napi/minifier, napi/transformer: Rename CommonJS file to `.cjs` (#14047) (overlookmotel)
+
+### 🚜 Refactor
+
+- cc0019f napi: Move scripts into `scripts` directory (#14048) (overlookmotel)
+
+
+## [0.92.0] - 2025-09-24
+
+### 🐛 Bug Fixes
+
+- 2f9e16d napi/minifier, napi/transformer: Rename CommonJS file to `.cjs` (#14047) (overlookmotel)
+
+### 🚜 Refactor
+
+- cc0019f napi: Move scripts into `scripts` directory (#14048) (overlookmotel)
+
+
+## [0.91.0] - 2025-09-22
+
+### 🐛 Bug Fixes
+
+- 21bbf95 napi: Rebuild bindings file for NAPI packages (#13889) (overlookmotel)
+
+### 📚 Documentation
+
+- 7a50ad9 napi/parser, napi/transform: Correct README examples (#13934) (overlookmotel)
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
+## [0.91.0] - 2025-09-22
+
+### 🐛 Bug Fixes
+
+- 21bbf95 napi: Rebuild bindings file for NAPI packages (#13889) (overlookmotel)
+
+### 📚 Documentation
+
+- 7a50ad9 napi/parser, napi/transform: Correct README examples (#13934) (overlookmotel)
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
+## [0.91.0] - 2025-09-21
+
+### 🐛 Bug Fixes
+
+- 21bbf95 napi: Rebuild bindings file for NAPI packages (#13889) (overlookmotel)
+
+### 📚 Documentation
+
+- 7a50ad9 napi/parser, napi/transform: Correct README examples (#13934) (overlookmotel)
+
+
+## [0.91.0] - 2025-09-21
+
+### 🐛 Bug Fixes
+
+- 21bbf95 napi: Rebuild bindings file for NAPI packages (#13889) (overlookmotel)
+
+### 📚 Documentation
+
+- 7a50ad9 napi/parser, napi/transform: Correct README examples (#13934) (overlookmotel)
+
+
+## [0.90.0] - 2025-09-18
+
+### 🚀 Features
+
+- 70c402b napi/transform: Add async transform function (#13881) (Boshen)
+- b52389a node: Bump `engines` field to require Node.js 20.19.0+ for ESM support (#13879) (Copilot)
+
+### 🐛 Bug Fixes
+
+- 9796ec1 napi: Fix binding files (Boshen)
+
+
+## [0.90.0] - 2025-09-18
+
+### 🚀 Features
+
+- 70c402b napi/transform: Add async transform function (#13881) (Boshen)
+- b52389a node: Bump `engines` field to require Node.js 20.19.0+ for ESM support (#13879) (Copilot)
+
+### 🐛 Bug Fixes
+
+- 9796ec1 napi: Fix binding files (Boshen)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## [0.83.0] - 2025-08-29
+
+### 💥 BREAKING CHANGES
+
+- 34d0a01 napi/minify,transform: [**BREAKING**] Change module type to ESM (#13349) (Boshen)
+
+
+## [0.83.0] - 2025-08-29
+
+### 💥 BREAKING CHANGES
+
+- 34d0a01 napi/minify,transform: [**BREAKING**] Change module type to ESM (#13349) (Boshen)
+
+
+## [0.82.3] - 2025-08-20
+
+### 🐛 Bug Fixes
+
+- 76a9865 transformer/legacy-decorator: Metadata should be inserted after all params decorators (#13215) (Dunqing)
+- f10ac33 codegen: Remove end sourcemaps for `}`, `]`, `)` (#13180) (Boshen)
+
+
+## [0.82.3] - 2025-08-20
+
+### 🐛 Bug Fixes
+
+- 76a9865 transformer/legacy-decorator: Metadata should be inserted after all params decorators (#13215) (Dunqing)
+- f10ac33 codegen: Remove end sourcemaps for `}`, `]`, `)` (#13180) (Boshen)
+
+
+
+
+
+
+
+
+
+
+## [0.80.0] - 2025-08-03
+
+### 🧪 Testing
+
+- 0ec214b napi: Compile tests in debug mode (#12750) (overlookmotel)
+
+
+## [0.80.0] - 2025-08-03
+
+### 🧪 Testing
+
+- 0ec214b napi: Compile tests in debug mode (#12750) (overlookmotel)
+
+
+
+
+
+
+## [0.78.0] - 2025-07-24
+
+### 💥 BREAKING CHANGES
+
+- ccbcf3e transformer, minifier, syntax: [**BREAKING**] Remove `ESTarget::ES5` (#12448) (Dunqing)
+
+### 🐛 Bug Fixes
+
+- 986c48e transformer/decorator: Transformed decorators should be injected after class-properties has run (#12418) (Dunqing)
+
+
+## [0.78.0] - 2025-07-24
+
+### 💥 BREAKING CHANGES
+
+- ccbcf3e transformer, minifier, syntax: [**BREAKING**] Remove `ESTarget::ES5` (#12448) (Dunqing)
+
+### 🐛 Bug Fixes
+
+- 986c48e transformer/decorator: Transformed decorators should be injected after class-properties has run (#12418) (Dunqing)
+
+
+## [0.77.3] - 2025-07-20
+
+### ⚡ Performance
+
+- 8bae417 codegen: Remove the useless tokens generated by some expressions (#12394) (Boshen)
+
+
+## [0.77.3] - 2025-07-20
+
+### ⚡ Performance
+
+- 8bae417 codegen: Remove the useless tokens generated by some expressions (#12394) (Boshen)
+
+
+
+
+
+
+## [0.77.0] - 2025-07-12
+
+### 🚀 Features
+
+- 75ee3a1 napi/transform: Support enabling `StyledComponent` plugin (#12155) (Dunqing)
+- 19b97c0 transformer: Support styled components plugin (#12066) (Dunqing)
+- 407429a napi/parser,napi/transform: Accept `lang=dts` (#12154) (Boshen)
+
+### 🐛 Bug Fixes
+
+- bfd47f8 transformer/styled-components: Should use source path to generate file hash when the path is absoulte path (#12199) (Dunqing)
+
+### 🚜 Refactor
+
+- baa3726 tests/napi: Add `build-test` script for tests (#12132) (camc314)
+
+
+## [0.77.0] - 2025-07-12
+
+### 🚀 Features
+
+- 75ee3a1 napi/transform: Support enabling `StyledComponent` plugin (#12155) (Dunqing)
+- 19b97c0 transformer: Support styled components plugin (#12066) (Dunqing)
+- 407429a napi/parser,napi/transform: Accept `lang=dts` (#12154) (Boshen)
+
+### 🐛 Bug Fixes
+
+- bfd47f8 transformer/styled-components: Should use source path to generate file hash when the path is absoulte path (#12199) (Dunqing)
+
+### 🚜 Refactor
+
+- baa3726 tests/napi: Add `build-test` script for tests (#12132) (camc314)
+
+
+## [0.76.0] - 2025-07-08
+
+### 💥 BREAKING CHANGES
+
+- 8b30a5b codegen: [**BREAKING**] Introduce `CommentOptions` (#12114) (Boshen)
+
+
+## [0.76.0] - 2025-07-08
+
+### 💥 BREAKING CHANGES
+
+- 8b30a5b codegen: [**BREAKING**] Introduce `CommentOptions` (#12114) (Boshen)
+
+
+
+
 
 
 

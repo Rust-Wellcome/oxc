@@ -5,13 +5,15 @@ use oxc_ast::{
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, Span};
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 use crate::{
     AstNode,
     ast_util::outermost_paren_parent,
     context::LintContext,
     fixer::{RuleFix, RuleFixer},
-    rule::Rule,
+    rule::{DefaultRuleConfig, Rule},
 };
 
 fn resolve(span: Span, preferred: &str) -> OxcDiagnostic {
@@ -26,11 +28,13 @@ fn reject(span: Span, preferred: &str) -> OxcDiagnostic {
         .with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct NoUselessPromiseResolveReject(Box<NoUselessPromiseResolveRejectOptions>);
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct NoUselessPromiseResolveRejectOptions {
+    /// If set to `true`, allows the use of `Promise.reject` in async functions and promise callbacks.
     pub allow_reject: bool,
 }
 
@@ -57,19 +61,13 @@ declare_oxc_lint!(
     NoUselessPromiseResolveReject,
     unicorn,
     pedantic,
-    fix
+    fix,
+    config = NoUselessPromiseResolveRejectOptions,
 );
 
 impl Rule for NoUselessPromiseResolveReject {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let config = value.get(0);
-
-        let allow_reject = config
-            .and_then(|c| c.get("allowReject"))
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or_default();
-
-        Self(Box::new(NoUselessPromiseResolveRejectOptions { allow_reject }))
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -178,15 +176,14 @@ fn get_function_like_node<'a, 'b>(
     let mut is_in_try_statement = false;
 
     let fnx = loop {
-        if let Some(grand_parent) = ctx.nodes().parent_node(parent.id()) {
-            parent = grand_parent;
-            if parent.kind().is_function_like() {
-                break parent;
-            }
-            if matches!(parent.kind(), AstKind::TryStatement(_)) {
-                is_in_try_statement = true;
-            }
-        } else {
+        parent = ctx.nodes().parent_node(parent.id());
+        if parent.kind().is_function_like() {
+            break parent;
+        }
+        if matches!(parent.kind(), AstKind::TryStatement(_)) {
+            is_in_try_statement = true;
+        }
+        if matches!(parent.kind(), AstKind::Program(_)) {
             return None;
         }
     };
@@ -203,9 +200,6 @@ fn get_function_like_node<'a, 'b>(
 fn is_promise_callback<'a, 'b>(node: &'a AstNode<'b>, ctx: &'a LintContext<'b>) -> bool {
     let function_node = traverse_bind_calls(node, ctx);
     let Some(parent) = outermost_paren_parent(function_node, ctx) else {
-        return false;
-    };
-    let Some(parent) = outermost_paren_parent(parent, ctx) else {
         return false;
     };
 
@@ -268,18 +262,13 @@ fn is_bind_member_expression(node: &AstNode) -> bool {
 }
 
 fn match_arrow_function_body<'a>(ctx: &LintContext<'a>, parent: &AstNode<'a>) -> bool {
-    match ctx.nodes().parent_node(parent.id()) {
-        Some(arrow_function_body) => match arrow_function_body.kind() {
-            AstKind::FunctionBody(_) => match ctx.nodes().parent_node(arrow_function_body.id()) {
-                Some(arrow_function) => {
-                    matches!(arrow_function.kind(), AstKind::ArrowFunctionExpression(_))
-                }
-                None => false,
-            },
-            _ => false,
-        },
-        None => false,
+    let parent = ctx.nodes().parent_node(parent.id());
+    if !matches!(parent.kind(), AstKind::FunctionBody(_)) {
+        return false;
     }
+
+    let grand_parent = ctx.nodes().parent_node(parent.id());
+    matches!(grand_parent.kind(), AstKind::ArrowFunctionExpression(_))
 }
 
 fn generate_fix<'a>(
@@ -290,7 +279,7 @@ fn generate_fix<'a>(
     fixer: RuleFixer<'_, 'a>,
     ctx: &LintContext<'a>,
     node: &AstNode<'a>,
-) -> RuleFix<'a> {
+) -> RuleFix {
     if call_expr.arguments.len() > 1 {
         return fixer.noop();
     }
@@ -310,24 +299,20 @@ fn generate_fix<'a>(
             return fixer.noop();
         }
         if is_yield {
-            if let Some(parent) = ctx.nodes().parent_node(node.id()) {
-                if let Some(grand_parent) = ctx.nodes().parent_node(parent.id()) {
-                    if !matches!(
-                        grand_parent.kind(),
-                        AstKind::ExpressionStatement(_) | AstKind::ParenthesizedExpression(_)
-                    ) {
-                        return fixer.noop();
-                    }
-                }
+            let parent = ctx.nodes().parent_node(node.id());
+            let grand_parent = ctx.nodes().parent_node(parent.id());
+            if !matches!(
+                grand_parent.kind(),
+                AstKind::ExpressionStatement(_) | AstKind::ParenthesizedExpression(_)
+            ) {
+                return fixer.noop();
             }
         }
     }
 
     let node = get_parenthesized_node(node, ctx);
 
-    let Some(parent) = ctx.nodes().parent_node(node.id()) else {
-        return fixer.noop();
-    };
+    let parent = ctx.nodes().parent_node(node.id());
 
     let is_arrow_function_body = match parent.kind() {
         AstKind::ExpressionStatement(_) => match_arrow_function_body(ctx, parent),
@@ -383,7 +368,8 @@ fn get_parenthesized_node<'a, 'b>(
     ctx: &'a LintContext<'b>,
 ) -> &'a AstNode<'b> {
     let mut node = node;
-    while let Some(parent_node) = ctx.nodes().parent_node(node.id()) {
+    loop {
+        let parent_node = ctx.nodes().parent_node(node.id());
         if let AstKind::ParenthesizedExpression(_) = parent_node.kind() {
             node = parent_node;
         } else {

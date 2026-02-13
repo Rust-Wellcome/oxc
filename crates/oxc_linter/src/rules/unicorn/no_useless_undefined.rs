@@ -5,23 +5,35 @@ use oxc_ast::{
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, Span};
+use schemars::JsonSchema;
+use serde::Deserialize;
 
-use crate::{AstNode, ast_util::is_method_call, context::LintContext, rule::Rule};
+use crate::{
+    AstNode,
+    ast_util::is_method_call,
+    context::LintContext,
+    rule::{DefaultRuleConfig, Rule},
+};
 
 fn warn() -> OxcDiagnostic {
     OxcDiagnostic::warn("Do not use useless `undefined`.")
         .with_help("Consider removing `undefined` or using `null` instead.")
 }
+
 fn no_useless_undefined_diagnostic(span: Span) -> OxcDiagnostic {
     warn().with_label(span)
 }
+
 fn no_useless_undefined_diagnostic_spans(spans: Vec<Span>) -> OxcDiagnostic {
     warn().with_labels(spans)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct NoUselessUndefined {
+    /// Whether to check for useless `undefined` in function call arguments.
     check_arguments: bool,
+    ///Whether to check for useless `undefined` in arrow function bodies.
     check_arrow_function_body: bool,
 }
 
@@ -54,11 +66,12 @@ declare_oxc_lint!(
     NoUselessUndefined,
     unicorn,
     pedantic,
-    fix
+    fix,
+    config = NoUselessUndefined,
 );
 
 // Create a static set for all function names
-static FUNCTION_NAMES: [&str; 27] = [
+static FUNCTION_NAMES: &[&str] = &[
     "add",
     // `React.createContext(undefined)`
     "createContext",
@@ -127,10 +140,9 @@ fn is_undefined(arg: &Argument) -> bool {
 }
 
 fn is_has_function_return_type(node: &AstNode, ctx: &LintContext<'_>) -> bool {
-    let Some(parent_node) = ctx.nodes().parent_node(node.id()) else {
-        return false;
-    };
+    let parent_node = ctx.nodes().parent_node(node.id());
     match parent_node.kind() {
+        AstKind::Program(_) => false,
         AstKind::ArrowFunctionExpression(arrow_func_express) => {
             arrow_func_express.return_type.is_some()
         }
@@ -140,14 +152,8 @@ fn is_has_function_return_type(node: &AstNode, ctx: &LintContext<'_>) -> bool {
 }
 
 impl Rule for NoUselessUndefined {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let check_arguments =
-            value.get("checkArguments").and_then(serde_json::Value::as_bool).unwrap_or(true);
-        let check_arrow_function_body = value
-            .get("checkArrowFunctionBody")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(true);
-        Self { check_arguments, check_arrow_function_body }
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -156,16 +162,15 @@ impl Rule for NoUselessUndefined {
                 if undefined_literal.name == "undefined" =>
             {
                 let mut parent_node: &AstNode<'a> = node;
-                while let Some(parent) = ctx.nodes().parent_node(parent_node.id()) {
-                    let parent_kind = parent.kind();
-
-                    if let AstKind::ParenthesizedExpression(_) = parent_kind {
+                loop {
+                    let parent = ctx.nodes().parent_node(parent_node.id());
+                    if let AstKind::ParenthesizedExpression(_) = parent.kind() {
                         parent_node = parent;
                     } else {
                         break;
                     }
                 }
-                let Some(parent_node) = ctx.nodes().parent_node(parent_node.id()) else { return };
+                let parent_node = ctx.nodes().parent_node(parent_node.id());
                 let parent_node_kind = parent_node.kind();
 
                 match parent_node_kind {
@@ -204,19 +209,13 @@ impl Rule for NoUselessUndefined {
                         if !self.check_arrow_function_body {
                             return;
                         }
-                        let Some(grand_parent_node) = ctx.nodes().parent_node(parent_node.id())
-                        else {
-                            return;
-                        };
+                        let grand_parent_node = ctx.nodes().parent_node(parent_node.id());
                         let grand_parent_node_kind = grand_parent_node.kind();
                         let AstKind::FunctionBody(func_body) = grand_parent_node_kind else {
                             return;
                         };
-                        let Some(grand_grand_parent_node) =
-                            ctx.nodes().parent_node(grand_parent_node.id())
-                        else {
-                            return;
-                        };
+                        let grand_grand_parent_node =
+                            ctx.nodes().parent_node(grand_parent_node.id());
                         let grand_grand_parent_node_kind = grand_grand_parent_node.kind();
                         let AstKind::ArrowFunctionExpression(_) = grand_grand_parent_node_kind
                         else {
@@ -234,10 +233,7 @@ impl Rule for NoUselessUndefined {
                     }
                     // `let foo = undefined` / `var foo = undefined`
                     AstKind::VariableDeclarator(variable_declarator) => {
-                        let Some(grand_parent_node) = ctx.nodes().parent_node(parent_node.id())
-                        else {
-                            return;
-                        };
+                        let grand_parent_node = ctx.nodes().parent_node(parent_node.id());
                         let grand_parent_node_kind = grand_parent_node.kind();
                         let AstKind::VariableDeclaration(_) = grand_parent_node_kind else {
                             return;
@@ -269,6 +265,27 @@ impl Rule for NoUselessUndefined {
                             no_useless_undefined_diagnostic(undefined_literal.span),
                             |fixer| fixer.delete_range(delete_span),
                         );
+                    }
+                    // `function foo(bar = undefined) {}`
+                    AstKind::FormalParameter(assign_pattern) => {
+                        if let Some(initializer) = &assign_pattern.initializer
+                            && initializer.span() == undefined_literal.span
+                        {
+                            let left = &assign_pattern
+                                .type_annotation
+                                .as_ref()
+                                .map_or(assign_pattern.pattern.span().end, |type_annotation| {
+                                    type_annotation.span.end
+                                });
+                            let delete_span = Span::new(*left, undefined_literal.span.end);
+                            if is_has_function_return_type(parent_node, ctx) {
+                                return;
+                            }
+                            ctx.diagnostic_with_fix(
+                                no_useless_undefined_diagnostic(undefined_literal.span),
+                                |fixer| fixer.delete_range(delete_span),
+                            );
+                        }
                     }
                     _ => {}
                 }
@@ -332,9 +349,9 @@ impl Rule for NoUselessUndefined {
 #[test]
 fn test() {
     use crate::tester::Tester;
-    let options_ignore_arguments = || Some(serde_json::json!({ "checkArguments": false }));
+    let options_ignore_arguments = || Some(serde_json::json!([{ "checkArguments": false }]));
     let options_ignore_arrow_function_body =
-        || Some(serde_json::json!({"checkArrowFunctionBody": false}));
+        || Some(serde_json::json!([{ "checkArrowFunctionBody": false }]));
     let pass = vec![
         (r"function foo() {return;}", None),
         (r"const foo = () => {};", None),
@@ -393,6 +410,10 @@ fn test() {
         // `checkArguments: false`
         (r"foo(undefined, undefined);", options_ignore_arguments()),
         (r"foo.bind(undefined);", options_ignore_arguments()),
+        (
+            r"function run(name?: string) { return name; } run(undefined);",
+            options_ignore_arguments(),
+        ),
         // `checkArrowFunctionBody: false`
         (r"const foo = () => undefined", options_ignore_arrow_function_body()),
         (r"const x = { a: undefined }", None),
@@ -684,4 +705,65 @@ fn test() {
     Tester::new(NoUselessUndefined::NAME, NoUselessUndefined::PLUGIN, pass, fail)
         .expect_fix(fix)
         .test_and_snapshot();
+}
+
+#[test]
+fn test_config_array_format() {
+    use crate::tester::Tester;
+
+    let pass = vec![
+        (r"foo(undefined);", Some(serde_json::json!([{ "checkArguments": false }]))),
+        (
+            r"const foo = () => undefined;",
+            Some(serde_json::json!([{ "checkArrowFunctionBody": false }])),
+        ),
+    ];
+    let fail = vec![
+        (r"foo(undefined);", Some(serde_json::json!([{ "checkArguments": true }]))),
+        (
+            r"const foo = () => undefined;",
+            Some(serde_json::json!([{ "checkArrowFunctionBody": true }])),
+        ),
+    ];
+    let fix = vec![
+        (r"foo(undefined);", r"foo();", Some(serde_json::json!([{ "checkArguments": true }]))),
+        (
+            r"const foo = () => undefined;",
+            r"const foo = () => {};",
+            Some(serde_json::json!([{ "checkArrowFunctionBody": true }])),
+        ),
+    ];
+
+    Tester::new(NoUselessUndefined::NAME, NoUselessUndefined::PLUGIN, pass, fail)
+        .expect_fix(fix)
+        .test();
+}
+
+#[test]
+fn test_issue_14368() {
+    use crate::tester::Tester;
+
+    let pass = vec![
+        (
+            r"function run(name) { return name; } run(undefined);",
+            Some(serde_json::json!([{ "checkArguments": false }])),
+        ),
+        (
+            r"function run(name?: string) { return name; } run(undefined);",
+            Some(serde_json::json!([{ "checkArguments": false }])),
+        ),
+    ];
+    let fail = vec![(
+        r"function run(name) { return name; } run(undefined);",
+        Some(serde_json::json!([{ "checkArguments": true }])),
+    )];
+    let fix = vec![(
+        r"function run(name) { return name; } run(undefined);",
+        r"function run(name) { return name; } run();",
+        Some(serde_json::json!([{ "checkArguments": true }])),
+    )];
+
+    Tester::new(NoUselessUndefined::NAME, NoUselessUndefined::PLUGIN, pass, fail)
+        .expect_fix(fix)
+        .test();
 }

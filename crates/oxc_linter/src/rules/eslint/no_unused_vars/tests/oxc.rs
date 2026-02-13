@@ -277,6 +277,13 @@ fn test_vars_discarded_reads() {
                 return (yield fn(), 1);
             }
         }",
+        // https://github.com/oxc-project/oxc/issues/12592
+        "export const Foo = ({ onDismiss }) => {
+            const { remove } = useToaster();
+            return (
+                <button onClick={() => (onDismiss?.(), remove())}>x</button>
+            );
+        };",
     ];
 
     let fail = vec![
@@ -511,23 +518,71 @@ fn test_vars_catch() {
         ),
     ];
 
+    // these suggestion fixes are safe
+    let fix = vec![
+        ("try {} catch (error) { }", "try {} catch  { }", None, FixKind::Suggestion),
+        (
+            "try { const x = (1 + 1); } catch (error) { }",
+            "try { const x = (1 + 1); } catch  { }",
+            None,
+            FixKind::Suggestion,
+        ),
+        ("try {} catch ({ msg }) { }", "try {} catch  { }", None, FixKind::Suggestion),
+        // spacing
+        ("try {} catch (e) { }", "try {} catch  { }", None, FixKind::Suggestion),
+        ("try {} catch(e){ }", "try {} catch{ }", None, FixKind::Suggestion),
+        ("try {} catch (      e) { }", "try {} catch  { }", None, FixKind::Suggestion),
+        ("try {} catch (      e \t\n ) { }", "try {} catch  { }", None, FixKind::Suggestion),
+        // comments
+        ("try {} catch (/* comment() */ e) { }", "try {} catch  { }", None, FixKind::Suggestion),
+        ("try {} catch (e /* comment() */) { }", "try {} catch  { }", None, FixKind::Suggestion),
+        (
+            "try {} catch /* comment */ (e) { }",
+            "try {} catch /* comment */  { }",
+            None,
+            FixKind::Suggestion,
+        ),
+        (
+            r"try {} catch (
+            // comment
+            // ()
+            e) { }",
+            "try {} catch  { }",
+            None,
+            FixKind::Suggestion,
+        ),
+        // typescript
+        ("try {} catch (error: Error) { }", "try {} catch  { }", None, FixKind::Suggestion),
+        (
+            "try {} catch (error: (typeof thing)[number]) { }",
+            "try {} catch  { }",
+            None,
+            FixKind::Suggestion,
+        ),
+    ];
+
     Tester::new(NoUnusedVars::NAME, NoUnusedVars::PLUGIN, pass, fail)
-        .intentionally_allow_no_fix_tests()
+        .expect_fix(fix)
         .with_snapshot_suffix("oxc-vars-catch")
         .test_and_snapshot();
 }
 
 #[test]
 fn test_vars_using() {
-    let pass = vec![("using a = 1; console.log(a)", None)];
+    let pass = vec![
+        ("using a = 1; console.log(a)", None),
+        ("using a = 1;", Some(serde_json::json!([{ "ignoreUsingDeclarations": true }]))),
+        ("await using a = 1;", Some(serde_json::json!([{ "ignoreUsingDeclarations": true }]))),
+    ];
 
-    let fail = vec![("using a = 1;", None)];
+    let fail = vec![("using a = 1;", None), ("await using a = 1;", None)];
 
     Tester::new(NoUnusedVars::NAME, NoUnusedVars::PLUGIN, pass, fail)
         .intentionally_allow_no_fix_tests()
         .with_snapshot_suffix("oxc-vars-using")
         .test_and_snapshot();
 }
+
 #[test]
 fn test_functions() {
     let pass = vec![
@@ -795,13 +850,13 @@ fn test_imports() {
         ),
         (
             "import foo, { bar } from './foo'; foo();",
-            "import foo, { } from './foo'; foo();",
+            "import foo from './foo'; foo();",
             None,
             FixKind::DangerousSuggestion,
         ),
         (
             "import { foo, bar, baz } from './foo'; foo(bar);",
-            "import { foo, bar, } from './foo'; foo(bar);",
+            "import { foo, bar } from './foo'; foo(bar);",
             None,
             FixKind::DangerousSuggestion,
         ),
@@ -832,7 +887,7 @@ fn test_imports() {
         ),
         (
             "import foo, { type bar } from './foo'; foo();",
-            "import foo, { } from './foo'; foo();",
+            "import foo from './foo'; foo();",
             None,
             FixKind::DangerousSuggestion,
         ),
@@ -976,6 +1031,40 @@ fn test_arguments() {
         ",
             None,
         ),
+        // https://github.com/oxc-project/oxc/issues/15174
+        // Sequence expressions with member expressions in operations with side effects
+
+        // UpdateExpression cases
+        ("items.reduce((acc, item) => (acc[item.action]++, acc), {})", None),
+        ("items.reduce((acc, item) => (acc[item.action]--, acc), {})", None),
+        ("items.reduce((acc, item) => (++acc[item.action], acc), {})", None),
+        ("items.reduce((acc, item) => (--acc[item.action], acc), {})", None),
+        (
+            "export function fn(array: number[], index: number) { const array2 = array.slice(); array2[index]!++; return array2; }",
+            None,
+        ),
+        (
+            "export function fn(array: number[], index: number) { const array2 = array.slice(); ++array2[index]!; return array2; }",
+            None,
+        ),
+        (
+            "export function fn(array: number[], index: number) { const array2 = array.slice(); (array2[index]!)++; return array2; }",
+            None,
+        ),
+        (
+            "export function fn(array: number[], index: number) { const array2 = array.slice(); (array2[index] as number)++; return array2; }",
+            None,
+        ),
+        // AssignmentExpression cases
+        ("items.reduce((acc, item) => (acc[item.action] = 1, acc), {})", None),
+        ("items.reduce((acc, item) => (acc.x[item.action] = 1, acc), {})", None),
+        ("items.reduce((acc, item) => (acc[item.action] += 1, acc), {})", None),
+        ("items.reduce((acc, item) => (acc[item.action] ||= 1, acc), {})", None),
+        // Nested member expressions
+        ("foo.bar((a, b, c) => (a[b.x][c.y]++, a))", None),
+        ("foo.bar((a, b) => (a.foo[b.bar].baz++, a))", None),
+        // Multiple parameters used in sequence
+        ("foo.bar((a, b, c) => (b[c.x]++, a[b.y]++, a))", None),
     ];
     let fail = vec![
         ("function foo(a) {} foo()", None),
@@ -1051,6 +1140,11 @@ fn test_classes() {
         }
         new Bar();
         ",
+        // Variables used in class property initializers should not be marked as unused
+        "let a = 0; class A { c = a++ } new A()",
+        "let a = 0; class A { c = a } new A()",
+        "let a = 0; class A { c = a + 1 } new A()",
+        "let a = 0, b = 1; class A { c = a; d = b++ } new A()",
     ];
 
     let fail = vec![
@@ -1104,19 +1198,24 @@ fn test_namespaces() {
         ",
         "
         interface Foo {}
-        namespace Foo {
-            export const a = {};
-        }
+        namespace Foo { export const a = {}; }
         const foo: Foo = Foo.a
         console.log(foo)
         ",
+        "
+        export declare namespace Foo {
+            type foo = 123;
+        }
+        ",
+        "export declare namespace Foo { interface Bar { baz: string; } }",
+        "
+        declare namespace Foo { type foo = 123; }
+        export { Foo }
+        ",
+        "declare module 'tsdown' { function bar(): void; }",
     ];
 
-    let fail = vec![
-        "namespace N {}",
-        // FIXME
-        // "export namespace N { function foo() }",
-    ];
+    let fail = vec!["namespace N {}", "export namespace N { function foo() }"];
 
     Tester::new(NoUnusedVars::NAME, NoUnusedVars::PLUGIN, pass, fail)
         .intentionally_allow_no_fix_tests()
@@ -1270,9 +1369,16 @@ fn test_ts_in_assignment() {
 
 #[test]
 fn test_loops() {
-    let pass: Vec<&str> = vec![];
+    let pass: Vec<&str> = vec![
+        "for (let len = 10; len-- > 0;) {}",
+        "for (let len = 10; len < 0; len++) {}",
+        "for (let len = 10; len;) {}",
+        "for (let len = 10;; len++) {}",
+        "for (let len = 10; len < 0; len += 1) {}",
+        "for (const _unused of []) {}",
+    ];
 
-    let fail: Vec<&str> = vec![];
+    let fail: Vec<&str> = vec!["for (let len = 10;;) {}"];
     let fix = vec![
         ("for (const unused of arr) {}", "for (const _unused of arr) {}"),
         ("for (const unused in arr) {}", "for (const _unused in arr) {}"),
@@ -1280,6 +1386,7 @@ fn test_loops() {
             "for (const foo of arr) { console.log(foo); const unused = 1; }",
             "for (const foo of arr) { console.log(foo);  }",
         ),
+        ("for (let len = 10;;) {}", "for (;;) {}"),
     ];
 
     Tester::new(NoUnusedVars::NAME, NoUnusedVars::PLUGIN, pass, fail).expect_fix(fix).test();
@@ -1345,6 +1452,22 @@ import Layout from '../layouts/Layout.astro';
     ];
 
     Tester::new(NoUnusedVars::NAME, NoUnusedVars::PLUGIN, pass, vec![])
+        .intentionally_allow_no_fix_tests()
+        .test();
+}
+
+#[test]
+fn test_jsx_non_ascii() {
+    // Test that non-ASCII component names (e.g., Korean characters) are correctly recognized
+    // as references in JSX, ensuring they don't trigger false positives for unused variables.
+    // Non-ASCII identifiers are always treated as component references in JSX.
+    let pass = vec![
+        ("const 테스트 = () => <div>Hello</div>; <테스트 />;"),
+        ("const $foo = () => <div>Hello</div>; <$foo />;"),
+        ("const _foo = () => <div>Hello</div>; <_foo />;"),
+    ];
+    let fail = vec![("const foo = () => <div>Hello</div>; <foo />;")];
+    Tester::new(NoUnusedVars::NAME, NoUnusedVars::PLUGIN, pass, fail)
         .intentionally_allow_no_fix_tests()
         .test();
 }

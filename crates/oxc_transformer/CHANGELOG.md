@@ -4,6 +4,428 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.112.0] - 2026-02-02
+
+### 📚 Documentation
+
+- 3d01fa1 transformer: Update links to use Oxc docs (#18722) (sapphi-red)
+
+## [0.111.0] - 2026-01-26
+
+### 💥 BREAKING CHANGES
+
+- 22dec6a semantic: [**BREAKING**] Remove `Scoping::scope_build_child_ids` and all related APIs (#18362) (Dunqing)
+- 777fc40 ast: [**BREAKING**] Add `Ident` type (#18354) (Boshen)
+
+### 🚀 Features
+
+- 2ef5647 ast: Add escape_raw parameter to template_element builders (#18121) (Boshen)
+
+### 🐛 Bug Fixes
+
+- c205b0d ast: Remove `ThisExpression` from `TSModuleReference` (#18489) (Boshen)
+
+## [0.110.0] - 2026-01-19
+
+### 🐛 Bug Fixes
+
+- 645c3f0 transformer: Use `require` not `import` in CommonJS files (#18226) (overlookmotel)
+
+## [0.109.0] - 2026-01-19
+
+### 💥 BREAKING CHANGES
+
+- 9135b0b ast: [**BREAKING**] Move scope from `TSEnumDeclaration` to `TSEnumBody` (#18058) (Boshen)
+
+### 🚀 Features
+
+- 08dad63 span: Add `sourceType: 'commonjs'` support (#18089) (Boshen)
+
+### ⚡ Performance
+
+- 837edf6 transformer/typescript: Reduce `scope_id()` calls (#18097) (overlookmotel)
+- 8ee6f80 transformer/tagged-template: Add `#[cold]` hint to unlikely path (#18034) (overlookmotel)
+- 23449e0 transformer/tagged-template-transform: Improve performance (#15834) (Dunqing)
+
+## [0.107.0] - 2026-01-05
+
+### ⚡ Performance
+
+- ea82b50 transformer: Mark all diagnostic functions as `#[cold]` (#17486) (camc314)
+
+## [0.106.0] - 2025-12-29
+
+### 🚀 Features
+
+- 289bff7 transformer: Export `ESFeature` from options (#17347) (shulaoda)
+- e031056 codegen: Add `sourcemap` feature flag (#17305) (Boshen)
+
+### ⚡ Performance
+
+- e35049b transformer: Avoid unneccessary vec allocation (#17270) (camc314)
+
+## [0.105.0] - 2025-12-22
+
+### ⚡ Performance
+
+- 14e5016 transformer/enum: Avoid cloning HashMap in IdentifierReferenceRename (#17210) (camc314)
+
+## [0.104.0] - 2025-12-19
+
+### 🐛 Bug Fixes
+
+- 3002649 transformer/typescript: Remove unused import equals declaration (#16776) (Dunqing)
+
+## [0.103.0] - 2025-12-15
+
+### 🐛 Bug Fixes
+
+- 99c022e transformer: Revert "fix(transformer): validate JSX pragma values and reject invalid identifiers" (#16793) (Copilot)
+- 853c20d transformer: Validate JSX pragma values and reject invalid identifiers (#16675) (Copilot)
+
+## [0.99.0] - 2025-11-24
+
+### 💥 BREAKING CHANGES
+
+- cbb27fd ast: [**BREAKING**] Add `TSGlobalDeclaration` type (#15712) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- 7c46a9e transformer/tagged-template-transform: Handle `\n` escape sequences (#15830) (Dunqing)
+
+### ⚡ Performance
+
+- b4b0ed8 transformer/typescript: Reverse order of checks (#15722) (overlookmotel)
+
+## [0.97.0] - 2025-11-11
+
+### 🚀 Features
+
+- 8d69661 allocator: Add `Address::from_ref` method (#15318) (overlookmotel)
+- 2c15353 transformer: Warn top level await usage if not supported (#14276) (Copilot)
+- aee6310 transformer: Add warning for arbitrary module namespace identifier names (#15035) (Copilot)
+
+### 🐛 Bug Fixes
+
+- 7a5c011 transformer: Convert enum numbers to strings in template literals (#15183) (Copilot)
+
+### 📚 Documentation
+
+- 4b904b1 transformer: Clarify `jsx.pure` option would affect JSX elements (#15376) (sapphi-red)
+
+## [0.96.0] - 2025-10-30
+
+### 🐛 Bug Fixes
+
+- 2bc1978 transformer/legacy-decorator: Correct generating metadata for getter/setter methods (#14495) (Dunqing)
+
+
+## [0.95.0] - 2025-10-15
+
+### 🚀 Features
+
+- bc4f0a1 transformer: Add ES2020 export namespace from transformation (#14277) (Copilot)
+
+
+## [0.94.0] - 2025-10-06
+
+### 🚀 Features
+
+- 588acd5 transformer: Add ES2026 target for explicit resource management (#14330) (Boshen)
+
+
+
+
+## [0.91.0] - 2025-09-22
+
+### 🚀 Features
+
+- d1a0d04 compat: Extract compatibility data to oxc_compat crate (#13932) (sapphi-red)
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
+## [0.91.0] - 2025-09-21
+
+### 🚀 Features
+
+- d1a0d04 compat: Extract compatibility data to oxc_compat crate (#13932) (sapphi-red)
+
+
+## [0.90.0] - 2025-09-18
+
+### 🐛 Bug Fixes
+
+- 5ec9209 transformer/class-properties: Don't transform properties that have `declare` modifier (#13766) (Dunqing)
+- 7d0b8a1 transformer/typescript: Panic occurs when `declare` property and `definite` property that has initializer (#13785) (Dunqing)
+
+
+
+## [0.88.0] - 2025-09-15
+
+### 🐛 Bug Fixes
+
+- bb2bcf0 transformer: Improve legacy decorator handling and fix constructor parameter decorators (#13632) (Dunqing)
+
+### 🚜 Refactor
+
+- 08cbd39 transformer, estree: Clarify code using `is_exhausted` stack methods (#13674) (overlookmotel)
+
+
+## [0.87.0] - 2025-09-08
+
+### 🚀 Features
+
+- 9590b57 regular_expression: Detect regex pattern modifiers usage (#13471) (sapphi-red)
+
+### 🐛 Bug Fixes
+
+- 26ab087 transformer: Don't ignore the entity after a stray '&' (#13554) (Shina)
+- 34d3cde rust: Fix clippy issues (#13540) (Boshen)
+
+### 🚜 Refactor
+
+- c17b80a regular_expression: Extract `has_unsupported_regular_expression_pattern` (#13468) (sapphi-red)
+- 14c40fd ast: Implement `RegExpLiteral::parse_pattern` (#13467) (sapphi-red)
+
+
+## [0.86.0] - 2025-08-31
+
+### 💥 BREAKING CHANGES
+
+- edeebc6 data_structures: [**BREAKING**] Rename `SliceIterExt` to `SliceIter` (#13439) (overlookmotel)
+
+
+
+## [0.84.0] - 2025-08-30
+
+### 🐛 Bug Fixes
+
+- 7ee19e2 transformer/styled-components: Remove leading whitespace when literal starts with block comment containing interpolation in CSS minification (#13391) (overlookmotel)
+- cf5175c transformer/styled-components: Remove unnecessary whitespace when removing block comments in CSS minification (#13390) (overlookmotel)
+
+
+## [0.83.0] - 2025-08-29
+
+### 🐛 Bug Fixes
+
+- c900b3e transformer/styled-components: Remove more escaped line breaks in CSS minification (#13380) (overlookmotel)
+- 6dc5b70 transformer/styled-components: Remove unnecessary whitespace around block comments in CSS minification (#13379) (overlookmotel)
+- 5a25c06 transformer/legacy-decorator: Simplify enum type inference (#13357) (overlookmotel)
+- 1fca9b8 transformer/styled-components: Remove trailing whitespace in CSS minification (#13376) (overlookmotel)
+- df38b2c transformer/styled-components: Remove space before line comment in CSS minification (#13371) (overlookmotel)
+- a7a06b7 transformer/styled-components: Fix block comment containing expression in CSS minification (#13370) (overlookmotel)
+- 35d83ca transformer/styled-components: Remove repeat whitespace in CSS minification (#13369) (overlookmotel)
+- 7aff3b6 transformer/styled-components: Preserve spaces between consecutive interpolations in CSS minification (#13346) (Dunqing)
+- 24fee15 transformer/legacy-decorator: Emit correct metadata types for enum (#13327) (Dunqing)
+
+### 🚜 Refactor
+
+- be6677e transformer/styled-components: Clarify whitespace removal logic in CSS minification (#13375) (overlookmotel)
+- e7a49ed transformer/legacy-decorator: Eliminate unreliable identification of metadata (#13227) (Dunqing)
+- 66a5673 ecmascript: Add `ToUint32` trait (#13272) (sapphi-red)
+
+
+## [0.82.3] - 2025-08-20
+
+### 🐛 Bug Fixes
+
+- 76a9865 transformer/legacy-decorator: Metadata should be inserted after all params decorators (#13215) (Dunqing)
+
+### 🚜 Refactor
+
+- 5463a99 transformer: Shorten code (#13220) (overlookmotel)
+- 49a6fda transformer/decorator: Re-order methods (#13219) (overlookmotel)
+
+### ⚡ Performance
+
+- ef3c23a transformer/decorator: Remove temporary `Vec` (#13218) (overlookmotel)
+
+
+
+## [0.82.1] - 2025-08-13
+
+### 🐛 Bug Fixes
+
+- 6fe0bb5 transformer/react: Spread props optimization breaks __self and __source injection (#13009) (#13020) (Dunqing)
+
+
+## [0.82.0] - 2025-08-12
+
+### 🚜 Refactor
+
+- 0c5bffc ecmascript: Change `IsGlobalReference` to `GlobalContext` (#12952) (Boshen)
+- c072e01 all: Add missing lifetimes in function return types (#12895) (overlookmotel)
+- 65e2112 transformer: Use to `@babel/plugin-transform-explicit-resource-management` (#12874) (Copilot)
+
+### 📚 Documentation
+
+- ed40581 transformer: Improve doc comment formatting (#12899) (overlookmotel)
+- d14b8b8 transformer/styled-components: Remove duplicate backtick (#12897) (camc314)
+
+
+## [0.81.0] - 2025-08-06
+
+### 💥 BREAKING CHANGES
+
+- 2cc1001 ast: [**BREAKING**] Remove `ExportDefaultDeclaration` `exported` field (#12808) (overlookmotel)
+
+
+## [0.80.0] - 2025-08-03
+
+### 💥 BREAKING CHANGES
+
+- 7332ae4 ast: [**BREAKING**] Box `rest` fields of `ArrayAssignmentTarget` and `ObjectAssignmentTarget` (#12698) (Copilot)
+
+### 🐛 Bug Fixes
+
+- d02e17c transformer/class-properties: Preserve computed keys if they may have side effects when `remove_class_fields_without_initializer` is enabled (#12772) (Dunqing)
+- 701399e transformer/typescript: Don't remove class fields without initializers when class-properties plugin is enabled (#12771) (Dunqing)
+- 8854c1a transformer/typescript: Revert "remove properties with definite assignment assertion" (#12759) (Copilot)
+- 0e1e79d transformer/typescript: Remove properties with definite assignment assertion (#12713) (Dunqing)
+
+### 🚜 Refactor
+
+- 5c9fdd2 transformer/object-rest-spread: Extract unboxed field earlier (#12717) (overlookmotel)
+
+### 📚 Documentation
+
+- 514322c rust: Add minimal documentation to example files in crates directory (#12731) (Copilot)
+- 45e2fe8 rust: Fix typos and grammar mistakes in Rust documentation comments (#12715) (Copilot)
+
+### 🎨 Styling
+
+- c15da81 codegen, formatter, linter, minifier, transformer: Re-order imports (#12725) (Copilot)
+
+
+
+## [0.79.0] - 2025-07-30
+
+### 🐛 Bug Fixes
+
+- 2f66dd2 transformer/styled-components: Preserve whitespace before interpolations in minification (#12558) (Dunqing)
+
+
+## [0.78.0] - 2025-07-24
+
+### 💥 BREAKING CHANGES
+
+- ccbcf3e transformer, minifier, syntax: [**BREAKING**] Remove `ESTarget::ES5` (#12448) (Dunqing)
+
+### 🚀 Features
+
+- dee25f4 ast: Add `pife` field to `Function` (#12469) (sapphi-red)
+
+### 🐛 Bug Fixes
+
+- 7c2d2c6 transformer/top-level-statements: Should not inject statements after non-import statement (#12463) (Dunqing)
+- dcb245c transformer/typescript: Incorrect evaluation of `TemplateLiteral` in enum (#12456) (Dunqing)
+- 986c48e transformer/decorator: Transformed decorators should be injected after class-properties has run (#12418) (Dunqing)
+- c4a2d79 transformer/typescript: Should remove `abstract` field early (#12417) (Dunqing)
+
+### 🚜 Refactor
+
+- 3541739 transformer/typescript: Take a `Vec` rather than take elements of `Vec` one by one (#12462) (Dunqing)
+- 93a5b76 transformer/typescript: Simplify evaulating the of value an enum member without an initialzier (#12461) (Dunqing)
+
+### ⚡ Performance
+
+- f32c816 transformer/typescript: Store `Atom` rather than `String` for `ConstantValue::String` (#12458) (Dunqing)
+
+
+## [0.77.3] - 2025-07-20
+
+### 🚀 Features
+
+- 0920e98 codegen: Keep arrow function PIFEs (#12353) (sapphi-red)
+
+
+## [0.77.2] - 2025-07-17
+
+### 🚜 Refactor
+
+- 7d1d515 transform/styled-components: Shorten code (#12316) (overlookmotel)
+
+
+## [0.77.1] - 2025-07-16
+
+### 🚀 Features
+
+- 9b14fbc ast: Add `ThisExpression` to `TSTypeName` (#12156) (Boshen)
+
+### 🐛 Bug Fixes
+
+- c7b1056 transformer/object-rest-spread: Arrow function expressions with object rest patterns (#12185) (Jason Ho)
+- fb76e3c transform/styled-components: Fix spans of quasis when some quasis removed (#12240) (overlookmotel)
+
+### 🚜 Refactor
+
+- 9e1acc2 transform/styled-components: Use `SliceIterExt` (#12295) (overlookmotel)
+- 97e5f9c transform/styled-components: Rename var (#12283) (overlookmotel)
+- 6094099 transform/styled-components: Update comments (#12282) (overlookmotel)
+- ab9d91c transform/styled-components: Remove outdated comment (#12261) (overlookmotel)
+
+### ⚡ Performance
+
+- 5ecf5c4 transform/styled-components: Optimize removal loop (#12284) (overlookmotel)
+- a8d1e22 transformer/styled-components: Remove quasis and expressions in batch (#12256) (Dunqing)
+- 8e13e2a transformer/styled-components: Simplify CSS minification (#12224) (overlookmotel)
+
+
+## [0.77.0] - 2025-07-12
+
+### 🚀 Features
+
+- 19b97c0 transformer: Support styled components plugin (#12066) (Dunqing)
+
+### 🐛 Bug Fixes
+
+- 23c5951 transformer/legacy-decorator: Decorated fields with the `declare` modifier are not transformed (#12212) (Dunqing)
+- e93e4c8 transformer/styled-components: Template literal expressions order is wrong after minification (#12211) (Dunqing)
+- bfd47f8 transformer/styled-components: Should use source path to generate file hash when the path is absoulte path (#12199) (Dunqing)
+
+### 🚜 Refactor
+
+- 836bf9d transformer/styled-components: Use `Atom` everywhere (#12217) (overlookmotel)
+- 0c08c37 transformer/styled-components: Store block name in arena (#12216) (overlookmotel)
+- 5fffa96 transformer/styled-components: Shorten code (#12215) (overlookmotel)
+- eaf1c42 transformer/styled-components: Fix typo (#12214) (overlookmotel)
+- 5ad62cd transformer/styled-components: Do not allocate temp data into arena (#12198) (overlookmotel)
+- 94796a0 transformer/styled-components: Simplify concating strs (#12183) (Dunqing)
+- 046f8d5 transformer/plugins: Short-circuit early when a call expressions is part of `ComputedMemberExpression` (#12181) (Dunqing)
+- a6ee13a transformer/plugins: Don't store `PluginOptions` (#12180) (Dunqing)
+- 466241d transformer/styled_components: Simplify code (#12175) (overlookmotel)
+- 4e58a2a transformer/styled_components: Make unreachable branch `unreachable!` (#12172) (overlookmotel)
+- e222e26 transformer/styled_components: Move clippy attr (#12169) (overlookmotel)
+
+### 📚 Documentation
+
+- 86eb108 transformer/styled-components: Add comments about `CSSMinifier` (#12197) (Dunqing)
+- 59616ca transformer/styled-components: Add some comments (#12182) (Dunqing)
+
+### ⚡ Performance
+
+- 242e721 transformer/styled-components: Pass `Atom` instead of `Option<Atom>` (#12218) (overlookmotel)
+- 9a20cde transformer/styled-components: Cache block name (#12200) (Dunqing)
+- daf6087 transformer/styled-components: Generate file path hash in `InlineString` (#12196) (overlookmotel)
+- c35fe73 transformer/styled-components: Cache more of component IDs (#12195) (overlookmotel)
+- 4118b96 transformer/styled-components: Reduce string comparisons (#12191) (overlookmotel)
+- 2b479fc transformer/styled_components: Mark `enter_expression` as `#[inline]` (#12173) (overlookmotel)
+- bcd5094 transformer/styled_components: Replace hashmap with array (#12170) (overlookmotel)
+
+### 🎨 Styling
+
+- a45d749 transformer/styled_components: Reduce indentation (#12174) (overlookmotel)
+
+### 🧪 Testing
+
+- 2951645 transformer/styled-components: Fix memory leak (#12207) (overlookmotel)
+
+
+
+
 ## [0.75.0] - 2025-06-25
 
 ### 🚀 Features

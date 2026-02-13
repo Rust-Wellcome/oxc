@@ -3,9 +3,14 @@ use std::borrow::Cow;
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use serde_json::Value;
 
-use crate::{context::LintContext, rule::Rule};
+use crate::{
+    context::LintContext,
+    rule::{DefaultRuleConfig, Rule},
+};
 
 fn max_dependencies_diagnostic<S: Into<Cow<'static, str>>>(
     message: S,
@@ -16,13 +21,16 @@ fn max_dependencies_diagnostic<S: Into<Cow<'static, str>>>(
         .with_label(span)
 }
 
-/// <https://github.com/import-js/eslint-plugin-import/blob/v2.29.1/docs/rules/max-dependencies.md>
-#[derive(Debug, Default, Clone)]
+// <https://github.com/import-js/eslint-plugin-import/blob/v2.29.1/docs/rules/max-dependencies.md>
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct MaxDependencies(Box<MaxDependenciesConfig>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct MaxDependenciesConfig {
+    /// Maximum number of dependencies allowed in a module.
     max: usize,
+    /// Whether to ignore type imports when counting dependencies.
     ignore_type_imports: bool,
 }
 
@@ -70,29 +78,22 @@ declare_oxc_lint!(
     MaxDependencies,
     import,
     pedantic,
+    config = MaxDependenciesConfig,
 );
 
 impl Rule for MaxDependencies {
-    fn from_configuration(value: Value) -> Self {
-        let config = value.get(0);
-        if let Some(max) = config
+    fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
+        if let Some(max) = value
+            .get(0)
             .and_then(Value::as_number)
             .and_then(serde_json::Number::as_u64)
             .and_then(|v| usize::try_from(v).ok())
         {
-            Self(Box::new(MaxDependenciesConfig { max, ignore_type_imports: false }))
+            Ok(Self(Box::new(MaxDependenciesConfig { max, ignore_type_imports: false })))
         } else {
-            let max = config
-                .and_then(|config| config.get("max"))
-                .and_then(Value::as_number)
-                .and_then(serde_json::Number::as_u64)
-                .map_or(10, |v| usize::try_from(v).unwrap_or(10));
-            let ignore_type_imports = config
-                .and_then(|config| config.get("ignoreTypeImports"))
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-
-            Self(Box::new(MaxDependenciesConfig { max, ignore_type_imports }))
+            Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
+                .unwrap_or_default()
+                .into_inner())
         }
     }
 
@@ -142,6 +143,12 @@ fn test() {
              import './bar.js';",
             None,
         ),
+        (
+            r"
+             import './foo.js';
+             import './bar.js';",
+            Some(json!([])),
+        ),
         // (
         //     r"
         //      import './foo.js';
@@ -162,7 +169,14 @@ fn test() {
             import type { x } from './foo';
             import type { y } from './foo';
             ",
-            Some(json!([{"max": 1, "ignoreTypeImports": true}])),
+            Some(json!([{ "max": 1, "ignoreTypeImports": true }])),
+        ),
+        (
+            r"
+            import type { x } from './foo';
+            import type { y } from './foo';
+            ",
+            Some(json!([2])),
         ),
     ];
 
@@ -173,7 +187,15 @@ fn test() {
             import { y } from './foo';
             import { z } from './bar';
             ",
-            Some(json!([{"max": 1}])),
+            Some(json!([1])),
+        ),
+        (
+            r"
+            import { x } from './foo';
+            import { y } from './foo';
+            import { z } from './bar';
+            ",
+            Some(json!([{ "max": 1 }])),
         ),
         (
             r"
@@ -181,7 +203,7 @@ fn test() {
             import { y } from './foo';
             import { z } from './baz';
             ",
-            Some(json!([{"max": 2}])),
+            Some(json!([{ "max": 2 }])),
         ),
         // (
         //     r"
@@ -196,7 +218,7 @@ fn test() {
             import type { x } from './foo';
             import type { y } from './foo';
             ",
-            Some(json!([{"max": 1, }])),
+            Some(json!([{ "max": 1 }])),
         ),
         (
             r"
@@ -204,7 +226,7 @@ fn test() {
             import type { y } from './foo';
             import type { z } from './baz';
             ",
-            Some(json!([{"max": 2, "ignoreTypeImports": false}])),
+            Some(json!([{ "max": 2, "ignoreTypeImports": false }])),
         ),
     ];
 

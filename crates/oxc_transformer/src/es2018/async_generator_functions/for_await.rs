@@ -134,14 +134,10 @@ impl<'a> AsyncGeneratorFunctions<'a, '_> {
             let mut statements = ctx.ast.vec_with_capacity(2);
             statements.push(assignment_statement);
             let stmt_body = &mut stmt.body;
-            if let Statement::BlockStatement(block) = stmt_body {
-                if block.body.is_empty() {
-                    // If the block is empty, we don’t need to add it to the body;
-                    // instead, we need to remove the useless scope.
-                    ctx.scoping_mut().delete_scope(block.scope_id());
-                } else {
-                    statements.push(stmt_body.take_in(ctx.ast));
-                }
+            if let Statement::BlockStatement(block) = stmt_body
+                && !block.body.is_empty()
+            {
+                statements.push(stmt_body.take_in(ctx.ast));
             }
             statements
         };
@@ -217,6 +213,7 @@ impl<'a> AsyncGeneratorFunctions<'a, '_> {
                 SPAN,
                 VariableDeclarationKind::Var,
                 iterator_abrupt_completion.create_binding_pattern(ctx),
+                NONE,
                 Some(ctx.ast.expression_boolean_literal(SPAN, false)),
                 false,
             )),
@@ -229,6 +226,7 @@ impl<'a> AsyncGeneratorFunctions<'a, '_> {
                 SPAN,
                 VariableDeclarationKind::Var,
                 iterator_had_error_key.create_binding_pattern(ctx),
+                NONE,
                 Some(ctx.ast.expression_boolean_literal(SPAN, false)),
                 false,
             )),
@@ -241,6 +239,7 @@ impl<'a> AsyncGeneratorFunctions<'a, '_> {
                 SPAN,
                 VariableDeclarationKind::Var,
                 iterator_error_key.create_binding_pattern(ctx),
+                NONE,
                 None,
                 false,
             )),
@@ -264,6 +263,7 @@ impl<'a> AsyncGeneratorFunctions<'a, '_> {
                             SPAN,
                             VariableDeclarationKind::Var,
                             iterator_key.create_binding_pattern(ctx),
+                            NONE,
                             Some(iterator),
                             false,
                         ),
@@ -271,6 +271,7 @@ impl<'a> AsyncGeneratorFunctions<'a, '_> {
                             SPAN,
                             VariableDeclarationKind::Var,
                             step_key.create_binding_pattern(ctx),
+                            NONE,
                             None,
                             false,
                         ),
@@ -348,7 +349,7 @@ impl<'a> AsyncGeneratorFunctions<'a, '_> {
             );
             Some(ctx.ast.catch_clause_with_scope_id(
                 SPAN,
-                Some(ctx.ast.catch_parameter(SPAN, err_ident.create_binding_pattern(ctx))),
+                Some(ctx.ast.catch_parameter(SPAN, err_ident.create_binding_pattern(ctx), NONE)),
                 {
                     ctx.ast.block_statement_with_scope_id(
                         SPAN,

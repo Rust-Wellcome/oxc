@@ -11,13 +11,14 @@ use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, Span};
 use phf::{Map, Set, phf_map, phf_set};
 use rustc_hash::{FxHashMap, FxHashSet};
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::{
     AstNode,
     context::{ContextHost, LintContext},
     globals::is_valid_aria_property,
-    rule::Rule,
+    rule::{DefaultRuleConfig, Rule},
     utils::get_jsx_attribute_name,
 };
 
@@ -47,22 +48,22 @@ fn unknown_prop(span: Span) -> OxcDiagnostic {
         .with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct NoUnknownProperty(Box<NoUnknownPropertyConfig>);
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct NoUnknownPropertyConfig {
-    #[serde(default)]
+    /// List of properties to ignore.
     ignore: FxHashSet<Cow<'static, str>>,
-    #[serde(default)]
+    /// Require `data-*` attributes to be lowercase, e.g. `data-foobar` instead of `data-fooBar`.
     require_data_lowercase: bool,
 }
 
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// Disallow usage of unknown DOM property.
+    /// Disallow usage of unknown DOM properties.
     ///
     /// ### Why is this bad?
     ///
@@ -92,7 +93,8 @@ declare_oxc_lint!(
     NoUnknownProperty,
     react,
     restriction,
-    pending
+    pending,
+    config = NoUnknownPropertyConfig,
 );
 
 const ATTRIBUTE_TAGS_MAP: Map<&'static str, Set<&'static str>> = phf_map! {
@@ -136,6 +138,9 @@ const ATTRIBUTE_TAGS_MAP: Map<&'static str, Set<&'static str>> = phf_map! {
     "imageSizes" => phf_set! {"link"},
     "imageSrcSet" => phf_set! {"link"},
     "property" => phf_set! {"meta"},
+    // https://html.spec.whatwg.org/multipage/popover.html#the-popovertarget-attribute
+    "popoverTarget" => phf_set! {"button", "input"},
+    "popoverTargetAction" => phf_set! {"button", "input"},
     "viewBox" => phf_set! {"marker", "pattern", "svg", "symbol", "view"},
     "as" => phf_set! {"link"},
     "align" => phf_set! {
@@ -194,7 +199,7 @@ const ATTRIBUTE_TAGS_MAP: Map<&'static str, Set<&'static str>> = phf_map! {
 const DOM_PROPERTIES_NAMES: Set<&'static str> = phf_set! {
     // Global attributes - can be used on any HTML/DOM element
     // See https://developer.mozilla.org/en-US/docs/Web/HTML/Global_attributes
-    "dir", "draggable", "hidden", "id", "lang", "nonce", "part", "slot", "style", "title", "translate", "inert",
+    "dir", "draggable", "hidden", "id", "lang", "nonce", "part", "popover", "slot", "style", "title", "translate", "inert",
     // Element specific attributes
     // See https://developer.mozilla.org/en-US/docs/Web/HTML/Attributes (includes global attributes too)
     // To be considered if these should be added also to ATTRIBUTE_TAGS_MAP
@@ -330,6 +335,8 @@ const DOM_ATTRIBUTES_TO_CAMEL: Map<&'static str, &'static str> = phf_map! {
     "crossorigin" => "crossOrigin",
     "for" => "htmlFor",
     "nomodule" => "noModule",
+    "popovertarget" => "popoverTarget",
+    "popovertargetaction" => "popoverTargetAction",
     // svg
     "accent-height" => "accentHeight",
     "alignment-baseline" => "alignmentBaseline",
@@ -471,16 +478,12 @@ fn has_uppercase(name: &str) -> bool {
 }
 
 impl Rule for NoUnknownProperty {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        value
-            .as_array()
-            .and_then(|arr| arr.first())
-            .and_then(|value| serde_json::from_value(value.clone()).ok())
-            .map_or_else(Self::default, |value| Self(Box::new(value)))
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
-        let AstKind::JSXOpeningElement(el) = &node.kind() else {
+        let AstKind::JSXOpeningElement(el) = node.kind() else {
             return;
         };
         let JSXElementName::Identifier(ident) = &el.name else {
@@ -676,6 +679,12 @@ fn test() {
             r#"<dialog onClose={handler} open id="dialog" returnValue="something" onCancel={handler2} />"#,
             None,
         ),
+        (r#"<div popover="auto" />"#, None),
+        (r#"<button popoverTarget="locale-switcher" popoverTargetAction="show" />"#, None),
+        (
+            r#"<input type="button" popoverTarget="locale-switcher" popoverTargetAction="show" />"#,
+            None,
+        ),
         (
             r#"
 			        <table align="top">
@@ -741,6 +750,8 @@ fn test() {
         (r#"<div download="foo" />"#, None),
         (r#"<div imageSrcSet="someImageSrcSet" />"#, None),
         (r#"<div imageSizes="someImageSizes" />"#, None),
+        (r#"<div popoverTarget="locale-switcher" />"#, None),
+        (r#"<div popoverTargetAction="show" />"#, None),
         (r#"<div data-xml-anything="invalid" />"#, None),
         (
             r#"<div data-testID="bar" data-under_sCoRe="bar" />;"#,
@@ -758,6 +769,26 @@ fn test() {
             None,
         ),
         ("<t onChñnge/>", None),
+    ];
+
+    // TODO: Add a fixer for this rule.
+    let _fix = vec![
+        (r#"<div class="bar"></div>;"#, r#"<div className="bar"></div>;"#, None::<()>),
+        (r#"<div for="bar"></div>;"#, r#"<div htmlFor="bar"></div>;"#, None),
+        (r#"<div accept-charset="bar"></div>;"#, r#"<div acceptCharset="bar"></div>;"#, None),
+        (r#"<div http-equiv="bar"></div>;"#, r#"<div httpEquiv="bar"></div>;"#, None),
+        (r#"<div accesskey="bar"></div>;"#, r#"<div accessKey="bar"></div>;"#, None),
+        (r#"<div onclick="bar"></div>;"#, r#"<div onClick="bar"></div>;"#, None),
+        (r#"<div onmousedown="bar"></div>;"#, r#"<div onMouseDown="bar"></div>;"#, None),
+        (r#"<div onMousedown="bar"></div>;"#, r#"<div onMouseDown="bar"></div>;"#, None),
+        (r#"<use xlink:href="bar" />;"#, r#"<use xlinkHref="bar" />;"#, None),
+        (
+            r#"<rect clip-path="bar" transform-origin="center" />;"#,
+            r#"<rect clipPath="bar" transform-origin="center" />;"#,
+            None,
+        ),
+        ("<script crossorigin nomodule />", "<script crossOrigin noModule />", None),
+        ("<div crossorigin />", "<div crossOrigin />", None),
     ];
 
     Tester::new(NoUnknownProperty::NAME, NoUnknownProperty::PLUGIN, pass, fail).test_and_snapshot();

@@ -121,43 +121,84 @@ impl Program<'_> {
 /// `Program` span start is 0 (not 5).
 #[ast_meta]
 #[estree(raw_deser = "
-    const body = DESER[Vec<Directive>](POS_OFFSET.directives);
-    body.push(...DESER[Vec<Statement>](POS_OFFSET.body));
+    const localAstId = astId;
 
-    /* IF_JS */
-    const start = DESER[u32](POS_OFFSET.span.start);
-    /* END_IF_JS */
+    const start = IS_TS ? 0 : DESER[u32](POS_OFFSET.span.start),
+        end = DESER[u32](POS_OFFSET.span.end);
 
-    const end = DESER[u32](POS_OFFSET.span.end);
-
-    /* IF_TS */
-    let start;
-    if (body.length > 0) {
-        const first = body[0];
-        start = first.start;
-        if (first.type === 'ExportNamedDeclaration' || first.type === 'ExportDefaultDeclaration') {
-            const { declaration } = first;
-            if (
-                declaration !== null && declaration.type === 'ClassDeclaration'
-                && declaration.decorators.length > 0
-            ) {
-                const decoratorStart = declaration.decorators[0].start;
-                if (decoratorStart < start) start = decoratorStart;
-            }
-        }
-    } else {
-        start = end;
-    }
-    /* END_IF_TS */
-
-    const program = {
+    const program = parent = {
         type: 'Program',
+        body: null,
+        sourceType: DESER[ModuleKind](POS_OFFSET.source_type.module_kind),
+        hashbang: null,
+        /* IF COMMENTS */
+        get comments() {
+            // Check AST in buffer is still the same AST (buffers are reused)
+            if (localAstId !== astId) throw new Error('Comments are only accessible while linting the file');
+            // Deserialize the comments.
+            // Replace this getter with the comments array, so we don't deserialize twice.
+            const comments = DESER[Vec<Comment>](POS_OFFSET.comments);
+            // If there's a hashbang, prepend it as a `Shebang` comment
+            const { hashbang } = this;
+            if (hashbang !== null) {
+                let start, end;
+                comments.unshift({
+                    type: 'Shebang',
+                    value: hashbang.value,
+                    start: start = hashbang.start,
+                    end: end = hashbang.end,
+                    ...(RANGE && { range: [start, end] }),
+                });
+            }
+            Object.defineProperty(this, 'comments', { value: comments });
+            return comments;
+        },
+        /* END_IF */
+        /* IF LINTER */
+        get tokens() {
+            if (tokens === null) initTokens();
+            return tokens;
+        },
+        /* END_IF */
         start,
         end,
-        body,
-        sourceType: DESER[ModuleKind](POS_OFFSET.source_type.module_kind),
-        hashbang: DESER[Option<Hashbang>](POS_OFFSET.hashbang),
+        ...(RANGE && { range: [start, end] }),
+        ...(PARENT && { parent: null }),
     };
+
+    program.hashbang = DESER[Option<Hashbang>](POS_OFFSET.hashbang);
+
+    const body = program.body = DESER[Vec<Directive>](POS_OFFSET.directives);
+    body.push(...DESER[Vec<Statement>](POS_OFFSET.body));
+
+    if (IS_TS) {
+        let start;
+        if (body.length > 0) {
+            const first = body[0];
+            start = first.start;
+            if (first.type === 'ExportNamedDeclaration' || first.type === 'ExportDefaultDeclaration') {
+                const { declaration } = first;
+                if (
+                    declaration !== null && declaration.type === 'ClassDeclaration'
+                    && declaration.decorators.length > 0
+                ) {
+                    const decoratorStart = declaration.decorators[0].start;
+                    if (decoratorStart < start) start = decoratorStart;
+                }
+            }
+        } else {
+            start = end;
+        }
+
+        if (RANGE) {
+            program.start = program.range[0] = start;
+        } else {
+            program.start = start;
+        }
+    }
+
+    if (PARENT) parent = null;
+
     program
 ")]
 pub struct ProgramConverter<'a, 'b>(pub &'b Program<'a>);
@@ -165,20 +206,20 @@ pub struct ProgramConverter<'a, 'b>(pub &'b Program<'a>);
 impl ESTree for ProgramConverter<'_, '_> {
     fn serialize<S: Serializer>(&self, serializer: S) {
         let program = self.0;
-        let span_start =
-            if S::INCLUDE_TS_FIELDS { get_ts_start_span(program) } else { program.span.start };
 
-        let ranges = serializer.ranges();
         let mut state = serializer.serialize_struct();
         state.serialize_field("type", &JsonSafeString("Program"));
-        state.serialize_field("start", &span_start);
-        state.serialize_field("end", &program.span.end);
         state.serialize_field("body", &Concat2(&program.directives, &program.body));
         state.serialize_field("sourceType", &program.source_type.module_kind());
         state.serialize_field("hashbang", &program.hashbang);
-        if ranges {
-            state.serialize_field("range", &[span_start, program.span.end]);
-        }
+
+        let span = if S::INCLUDE_TS_FIELDS {
+            Span::new(get_ts_start_span(program), program.span.end)
+        } else {
+            program.span
+        };
+        state.serialize_span(span);
+
         state.end();
     }
 }
@@ -193,27 +234,25 @@ fn get_ts_start_span(program: &Program<'_>) -> u32 {
         return program.span.end;
     };
 
+    let start = first_stmt.span().start;
     match first_stmt {
         Statement::ExportNamedDeclaration(decl) => {
-            let start = decl.span.start;
-            if let Some(Declaration::ClassDeclaration(class)) = &decl.declaration {
-                if let Some(decorator) = class.decorators.first() {
-                    return cmp::min(start, decorator.span.start);
-                }
+            if let Some(Declaration::ClassDeclaration(class)) = &decl.declaration
+                && let Some(decorator) = class.decorators.first()
+            {
+                return cmp::min(start, decorator.span.start);
             }
-            start
         }
         Statement::ExportDefaultDeclaration(decl) => {
-            let start = decl.span.start;
-            if let ExportDefaultDeclarationKind::ClassDeclaration(class) = &decl.declaration {
-                if let Some(decorator) = class.decorators.first() {
-                    return cmp::min(start, decorator.span.start);
-                }
+            if let ExportDefaultDeclarationKind::ClassDeclaration(class) = &decl.declaration
+                && let Some(decorator) = class.decorators.first()
+            {
+                return cmp::min(start, decorator.span.start);
             }
-            start
         }
-        _ => first_stmt.span().start,
+        _ => {}
     }
+    start
 }
 
 /// Serialize `value` field of `Comment`.
@@ -226,10 +265,7 @@ fn get_ts_start_span(program: &Program<'_>) -> u32 {
 #[ast_meta]
 #[estree(
     ts_type = "string",
-    raw_deser = "
-        const endCut = THIS.type === 'Line' ? 0 : 2;
-        SOURCE_TEXT.slice(THIS.start + 2, THIS.end - endCut)
-    "
+    raw_deser = "SOURCE_TEXT.slice(THIS.start + 2, THIS.end - (THIS.type === 'Line' ? 0 : 2))"
 )]
 pub struct CommentValue<'b>(#[expect(dead_code)] pub &'b Comment);
 

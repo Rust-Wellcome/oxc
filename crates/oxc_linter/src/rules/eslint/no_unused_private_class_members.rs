@@ -1,9 +1,9 @@
 use itertools::Itertools;
-use oxc_ast::AstKind;
+use oxc_ast::{AstKind, ast::AssignmentOperator};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
-use oxc_semantic::{AstNode, AstNodes, NodeId};
-use oxc_span::Span;
+use oxc_semantic::{AstNode, NodeId, Semantic};
+use oxc_span::{GetSpan, Span};
 use oxc_syntax::class::ElementKind;
 
 use crate::{context::LintContext, rule::Rule};
@@ -95,10 +95,11 @@ impl Rule for NoUnusedPrivateClassMembers {
                 if !element.kind.intersects(ElementKind::Property | ElementKind::Method) {
                     continue;
                 }
+
                 if element.is_private
                     && !ctx.classes().iter_private_identifiers(class_id).any(|ident| {
                         // If the element is a property, it must be read.
-                        (!element.kind.is_property() || is_read(ident.id, ctx.nodes()))
+                        (!element.kind.is_property() || is_read(ident.id, ctx.semantic()))
                             && ident.element_ids.contains(&element_id)
                     })
                 {
@@ -110,44 +111,166 @@ impl Rule for NoUnusedPrivateClassMembers {
             }
         });
     }
+
+    fn should_run(&self, ctx: &crate::context::ContextHost) -> bool {
+        ctx.semantic().classes().len() > 0
+    }
 }
 
-fn is_read(current_node_id: NodeId, nodes: &AstNodes) -> bool {
-    for (curr, parent) in nodes
-        .ancestors(nodes.parent_id(current_node_id).unwrap_or(current_node_id))
+fn is_read(current_node_id: NodeId, semantic: &Semantic) -> bool {
+    for (curr, parent) in semantic
+        .nodes()
+        .ancestors(current_node_id)
+        .filter(|parent| {
+            !matches!(
+                parent.kind(),
+                AstKind::ParenthesizedExpression(_)
+                    | AstKind::TSAsExpression(_)
+                    | AstKind::TSSatisfiesExpression(_)
+                    | AstKind::TSInstantiationExpression(_)
+                    | AstKind::TSNonNullExpression(_)
+                    | AstKind::TSTypeAssertion(_)
+            )
+        })
         .tuple_windows::<(&AstNode<'_>, &AstNode<'_>)>()
     {
         match (curr.kind(), parent.kind()) {
-            (member_expr, AstKind::AssignmentTarget(_) | AstKind::SimpleAssignmentTarget(_))
+            // Skip member expressions in identifier context
+            (member_expr, AstKind::IdentifierReference(_))
                 if member_expr.is_member_expression_kind() => {}
+            // Skip identifier references in assignment targets
             (
-                AstKind::SimpleAssignmentTarget(_),
-                AstKind::AssignmentTarget(_) | AstKind::SimpleAssignmentTarget(_),
-            ) => {}
-            (
-                AstKind::AssignmentTarget(_),
-                AstKind::ForInStatement(_)
-                | AstKind::ForOfStatement(_)
-                | AstKind::AssignmentTargetWithDefault(_)
-                | AstKind::AssignmentTarget(_)
+                AstKind::IdentifierReference(_),
+                AstKind::ArrayAssignmentTarget(_)
                 | AstKind::ObjectAssignmentTarget(_)
-                | AstKind::ArrayAssignmentTarget(_),
-            )
-            | (AstKind::SimpleAssignmentTarget(_), AstKind::AssignmentExpression(_)) => {
+                | AstKind::IdentifierReference(_),
+            ) => {}
+            // All these are read contexts for private fields
+            (AstKind::PrivateFieldExpression(_), _) if is_value_context(parent, curr, semantic) => {
+                return true;
+            }
+            // AssignmentExpression: right-hand side is a read, compound assignment result in value context is a read
+            (AstKind::PrivateFieldExpression(_), AstKind::AssignmentExpression(assign_expr)) => {
+                // Right-hand side of assignment is a read
+                if assign_expr.right.span() == curr.span() {
+                    return true;
+                }
+                // Compound assignment result used in a value context is a read
+                if assign_expr.operator != AssignmentOperator::Assign
+                    && is_compound_assignment_read(parent.id(), semantic)
+                {
+                    return true;
+                }
+                // Not a read otherwise
                 return false;
             }
-            (AstKind::AssignmentTarget(_), AstKind::AssignmentExpression(_))
-            | (_, AstKind::UpdateExpression(_)) => {
-                return !matches!(
-                    nodes.parent_kind(parent.id()),
-                    Some(AstKind::ExpressionStatement(_))
-                );
+            // ForIn/ForOf: only right-hand side is a read
+            (AstKind::PrivateFieldExpression(_), AstKind::ForInStatement(for_in)) => {
+                if for_in.right.span() == curr.span() {
+                    return true;
+                }
             }
-            _ => return true,
+            (AstKind::PrivateFieldExpression(_), AstKind::ForOfStatement(for_of)) => {
+                if for_of.right.span() == curr.span() {
+                    return true;
+                }
+            }
+            // AssignmentTargetPropertyProperty: only computed property name is a read
+            (
+                AstKind::PrivateFieldExpression(_),
+                AstKind::AssignmentTargetPropertyProperty(prop),
+            ) => {
+                if prop.computed && prop.name.span() == curr.span() {
+                    return true;
+                }
+            }
+            (
+                AstKind::PrivateFieldExpression(_),
+                AstKind::ConditionalExpression(conditional_expr),
+            ) => {
+                if conditional_expr.test.span() == curr.span() {
+                    return true;
+                }
+                if is_value_context(parent, curr, semantic) {
+                    return true;
+                }
+            }
+            _ => {
+                return false;
+            }
         }
     }
-
     true
+}
+
+/// Check if the given AST kind represents a context where a value is being read/used
+/// `parent` is the parent node, `child` is the child node we're checking
+fn is_value_context(parent: &AstNode, child: &AstNode, semantic: &Semantic<'_>) -> bool {
+    match parent.kind() {
+        AstKind::ReturnStatement(_)
+        | AstKind::CallExpression(_)
+        | AstKind::NewExpression(_)
+        | AstKind::BinaryExpression(_)
+        | AstKind::VariableDeclarator(_)
+        | AstKind::PropertyDefinition(_)
+        | AstKind::ArrayExpression(_)
+        | AstKind::ObjectProperty(_)
+        | AstKind::JSXExpressionContainer(_)
+        | AstKind::ChainExpression(_)
+        | AstKind::StaticMemberExpression(_)
+        | AstKind::ComputedMemberExpression(_)
+        | AstKind::TemplateLiteral(_)
+        | AstKind::UnaryExpression(_)
+        | AstKind::IfStatement(_)
+        | AstKind::SpreadElement(_)
+        | AstKind::AssignmentPattern(_)
+        | AstKind::SwitchCase(_)
+        | AstKind::ThrowStatement(_)
+        | AstKind::WhileStatement(_)
+        | AstKind::DoWhileStatement(_)
+        | AstKind::SequenceExpression(_) => true,
+        AstKind::FormalParameter(p) => {
+            p.initializer.as_ref().is_some_and(|init| init.span().contains_inclusive(child.span()))
+        }
+        AstKind::AssignmentExpression(assign_expr) => {
+            // The right-hand side of an assignment is always in a value context (being read for assignment)
+            assign_expr.right.span().contains_inclusive(child.span())
+        }
+        AstKind::ExpressionStatement(_) => {
+            let grandparent = semantic.nodes().parent_node(parent.id());
+            if let AstKind::FunctionBody(_) = grandparent.kind()
+                && let AstKind::ArrowFunctionExpression(arrow) =
+                    semantic.nodes().parent_kind(grandparent.id())
+                && arrow.expression
+            {
+                return true;
+            }
+            false
+        }
+        AstKind::ParenthesizedExpression(_)
+        | AstKind::TSAsExpression(_)
+        | AstKind::TSSatisfiesExpression(_)
+        | AstKind::TSInstantiationExpression(_)
+        | AstKind::TSNonNullExpression(_)
+        | AstKind::TSTypeAssertion(_)
+        | AstKind::UpdateExpression(_)
+        | AstKind::AwaitExpression(_)
+        | AstKind::ConditionalExpression(_)
+        | AstKind::LogicalExpression(_) => {
+            let grandparent = semantic.nodes().parent_node(parent.id());
+            is_value_context(grandparent, parent, semantic)
+        }
+
+        _ => false,
+    }
+}
+
+/// Check if a compound assignment result is being used in a value context
+fn is_compound_assignment_read(parent_id: NodeId, semantic: &Semantic) -> bool {
+    let assignment_expr = semantic.nodes().get_node(parent_id);
+    semantic.nodes().ancestors(parent_id).next().is_some_and(|assignment_parent| {
+        is_value_context(assignment_parent, assignment_expr, semantic)
+    })
 }
 
 #[test]
@@ -155,26 +278,56 @@ fn test() {
     use crate::tester::Tester;
 
     let pass = vec![
+        r"
+            class Foo { #privateMember = {}; a() { return { ...this.#privateMember }; } }
+        ",
+        r"
+            class Test {
+                #prop = undefined
+
+                getProp() {
+                    return this.#prop ??= 0
+                }
+            }
+        ",
+        r"
+            class Test {
+                #prop = undefined
+
+                getProp() {
+                    return this.#prop ||= 0
+                }
+            }
+        ",
+        r"
+            class Test {
+                #prop = undefined
+
+                getProp() {
+                    return this.#prop += 0
+                }
+            }
+        ",
         r"class Foo {}",
         r"class Foo {
-			    publicMember = 42;
-			}",
+        	    publicMember = 42;
+        	}",
         r"class Foo {
-			    #usedMember = 42;
-			    method() {
-			        return this.#usedMember;
-			    }
-			}",
+        	    #usedMember = 42;
+        	    method() {
+        	        return this.#usedMember;
+        	    }
+        	}",
         r"class Foo {
-			    #usedMember = 42;
-			    anotherMember = this.#usedMember;
-			}",
+        	    #usedMember = 42;
+        	    anotherMember = this.#usedMember;
+        	}",
         r"class Foo {
-			    #usedMember = 42;
-			    foo() {
-			        anotherMember = this.#usedMember;
-			    }
-			}",
+        	    #usedMember = 42;
+        	    foo() {
+        	        anotherMember = this.#usedMember;
+        	    }
+        	}",
         r"class C {
 			    #usedMember;
 
@@ -309,6 +462,44 @@ fn test() {
                 callback;
             }
          }",
+        r"class ChildProcess extends EventEmitter { #stdioObject; #createStdioObject() {} get stdio() { return (this.#stdioObject ??= this.#createStdioObject()); } }",
+        "export class Foo { readonly #select = 123; override render() { return html`foo=${this.#select}`; } }",
+        "export class Foo { #listened = false; bar() { if (!this.#listened) return; this.#listened = false; } } ",
+        "export class RichText { #verticalScrollContainer; init() { const verticalScrollContainer = this.#verticalScrollContainer || (this.#verticalScrollContainer = this.verticalScrollContainerGetter?.() || null); } }",
+        "class Foo { #a = false; on(data) { return this.#a ? [data] : data; } set setA(value) { this.#a = value; } }",
+        "class Foo { #a = false; on(data) { return this.#a ? [data] : data; } }",
+        "class WeakReference { #i = 0; inc() { return ++this.#i; }; dec() { return --this.#i; } }",
+        "class Foo { #d; constructor(d) { this.#d = d || kDefaultD; } get getD(): string { return this.#d!; } }",
+        "class F { #o; initialize(output) { this.#o = output; } text(e) { return this.#o!.text(e); } }",
+        "class Foo { #a; constructor(a) { this.#a = a; }; b(b?: string): this { this.#a!.setB(b); return this; } resetA() { this.#a = undefined; } }",
+        // Test for static block - issue #13179
+        r"let getPrivate; class C { #private; constructor(v) { this.#private = v; } static { getPrivate = klass => klass.#private; } }",
+        r"let getPrivate; class C { #private; constructor(v) { this.#private = v; } static { getPrivate = klass => { return klass.#private; } } }",
+        r"class C { #field = 1; static { const obj = new C(); console.log(obj.#field); } }",
+        r"class C { #method() { return 42; } static { const obj = new C(); obj.#method(); } }",
+        r"class C { #field = 1; static { const getField = obj => { return obj.#field; }; } }",
+        r"export class Database<const S extends idb.DBSchema> { readonly #db: Promise<idb.IDBPDatabase<S>>; constructor(name: string, version: number, hooks: idb.OpenDBCallbacks<S>) { this.#db = idb.openDB<S>(name, version, hooks); }  async read() { let db = await this.#db; } }",
+        r"export class A { #x; constructor(x: number) { this.#x = x; } get(y = this.#x) { return y; } }",
+        r"class B { #value = 42; method(param = this.#value) { return param * 2; } }",
+        r"class C { #arr = [1, 2, 3]; process(items = this.#arr) { return items.map(x => x * 2); } }",
+        r"export class BugClass { readonly #BUG: readonly [] = []; method() { return Math.random() > 0.5 ? this.#BUG : []; } }",
+        r"class Foo { #x; #y; method(a, b, c) { return a ? (b ? this.#x : c) : this.#y; } }",
+        r"class Foo { #x; method() { return () => a ? this.#x : b; } }",
+        r"class Foo { #x; method() { return a && (b ? this.#x : c); } }",
+        r"class Foo { #x; method() { fn(a ? this.#x : b); } }",
+        r"class Foo { #x; method() { return `${a ? this.#x : b}`; } }",
+        r"class Foo { #x; method() { return [a ? this.#x : b]; } }",
+        r"class Foo { #x; method() { return { key: a ? this.#x : b }; } }",
+        r"class Foo { #x; method(val) { switch(val) { case (a ? this.#x : b): break; } } }",
+        r"class Foo { #x; method() { throw a ? this.#x : new Error(); } }",
+        r"class Foo { #x; method() { while (a ? this.#x : b) {} } }",
+        r"class Foo { #a; #b; #c; method() { return this.#a ? this.#b : this.#c; } }",
+        // Issue #15548: Private member used in logical expression on RHS of assignment
+        r"class ExampleFoo { #foo = 0; foo(foo) { foo = foo ?? this.#foo; return foo; } }",
+        // Issue #15548: Private member used in update expression on RHS of assignment
+        r"class ExampleBar { #bar = 0; bar(bar) { bar = ++this.#bar; return bar; } }",
+        r"class Test { #url: string; constructor(url: string) { this.#url = url; } open() { return new WebSocket(this.#url); } }",
+        r"export class Foo { #fetch: typeof fetch; constructor() { this.#fetch = fetch; } async bar() { return (0, this.#fetch)('https://example.com'); } }",
     ];
 
     let fail = vec![
@@ -454,6 +645,11 @@ fn test() {
 			        }
 			    }
 			}",
+        r"class Foo { #awaitedMember; async method() { await this.#awaitedMember; } }",
+        r"class Foo { #unused; method() { Math.random() > 0.5 ? this.#unused : []; } }",
+        r"class Foo { #x; #y; method(a, b, c) { a ? (b ? this.#x : c) : this.#y; } }",
+        r"class Foo { #x; method() { a && (b ? this.#x : c); } }",
+        r"class Foo { #a; #b; #c; method() { this.#a ? this.#b : this.#c; } }",
     ];
 
     Tester::new(NoUnusedPrivateClassMembers::NAME, NoUnusedPrivateClassMembers::PLUGIN, pass, fail)

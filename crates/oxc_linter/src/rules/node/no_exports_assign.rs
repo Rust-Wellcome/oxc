@@ -87,17 +87,16 @@ impl Rule for NoExportsAssign {
             return;
         }
 
-        if let Expression::AssignmentExpression(assign_expr) = &assign_expr.right {
-            if is_module_exports(assign_expr.left.as_member_expression(), ctx) {
-                return;
-            }
+        if let Expression::AssignmentExpression(assign_expr) = &assign_expr.right
+            && is_module_exports(assign_expr.left.as_member_expression(), ctx)
+        {
+            return;
         }
 
-        if let Some(AstKind::AssignmentExpression(assign_expr)) = ctx.nodes().parent_kind(node.id())
+        if let AstKind::AssignmentExpression(assign_expr) = ctx.nodes().parent_kind(node.id())
+            && is_module_exports(assign_expr.left.as_member_expression(), ctx)
         {
-            if is_module_exports(assign_expr.left.as_member_expression(), ctx) {
-                return;
-            }
+            return;
         }
 
         ctx.diagnostic_with_fix(no_exports_assign(assign_expr.left.span()), |fixer| {
@@ -125,6 +124,5 @@ fn test() {
 
     Tester::new(NoExportsAssign::NAME, NoExportsAssign::PLUGIN, pass, fail)
         .expect_fix(fix)
-        .with_node_plugin(true)
         .test_and_snapshot();
 }

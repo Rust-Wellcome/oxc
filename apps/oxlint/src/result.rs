@@ -3,6 +3,7 @@ use std::process::{ExitCode, Termination};
 #[derive(Debug)]
 pub enum CliRunResult {
     None,
+    JsPluginWorkspaceSetupFailed,
     InvalidOptionConfig,
     InvalidOptionTsConfig,
     InvalidOptionSeverityWithoutFilter,
@@ -16,6 +17,7 @@ pub enum CliRunResult {
     PrintConfigResult,
     ConfigFileInitFailed,
     ConfigFileInitSucceeded,
+    TsGoLintError,
 }
 
 impl Termination for CliRunResult {
@@ -28,6 +30,7 @@ impl Termination for CliRunResult {
             // ToDo: when oxc_linter (config) validates the configuration, we can use exit_code = 1 to fail
             | Self::LintNoFilesFound => ExitCode::SUCCESS,
             Self::ConfigFileInitFailed
+            | Self::JsPluginWorkspaceSetupFailed
             | Self::LintFoundErrors
             | Self::LintNoWarningsAllowed
             | Self::LintMaxWarningsExceeded
@@ -35,7 +38,8 @@ impl Termination for CliRunResult {
             | Self::InvalidOptionTsConfig
             | Self::InvalidOptionSeverityWithoutFilter
             | Self::InvalidOptionSeverityWithoutPluginName
-            | Self::InvalidOptionSeverityWithoutRuleName => ExitCode::FAILURE,
+            | Self::InvalidOptionSeverityWithoutRuleName
+            | Self::TsGoLintError => ExitCode::FAILURE,
         }
     }
 }

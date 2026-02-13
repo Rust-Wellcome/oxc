@@ -5,7 +5,7 @@ use oxc_ast::{
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_semantic::NodeId;
-use oxc_span::Span;
+use oxc_span::{GetSpan, Span};
 
 use crate::{AstNode, context::LintContext, rule::Rule, utils::get_first_parameter_name};
 
@@ -84,17 +84,14 @@ impl Rule for PreferNativeCoercionFunctions {
                 if func.r#async || func.generator || func.params.items.is_empty() {
                     return;
                 }
-                if let Some(parent) = ctx.nodes().parent_node(node.id()) {
-                    if matches!(parent.kind(), AstKind::ObjectProperty(_)) {
-                        return;
-                    }
+                if matches!(ctx.nodes().parent_kind(node.id()), AstKind::ObjectProperty(_)) {
+                    return;
                 }
-                if let Some(function_body) = &func.body {
-                    if let Some(call_expr_ident) =
+                if let Some(function_body) = &func.body
+                    && let Some(call_expr_ident) =
                         check_function(&func.params, function_body, false)
-                    {
-                        ctx.diagnostic(function(func.span, call_expr_ident));
-                    }
+                {
+                    ctx.diagnostic(function(func.span, call_expr_ident));
                 }
             }
             _ => {}
@@ -113,33 +110,29 @@ fn check_function<'a>(
         return None;
     }
 
-    if is_arrow {
-        if let Statement::ExpressionStatement(expr_stmt) = &function_body.statements[0] {
-            return is_matching_native_coercion_function_call(
-                &expr_stmt.expression,
-                first_parameter_name,
-            );
-        }
+    if is_arrow && let Statement::ExpressionStatement(expr_stmt) = &function_body.statements[0] {
+        return is_matching_native_coercion_function_call(
+            &expr_stmt.expression,
+            first_parameter_name,
+        );
     }
 
-    if let Statement::ReturnStatement(return_statement) = &function_body.statements[0] {
-        if let Some(return_expr) = &return_statement.argument {
-            return is_matching_native_coercion_function_call(return_expr, first_parameter_name);
-        }
+    if let Statement::ReturnStatement(return_statement) = &function_body.statements[0]
+        && let Some(return_expr) = &return_statement.argument
+    {
+        return is_matching_native_coercion_function_call(return_expr, first_parameter_name);
     }
 
     None
 }
 
 fn get_returned_ident<'a>(stmt: &'a Statement, is_arrow: bool) -> Option<&'a str> {
-    if is_arrow {
-        if let Statement::ExpressionStatement(expr_stmt) = &stmt {
-            return expr_stmt
-                .expression
-                .without_parentheses()
-                .get_identifier_reference()
-                .map(|v| v.name.as_str());
-        }
+    if is_arrow && let Statement::ExpressionStatement(expr_stmt) = &stmt {
+        return expr_stmt
+            .expression
+            .without_parentheses()
+            .get_identifier_reference()
+            .map(|v| v.name.as_str());
     }
 
     if let Statement::BlockStatement(block_stmt) = &stmt {
@@ -148,13 +141,13 @@ fn get_returned_ident<'a>(stmt: &'a Statement, is_arrow: bool) -> Option<&'a str
         }
         return get_returned_ident(&block_stmt.body[0], is_arrow);
     }
-    if let Statement::ReturnStatement(return_statement) = &stmt {
-        if let Some(return_expr) = &return_statement.argument {
-            return return_expr
-                .without_parentheses()
-                .get_identifier_reference()
-                .map(|v| v.name.as_str());
-        }
+    if let Statement::ReturnStatement(return_statement) = &stmt
+        && let Some(return_expr) = &return_statement.argument
+    {
+        return return_expr
+            .without_parentheses()
+            .get_identifier_reference()
+            .map(|v| v.name.as_str());
     }
 
     None
@@ -199,20 +192,16 @@ fn check_array_callback_methods(
     is_arrow: bool,
     ctx: &LintContext,
 ) -> bool {
-    let Some(parent) = ctx.nodes().parent_node(node_id) else {
-        return false;
-    };
-    let AstKind::Argument(parent_call_expr_arg) = parent.kind() else {
-        return false;
-    };
-    let Some(grand_parent) = ctx.nodes().parent_node(parent.id()) else {
-        return false;
-    };
-    let AstKind::CallExpression(call_expr) = grand_parent.kind() else {
-        return false;
-    };
+    let parent = ctx.nodes().parent_node(node_id);
 
-    if !std::ptr::eq(&raw const call_expr.arguments[0], parent_call_expr_arg) {
+    let AstKind::CallExpression(call_expr) = parent.kind() else {
+        return false;
+    };
+    if call_expr
+        .arguments
+        .first()
+        .is_none_or(|arg| arg.span() != ctx.nodes().get_node(node_id).kind().span())
+    {
         return false;
     }
     if call_expr.optional {

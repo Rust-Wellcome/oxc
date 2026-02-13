@@ -8,8 +8,14 @@ use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_semantic::IsGlobalReference;
 use oxc_span::{CompactStr, Span};
+use schemars::JsonSchema;
+use serde::Deserialize;
 
-use crate::{AstNode, context::LintContext, rule::Rule};
+use crate::{
+    AstNode,
+    context::LintContext,
+    rule::{DefaultRuleConfig, Rule},
+};
 
 fn no_require_imports_diagnostic(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Expected \"import\" statement instead of \"require\" call")
@@ -17,12 +23,40 @@ fn no_require_imports_diagnostic(span: Span) -> OxcDiagnostic {
         .with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct NoRequireImports(Box<NoRequireImportsConfig>);
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct NoRequireImportsConfig {
+    /// These strings will be compiled into regular expressions with the u flag and be used to test against the imported path.
+    /// A common use case is to allow importing `package.json`. This is because `package.json` commonly lives outside of the TS root directory,
+    /// so statically importing it would lead to root directory conflicts, especially with `resolveJsonModule` enabled.
+    /// You can also use it to allow importing any JSON if your environment doesn't support JSON modules, or use it for other cases where `import` statements cannot work.
+    ///
+    /// With `{ allow: ['/package\\.json$'] }`:
+    ///
+    /// Examples of **correct** code for this rule:
+    /// ```ts
+    /// console.log(require('../package.json').version);
+    /// ```
     allow: Vec<CompactStr>,
+    /// When set to `true`, `import ... = require(...)` declarations won't be reported.
+    /// This is useful if you use certain module options that require strict CommonJS interop semantics.
+    ///
+    /// When set to `true`:
+    ///
+    /// Examples of **incorrect** code for this rule:
+    /// ```ts
+    /// var foo = require('foo');
+    /// const foo = require('foo');
+    /// let foo = require('foo');
+    /// ```
+    /// Examples of **correct** code for this rule:
+    /// ```ts
+    /// import foo = require('foo');
+    /// import foo from 'foo';
+    /// ```
     allow_as_import: bool,
 }
 
@@ -75,47 +109,11 @@ declare_oxc_lint!(
     /// import { lib2 } from 'lib2';
     /// import * as lib3 from 'lib3';
     /// ```
-    ///
-    /// ### Options
-    ///
-    /// #### `allow`
-    ///
-    /// array of strings
-    ///
-    /// These strings will be compiled into regular expressions with the u flag and be used to test against the imported path.
-    /// A common use case is to allow importing `package.json`. This is because `package.json` commonly lives outside of the TS root directory,
-    /// so statically importing it would lead to root directory conflicts, especially with `resolveJsonModule` enabled.
-    /// You can also use it to allow importing any JSON if your environment doesn't support JSON modules, or use it for other cases where `import` statements cannot work.
-    ///
-    /// With { allow: ['/package\\.json$'] }:
-    ///
-    /// Examples of **correct** code for this rule:
-    /// ```ts
-    /// console.log(require('../package.json').version);
-    /// ```
-    ///
-    /// #### `allowAsImport`
-    ///
-    /// When set to `true`, `import ... = require(...)` declarations won't be reported.
-    /// This is useful if you use certain module options that require strict CommonJS interop semantics.
-    ///
-    /// With `{ allowAsImport: true }`:
-    ///
-    /// Examples of **incorrect** code for this rule:
-    /// ```ts
-    /// var foo = require('foo');
-    /// const foo = require('foo');
-    /// let foo = require('foo');
-    /// ```
-    /// Examples of **correct** code for this rule:
-    /// ```ts
-    /// import foo = require('foo');
-    /// import foo from 'foo';
-    /// ```
     NoRequireImports,
     typescript,
     restriction,
-    pending  // TODO: fixer (change require to import)
+    pending,  // TODO: fixer (change require to import)
+    config = NoRequireImportsConfig,
 );
 
 fn match_argument_value_with_regex(allow: &[CompactStr], argument_value: &str) -> bool {
@@ -126,32 +124,18 @@ fn match_argument_value_with_regex(allow: &[CompactStr], argument_value: &str) -
 }
 
 impl Rule for NoRequireImports {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let obj = value.get(0);
-        Self(Box::new(NoRequireImportsConfig {
-            allow: obj
-                .and_then(|v| v.get("allow"))
-                .and_then(serde_json::Value::as_array)
-                .map(|v| {
-                    v.iter().filter_map(serde_json::Value::as_str).map(CompactStr::from).collect()
-                })
-                .unwrap_or_default(),
-            allow_as_import: obj
-                .and_then(|v| v.get("allowAsImport"))
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false),
-        }))
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
         match node.kind() {
             AstKind::CallExpression(call_expr) => {
-                if node.scope_id() != ctx.scoping().root_scope_id() {
-                    if let Some(id) = call_expr.callee.get_identifier_reference() {
-                        if !id.is_global_reference_name("require", ctx.scoping()) {
-                            return;
-                        }
-                    }
+                if node.scope_id() != ctx.scoping().root_scope_id()
+                    && let Some(id) = call_expr.callee.get_identifier_reference()
+                    && !id.is_global_reference_name("require", ctx.scoping())
+                {
+                    return;
                 }
 
                 if !call_expr.is_require_call() {

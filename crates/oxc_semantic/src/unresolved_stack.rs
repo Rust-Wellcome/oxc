@@ -1,12 +1,17 @@
-use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 use oxc_data_structures::assert_unchecked;
-use oxc_span::Atom;
+use oxc_span::IdentHashMap;
 use oxc_syntax::reference::ReferenceId;
 
-/// Unlike `ScopeTree`'s `UnresolvedReferences`, this type uses `Atom` as the key,
+/// Stores reference IDs for a single identifier name within a scope.
+/// Uses `SmallVec` to avoid heap allocations for the common case where an identifier
+/// is referenced only a few times within a given scope.
+pub type ReferenceIds = SmallVec<[ReferenceId; 8]>;
+
+/// Unlike `ScopeTree`'s `UnresolvedReferences`, this type uses `Ident` as the key,
 /// and uses a heap-allocated hashmap (not arena-allocated)
-type TempUnresolvedReferences<'a> = FxHashMap<Atom<'a>, Vec<ReferenceId>>;
+type TempUnresolvedReferences<'a> = IdentHashMap<'a, ReferenceIds>;
 
 // Stack used to accumulate unresolved refs while traversing scopes.
 // Indexed by scope depth. We recycle `UnresolvedReferences` instances during traversal
@@ -74,17 +79,6 @@ impl<'a> UnresolvedReferencesStack<'a> {
 
     /// Get unresolved references hash map for current scope
     #[inline]
-    pub(crate) fn root(&self) -> &TempUnresolvedReferences<'a> {
-        // SAFETY: `stack.len() > current_scope_depth` initially.
-        // Thereafter, `stack` never shrinks, only grows.
-        // `current_scope_depth` is only increased in `increment_scope_depth`,
-        // and it grows `stack` to ensure `stack.len()` always exceeds `current_scope_depth`.
-        // So this read is always guaranteed to be in bounds.
-        unsafe { self.stack.get_unchecked(0) }
-    }
-
-    /// Get unresolved references hash map for current scope
-    #[inline]
     pub(crate) fn current_mut(&mut self) -> &mut TempUnresolvedReferences<'a> {
         // SAFETY: `stack.len() > current_scope_depth` initially.
         // Thereafter, `stack` never shrinks, only grows.
@@ -100,7 +94,6 @@ impl<'a> UnresolvedReferencesStack<'a> {
         &mut self,
     ) -> (&mut TempUnresolvedReferences<'a>, &mut TempUnresolvedReferences<'a>) {
         // Assert invariants to remove bounds checks in code below.
-        // https://godbolt.org/z/vv5Wo5csv
         // SAFETY: `current_scope_depth` starts at 1, and is only decremented
         // in `decrement_scope_depth` which checks it doesn't go below 1.
         unsafe { assert_unchecked!(self.current_scope_depth > 0) };
@@ -110,17 +103,19 @@ impl<'a> UnresolvedReferencesStack<'a> {
         // and it grows `stack` to ensure `stack.len()` always exceeds `current_scope_depth`.
         unsafe { assert_unchecked!(self.stack.len() > self.current_scope_depth) };
 
-        let mut iter = self.stack.iter_mut();
-        let parent = iter.nth(self.current_scope_depth - 1).unwrap();
-        let current = iter.next().unwrap();
+        let (head, tail) = self.stack.split_at_mut(self.current_scope_depth);
+        let parent = &mut head[self.current_scope_depth - 1];
+        let current = &mut tail[0];
         (current, parent)
     }
 
     #[inline]
-    pub(crate) fn into_root(self) -> TempUnresolvedReferences<'a> {
+    pub(crate) fn into_root(mut self) -> TempUnresolvedReferences<'a> {
         // SAFETY: Stack starts with a non-zero size and never shrinks.
-        // This assertion removes bounds check in `.next()`.
+        // This assertion removes bounds check in `swap_remove`.
         unsafe { assert_unchecked!(!self.stack.is_empty()) };
-        self.stack.into_iter().next().unwrap()
+        // Use `swap_remove(0)` instead of `into_iter().next().unwrap()` to avoid
+        // creating an iterator just to get the first element.
+        self.stack.swap_remove(0)
     }
 }

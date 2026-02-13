@@ -5,7 +5,6 @@ use oxc_span::Span;
 
 use crate::{
     AstNode,
-    ast_util::is_function_node,
     context::LintContext,
     rule::Rule,
     utils::{get_function_nearest_jsdoc_node, should_ignore_as_internal, should_ignore_as_private},
@@ -13,7 +12,7 @@ use crate::{
 
 fn implements_on_classes_diagnostic(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("`@implements` used on a non-constructor function")
-        .with_help("Add `@class` tag or use ES6 class syntax.")
+        .with_help("Add `@class` tag or use class syntax.")
         .with_label(span)
 }
 
@@ -28,7 +27,7 @@ declare_oxc_lint!(
     /// ### Why is this bad?
     ///
     /// Constructor functions should be
-    /// whether marked with `@class`, `@constructs`, or being an ES6 class constructor.
+    /// whether marked with `@class`, `@constructs`, or being a class constructor.
     ///
     /// ### Examples
     ///
@@ -61,7 +60,8 @@ declare_oxc_lint!(
 
 fn is_function_inside_of_class<'a, 'b>(node: &'b AstNode<'a>, ctx: &'b LintContext<'a>) -> bool {
     let mut current_node = node;
-    while let Some(parent_node) = ctx.nodes().parent_node(current_node.id()) {
+    loop {
+        let parent_node = ctx.nodes().parent_node(current_node.id());
         match parent_node.kind() {
             AstKind::MethodDefinition(_) | AstKind::PropertyDefinition(_) => return true,
             // Keep looking up only if the node is wrapped by `()`
@@ -71,14 +71,14 @@ fn is_function_inside_of_class<'a, 'b>(node: &'b AstNode<'a>, ctx: &'b LintConte
             _ => return false,
         }
     }
-
-    false
 }
 
 impl Rule for ImplementsOnClasses {
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
-        if !is_function_node(node) {
-            return;
+        match node.kind() {
+            AstKind::Function(f) if f.is_function_declaration() || f.is_expression() => {}
+            AstKind::ArrowFunctionExpression(_) => {}
+            _ => return,
         }
 
         // Filter plain declared (arrow) function.
@@ -88,7 +88,7 @@ impl Rule for ImplementsOnClasses {
         }
 
         let Some(jsdocs) = get_function_nearest_jsdoc_node(node, ctx)
-            .and_then(|node| ctx.jsdoc().get_all_by_node(node))
+            .and_then(|node| ctx.jsdoc().get_all_by_node(ctx.nodes(), node))
         else {
             return;
         };
@@ -117,10 +117,10 @@ impl Rule for ImplementsOnClasses {
             }
         }
 
-        if let Some(span) = implements_found {
-            if !class_or_ctor_found {
-                ctx.diagnostic(implements_on_classes_diagnostic(span));
-            }
+        if let Some(span) = implements_found
+            && !class_or_ctor_found
+        {
+            ctx.diagnostic(implements_on_classes_diagnostic(span));
         }
     }
 }
@@ -137,7 +137,7 @@ fn test() {
 			       * @class
 			       */
 			      function quux () {
-			
+
 			      }
 			      ",
             None,
@@ -150,7 +150,7 @@ fn test() {
 			       * @constructor
 			       */
 			      function quux () {
-			
+
 			      }
 			      ",
             None,
@@ -163,7 +163,7 @@ fn test() {
 			       * @constructor
 			       */
 			      const quux = () => {
-			
+
 			      }
 			      ",
             None,
@@ -179,7 +179,7 @@ fn test() {
 			         * @implements {SomeClass}
 			         */
 			        constructor () {
-			
+
 			        }
 			      }
 			      ",
@@ -196,7 +196,7 @@ fn test() {
 			         * @implements {SomeClass}
 			         */
 			        constructor () {
-			
+
 			        }
 			      }
 			      ",
@@ -213,7 +213,7 @@ fn test() {
 			         * @implements {SomeClass}
 			         */
 			        foo() {
-			
+
 			        }
 			      }
 			      ",
@@ -226,7 +226,7 @@ fn test() {
 			       *
 			       */
 			      function quux () {
-			
+
 			      }
 			      ",
             None,
@@ -261,7 +261,7 @@ fn test() {
 			       * @implements {SomeClass}
 			       */
 			      function quux () {
-			
+
 			      }
 			      ",
             None,
@@ -273,7 +273,7 @@ fn test() {
 			       * @implements {SomeClass}
 			       */
 			      const quux = () => {
-			
+
 			      }
 			      ",
             None,
@@ -286,7 +286,7 @@ fn test() {
 			       * @implements {SomeClass}
 			       */
 			      const quux = function() {
-			
+
 			      }
 			      ",
             None,

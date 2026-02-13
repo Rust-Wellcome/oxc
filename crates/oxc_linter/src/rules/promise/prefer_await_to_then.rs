@@ -2,15 +2,21 @@ use oxc_ast::AstKind;
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
-use serde_json::Value;
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 fn prefer_wait_to_then_diagnostic(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Prefer await to then()/catch()/finally()").with_label(span)
 }
 
-use crate::{AstNode, context::LintContext, rule::Rule, utils::is_promise};
+use crate::{
+    AstNode,
+    context::LintContext,
+    rule::{DefaultRuleConfig, Rule},
+    utils::is_promise,
+};
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct PreferAwaitToThen(PreferAwaitToThenConfig);
 
 impl std::ops::Deref for PreferAwaitToThen {
@@ -21,8 +27,10 @@ impl std::ops::Deref for PreferAwaitToThen {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct PreferAwaitToThenConfig {
+    /// If true, enforces the rule even after an `await` or `yield` expression.
     strict: bool,
 }
 
@@ -57,6 +65,7 @@ declare_oxc_lint!(
     PreferAwaitToThen,
     promise,
     style,
+    config = PreferAwaitToThenConfig,
 );
 
 fn is_inside_yield_or_await(node: &AstNode) -> bool {
@@ -64,13 +73,8 @@ fn is_inside_yield_or_await(node: &AstNode) -> bool {
 }
 
 impl Rule for PreferAwaitToThen {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let strict = match value {
-            Value::Object(obj) => obj.get("strict").and_then(Value::as_bool).unwrap_or(false),
-            _ => false,
-        };
-
-        Self(PreferAwaitToThenConfig { strict })
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -82,13 +86,13 @@ impl Rule for PreferAwaitToThen {
             return;
         }
 
+        if matches!(ctx.nodes().parent_kind(node.id()), AstKind::ReturnStatement(_)) {
+            return;
+        }
+
         if !self.strict {
             // Already inside a yield or await
-            if ctx
-                .nodes()
-                .ancestor_ids(node.id())
-                .any(|node_id| is_inside_yield_or_await(ctx.nodes().get_node(node_id)))
-            {
+            if ctx.nodes().ancestors(node.id()).any(is_inside_yield_or_await) {
                 return;
             }
         }
@@ -135,9 +139,12 @@ fn test() {
         ),
         (
             "async function hi() { await thing().then() }",
-            Some(serde_json::json!({ "strict": false })),
+            Some(serde_json::json!([{ "strict": false }])),
         ),
         ("const { promise, resolve } = Promise.withResolvers()", None),
+        ("function x () { return Promise.all() } ", None),
+        ("function foo() { return hey.then(x => x) }", None),
+        ("async function foo() { return thing().then(x => x) }", None),
     ];
 
     let fail = vec![
@@ -150,9 +157,13 @@ fn test() {
         ("something().then(async () => await somethingElse())", None),
         (
             "async function foo() { await thing().then() }",
-            Some(serde_json::json!({ "strict": true })),
+            Some(serde_json::json!([{ "strict": true }])),
         ),
-        ("async function foo() { thing().then() }", Some(serde_json::json!({ "strict": false }))),
+        ("async function foo() { thing().then() }", Some(serde_json::json!([{ "strict": false }]))),
+        (
+            "async function hi() { await thing().then(x => {}) }",
+            Some(serde_json::json!([{ "strict": true }])),
+        ),
     ];
 
     Tester::new(PreferAwaitToThen::NAME, PreferAwaitToThen::PLUGIN, pass, fail).test_and_snapshot();

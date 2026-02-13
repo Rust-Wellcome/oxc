@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, path::Path};
 
 use indexmap::map::Entry;
 use syn::{
@@ -31,8 +31,9 @@ pub fn load_file(
     file_path: &str,
     skeletons: &mut FxIndexMap<String, Skeleton>,
     meta_skeletons: &mut FxIndexMap<String, Skeleton>,
+    root_path: &Path,
 ) {
-    let content = fs::read_to_string(file_path).unwrap();
+    let content = fs::read_to_string(root_path.join(file_path)).unwrap();
 
     let file = parse_file(content.as_str()).unwrap();
 
@@ -47,8 +48,8 @@ pub fn load_file(
                 (skeleton.name.clone(), Skeleton::Enum(skeleton), is_meta)
             }
             Item::Macro(item) => {
-                let Some(skeleton) = parse_macro(&item, file_id) else { continue };
-                (skeleton.name.clone(), Skeleton::Enum(skeleton), false)
+                let Some((name, skeleton, is_meta)) = parse_macro(&item, file_id) else { continue };
+                (name, skeleton, is_meta)
             }
             _ => continue,
         };
@@ -73,13 +74,21 @@ fn parse_enum(item: ItemEnum, file_id: FileId) -> Option<(EnumSkeleton, /* is_me
     Some((EnumSkeleton { name, is_foreign, file_id, item, inherits: vec![] }, is_meta))
 }
 
-fn parse_macro(item: &ItemMacro, file_id: FileId) -> Option<EnumSkeleton> {
-    if !item.mac.path.is_ident("inherit_variants") {
-        return None;
+fn parse_macro(item: &ItemMacro, file_id: FileId) -> Option<(String, Skeleton, bool)> {
+    if item.mac.path.is_ident("inherit_variants") {
+        let skeleton = parse_inherit_variants_macro(item, file_id);
+        return Some((skeleton.name.clone(), Skeleton::Enum(skeleton), false));
     }
+    if item.mac.path.is_ident("define_nonmax_u32_index_type")
+        || item.mac.path.is_ident("define_index_type")
+    {
+        return parse_index_type_macro(item, file_id);
+    }
+    None
+}
 
-    let skeleton = item
-        .mac
+fn parse_inherit_variants_macro(item: &ItemMacro, file_id: FileId) -> EnumSkeleton {
+    item.mac
         .parse_body_with(|input: &ParseBuffer| {
             // Because of `@inherit`s we can't use the actual `ItemEnum` parse.
             // This closure is similar to how `ItemEnum` parser works, with the exception
@@ -128,9 +137,56 @@ fn parse_macro(item: &ItemMacro, file_id: FileId) -> Option<EnumSkeleton> {
             let item = ItemEnum { attrs, vis, enum_token, ident, generics, brace_token, variants };
             Ok(EnumSkeleton { name, is_foreign: false, file_id, item, inherits })
         })
-        .expect("Failed to parse contents of `inherit_variants!` macro");
+        .expect("Failed to parse contents of `inherit_variants!` macro")
+}
 
-    Some(skeleton)
+fn parse_index_type_macro(item: &ItemMacro, file_id: FileId) -> Option<(String, Skeleton, bool)> {
+    item.mac
+        .parse_body_with(|input: &ParseBuffer| {
+            let attrs = input.call(Attribute::parse_outer)?;
+            let vis = input.parse::<Visibility>()?;
+            let _ = input.parse::<Token![struct]>()?;
+            let ident = input.parse::<Ident>()?;
+            // Handle optional `= Type` for define_index_type
+            if input.parse::<Token![=]>().is_ok() {
+                let _ = input.parse::<Ident>()?;
+            }
+            let _ = input.parse::<Token![;]>()?;
+
+            let Some((name, is_foreign, is_meta)) = get_type_name(&attrs, &ident) else {
+                return Ok(None);
+            };
+
+            // Create minimal ItemStruct - the field type doesn't matter since these are primitives
+            let item_struct = ItemStruct {
+                attrs,
+                vis,
+                struct_token: <_>::default(),
+                ident,
+                generics: <_>::default(),
+                fields: syn::Fields::Unnamed(syn::FieldsUnnamed {
+                    paren_token: <_>::default(),
+                    unnamed: {
+                        let mut punct = Punctuated::new();
+                        punct.push(syn::Field {
+                            attrs: vec![],
+                            vis: syn::Visibility::Inherited,
+                            mutability: syn::FieldMutability::None,
+                            ident: None,
+                            colon_token: None,
+                            ty: syn::parse_quote!(NonMaxU32),
+                        });
+                        punct
+                    },
+                }),
+                semi_token: None,
+            };
+
+            let skeleton =
+                StructSkeleton { name: name.clone(), is_foreign, file_id, item: item_struct };
+            Ok(Some((name, Skeleton::Struct(skeleton), is_meta)))
+        })
+        .ok()?
 }
 
 /// Get name of type, and whether it has an `#[ast_meta]` attribute on it.
@@ -202,14 +258,14 @@ fn parse_ast_attr_foreign_name(attr: &Attribute, ident: &Ident) -> Option<String
 
     let mut foreign_name = None;
     for meta in &metas {
-        if let Meta::NameValue(name_value) = meta {
-            if name_value.path.is_ident("foreign") {
-                assert!(
-                    foreign_name.is_none(),
-                    "Multiple `#[ast(foreign)]` attributes on type: `{ident}`"
-                );
-                foreign_name = Some(convert_expr_to_string(&name_value.value));
-            }
+        if let Meta::NameValue(name_value) = meta
+            && name_value.path.is_ident("foreign")
+        {
+            assert!(
+                foreign_name.is_none(),
+                "Multiple `#[ast(foreign)]` attributes on type: `{ident}`"
+            );
+            foreign_name = Some(convert_expr_to_string(&name_value.value));
         }
     }
     foreign_name

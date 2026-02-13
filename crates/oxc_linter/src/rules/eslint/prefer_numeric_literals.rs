@@ -8,7 +8,6 @@ use oxc_ast::{
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
-use phf::{Map, phf_map, phf_ordered_set};
 
 use crate::{AstNode, ast_util::get_symbol_id_of_variable, context::LintContext, rule::Rule};
 
@@ -20,11 +19,14 @@ fn prefer_numeric_literals_diagnostic(span: Span, prefix_name: &str) -> OxcDiagn
 #[derive(Debug, Default, Clone)]
 pub struct PreferNumericLiterals;
 
-const RADIX_MAP: Map<&'static str, phf::OrderedSet<&'static str>> = phf_map! {
-    "2" => phf_ordered_set!{"binary", "0b"},
-    "8" => phf_ordered_set!{"octal", "0o"},
-    "16" => phf_ordered_set!{"hexadecimal", "0x"},
-};
+fn radix_map(base: &str) -> Option<(&'static str, &'static str)> {
+    match base {
+        "2" => Some(("binary", "0b")),
+        "8" => Some(("octal", "0o")),
+        "16" => Some(("hexadecimal", "0x")),
+        _ => None,
+    }
+}
 
 declare_oxc_lint!(
     /// ### What it does
@@ -36,7 +38,7 @@ declare_oxc_lint!(
     ///
     /// The parseInt() and Number.parseInt() functions can be used to turn binary, octal, and
     /// hexadecimal strings into integers. As binary, octal, and hexadecimal literals are supported
-    /// in ES6, this rule encourages use of those numeric literals instead of parseInt() or
+    /// in ES2015, this rule encourages use of those numeric literals instead of parseInt() or
     /// Number.parseInt().
     ///
     /// ### Examples
@@ -75,23 +77,19 @@ impl Rule for PreferNumericLiterals {
                         check_arguments(call_expr, ctx);
                     }
                 } else if let Expression::ParenthesizedExpression(paren_expr) = &member_expr.object
+                    && let Expression::Identifier(ident) = &paren_expr.expression
+                    && is_parse_int_call(ctx, ident, Some(member_expr))
                 {
-                    if let Expression::Identifier(ident) = &paren_expr.expression {
-                        if is_parse_int_call(ctx, ident, Some(member_expr)) {
-                            check_arguments(call_expr, ctx);
-                        }
-                    }
+                    check_arguments(call_expr, ctx);
                 }
             }
             Expression::ChainExpression(chain_expr) => {
                 if let Some(MemberExpression::StaticMemberExpression(member_expr)) =
                     chain_expr.expression.as_member_expression()
+                    && let Expression::Identifier(ident) = &member_expr.object
+                    && is_parse_int_call(ctx, ident, Some(member_expr))
                 {
-                    if let Expression::Identifier(ident) = &member_expr.object {
-                        if is_parse_int_call(ctx, ident, Some(member_expr)) {
-                            check_arguments(call_expr, ctx);
-                        }
-                    }
+                    check_arguments(call_expr, ctx);
                 }
             }
             _ => {}
@@ -137,10 +135,7 @@ fn check_arguments<'a>(call_expr: &CallExpression<'a>, ctx: &LintContext<'a>) {
     };
 
     let raw = numeric_lit.raw.as_ref().unwrap().as_str();
-    if let Some(name_prefix_set) = RADIX_MAP.get(raw) {
-        let name = name_prefix_set.index(0).unwrap();
-        let prefix = name_prefix_set.index(1).unwrap();
-
+    if let Some((name, prefix)) = radix_map(raw) {
         match is_fixable(call_expr, raw) {
             Ok(argument) => {
                 ctx.diagnostic_with_fix(

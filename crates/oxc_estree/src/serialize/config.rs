@@ -7,11 +7,12 @@ pub trait Config {
 
     fn new(ranges: bool) -> Self;
 
-    /// Whether to include range information in the serialized output
+    /// Get whether output should contain `range` fields.
     fn ranges(&self) -> bool;
 }
 
 /// Config for serializing AST with TypeScript fields.
+#[repr(transparent)]
 pub struct ConfigTS {
     ranges: bool,
 }
@@ -32,6 +33,7 @@ impl Config for ConfigTS {
 }
 
 /// Config for serializing AST without TypeScript fields.
+#[repr(transparent)]
 pub struct ConfigJS {
     ranges: bool,
 }
@@ -52,6 +54,7 @@ impl Config for ConfigJS {
 }
 
 /// Config for serializing AST with TypeScript fields, with fixes.
+#[repr(transparent)]
 pub struct ConfigFixesTS {
     ranges: bool,
 }
@@ -72,6 +75,7 @@ impl Config for ConfigFixesTS {
 }
 
 /// Config for serializing AST without TypeScript fields, with fixes.
+#[repr(transparent)]
 pub struct ConfigFixesJS {
     ranges: bool,
 }

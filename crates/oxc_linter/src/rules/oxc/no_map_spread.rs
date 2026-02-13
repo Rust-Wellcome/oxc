@@ -1,5 +1,6 @@
 use std::ops::Deref;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use oxc_ast::{
@@ -20,8 +21,7 @@ use crate::{
     ast_util::{is_method_call, leftmost_identifier_reference},
     context::LintContext,
     fixer::{RuleFix, RuleFixer},
-    rule::Rule,
-    utils::default_true,
+    rule::{DefaultRuleConfig, Rule},
 };
 
 fn no_map_spread_diagnostic(
@@ -63,16 +63,13 @@ fn no_map_spread_diagnostic(
     diagnostic.and_labels(others).and_labels(returned_label)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct NoMapSpreadConfig {
     /// Ignore mapped arrays that are re-read after the `map` call.
     ///
     /// Re-used arrays may rely on shallow copying behavior to avoid mutations.
     /// In these cases, `Object.assign` is not really more performant than spreads.
-    ///
-    /// Default: `true`
-    #[serde(default = "default_true")]
     ignore_rereads: bool,
     /// Ignore maps on arrays passed as parameters to a function.
     ///
@@ -80,7 +77,7 @@ pub struct NoMapSpreadConfig {
     /// comes at the cost of potentially missing spreads that are inefficient.
     /// We recommend turning this off in your `.oxlintrc.json` files.
     ///
-    /// ### Example
+    /// #### Examples
     ///
     /// Examples of **incorrect** code for this rule when `ignoreArgs` is `true`:
     /// ```ts
@@ -98,17 +95,15 @@ pub struct NoMapSpreadConfig {
     ///     return arr.map(x => ({ ...x }));
     /// }
     /// ```
-    ///
-    /// Default: `true`
-    #[serde(default = "default_true")]
     ignore_args: bool,
     // todo: ignore_arrays?
 }
 
 // NOTE: not boxing the config for now because of how small it is. If we add
 // more than 16 bytes of options, we need to add a box back.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct NoMapSpread(NoMapSpreadConfig);
+
 impl Deref for NoMapSpread {
     type Target = NoMapSpreadConfig;
 
@@ -312,23 +307,16 @@ declare_oxc_lint!(
     /// - [JSPerf - `concat` vs array spread performance](https://jsperf.app/pihevu)
     NoMapSpread,
     oxc,
-    nursery, // TODO: make this `perf` once we've battle-tested this a bit
-    conditional_fix_suggestion
+    perf,
+    conditional_fix_suggestion,
+    config = NoMapSpreadConfig,
 );
 
 const MAP_FN_NAMES: [&str; 2] = ["map", "flatMap"];
 
 impl Rule for NoMapSpread {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let config: NoMapSpreadConfig = value
-            .get(0)
-            .map(|obj| {
-                serde_json::from_value(obj.clone())
-                    .expect("Invalid configuration for `oxc/no-map-spread`")
-            })
-            .unwrap_or_default();
-
-        Self::from(config)
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -469,7 +457,7 @@ fn get_map_callback<'a, 'b>(call_expr: &'b CallExpression<'a>) -> Option<&'b Exp
 fn fix_spread_to_object_assign<'a>(
     fixer: RuleFixer<'_, 'a>,
     obj: &ObjectExpression<'a>,
-) -> RuleFix<'a> {
+) -> RuleFix {
     use oxc_allocator::{Allocator, CloneIn};
     use oxc_ast::AstBuilder;
     use oxc_codegen::CodegenOptions;

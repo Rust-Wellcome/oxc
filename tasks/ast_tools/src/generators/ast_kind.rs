@@ -10,7 +10,6 @@
 //! Variants of `AstKind` and `AstType` are created for:
 //!
 //! * All structs which are visited, and are not listed in `STRUCTS_BLACK_LIST` below.
-//! * Enums listed in `ENUMS_WHITE_LIST` below.
 
 use quote::{format_ident, quote};
 
@@ -26,32 +25,17 @@ use super::define_generator;
 /// Structs to omit creating an `AstKind` for.
 ///
 /// Apart from this list, every struct with `#[ast(visit)]` attr gets an `AstKind`.
-const STRUCTS_BLACK_LIST: &[&str] = &[
-    "TemplateElement",
-    "AssignmentTargetRest",
-    "AssignmentTargetPropertyIdentifier",
-    "AssignmentTargetPropertyProperty",
-    "BindingPattern",
-    "BindingProperty",
-    "TSInterfaceBody",
-    "TSIndexSignature",
-    "TSFunctionType",
-    "TSConstructorType",
-    "Span",
-];
-
-/// Enums to create an `AstKind` for.
 ///
-/// Apart from this list, enums don't have `AstKind`s.
-const ENUMS_WHITE_LIST: &[&str] = &[
-    "PropertyKey",
-    "Argument",
-    "AssignmentTarget",
-    "SimpleAssignmentTarget",
-    "AssignmentTargetPattern",
-    "ModuleDeclaration",
-    "TSTypeName",
-];
+/// `Span` is a special case:
+///
+/// * `Span` we don't want to have an `AstKind` because it's not an AST node.
+///   Once we have `NodeId` stored in AST types, it won't need to be visited.
+///   So then it won't get an `AstKind` automatically, and can be removed from this blacklist.
+///
+/// This should continue to be blacklisted for now.
+///
+/// See also: <https://github.com/oxc-project/oxc/issues/11490>
+const STRUCTS_BLACK_LIST: &[&str] = &["Span"];
 
 /// Generator for `AstKind`, `AstType`, and related code.
 pub struct AstKindGenerator;
@@ -83,20 +67,6 @@ impl Generator for AstKindGenerator {
                 struct_def.name()
             );
             struct_def.kind.has_kind = false;
-        }
-
-        // Set `has_kind = true` for enums in white list
-        for &type_name in ENUMS_WHITE_LIST {
-            let type_def = schema.type_by_name_mut(type_name);
-            let TypeDef::Enum(enum_def) = type_def else {
-                panic!("Type which isn't an enum `{}` in `ENUMS_WHITE_LIST`", type_def.name());
-            };
-            assert!(
-                enum_def.visit.has_visitor(),
-                "Enum `{}` is not visited, cannot have an `AstKind`",
-                enum_def.name()
-            );
-            enum_def.kind.has_kind = true;
         }
     }
 
@@ -130,7 +100,7 @@ impl Generator for AstKindGenerator {
             span_match_arms.extend(quote!( Self::#type_ident(it) => it.span(), ));
 
             let get_address = match type_def {
-                TypeDef::Struct(_) => quote!(Address::from_ptr(it)),
+                TypeDef::Struct(_) => quote!(it.unstable_address()),
                 TypeDef::Enum(_) => quote!(it.address()),
                 _ => unreachable!(),
             };
@@ -152,6 +122,8 @@ impl Generator for AstKindGenerator {
             next_index += 1;
         }
 
+        let ast_type_max = number_lit(next_index - 1);
+
         let output = quote! {
             #![expect(missing_docs)] ///@ FIXME (in ast_tools/src/generators/ast_kind.rs)
 
@@ -159,11 +131,15 @@ impl Generator for AstKindGenerator {
             use std::ptr;
 
             ///@@line_break
-            use oxc_allocator::{Address, GetAddress};
+            use oxc_allocator::{Address, GetAddress, UnstableAddress};
             use oxc_span::{GetSpan, Span};
 
             ///@@line_break
             use crate::ast::*;
+
+            ///@@line_break
+            /// The largest integer value that can be mapped to an `AstType`/`AstKind` enum variant.
+            pub const AST_TYPE_MAX: u8 = #ast_type_max;
 
             ///@@line_break
             #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

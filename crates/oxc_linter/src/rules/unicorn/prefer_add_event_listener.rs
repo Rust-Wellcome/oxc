@@ -71,6 +71,14 @@ impl Rule for PreferAddEventListener {
     }
 }
 
+// Can refer to the following sources for the list of event handler names, compare
+// this array against any new `onx` functions introduced in browsers:
+// - https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Global_attributes#list_of_global_event_handler_attributes
+// - https://github.com/mdn/browser-compat-data/blob/d5d5f2e21ef3f798784d1f5f75bde7c7f10f250e/api/Element.json
+// - https://github.com/microsoft/TypeScript-DOM-lib-generator/blob/f915ac0c987300d75af41bfe4a34bb29a0fb941f/baselines/dom.generated.d.ts
+//
+// Please avoid adding new events that are not implemented in at least two major browser engines!
+// Last updated: Nov 2025
 const DOM_EVENT_TYPE_NAMES: phf::Set<&'static str> = phf::phf_set![
     "AnimationEnd",
     "AnimationIteration",
@@ -104,9 +112,10 @@ const DOM_EVENT_TYPE_NAMES: phf::Set<&'static str> = phf::phf_set![
     "activate",
     "afterblur",
     "afterprint",
-    "animationEnd",
-    "animationStart",
+    "animationcancel",
+    "animationend",
     "animationiteration",
+    "animationstart",
     "appinstalled",
     "auxclick",
     "beforeblur",
@@ -114,8 +123,10 @@ const DOM_EVENT_TYPE_NAMES: phf::Set<&'static str> = phf::phf_set![
     "beforecut",
     "beforeinput",
     "beforeinstallprompt",
+    "beforematch",
     "beforepaste",
     "beforeprint",
+    "beforetoggle",
     "beforeunload",
     "blur",
     "cancel",
@@ -129,9 +140,12 @@ const DOM_EVENT_TYPE_NAMES: phf::Set<&'static str> = phf::phf_set![
     "compositionupdate",
     "connect",
     "consolemessage",
+    "contextlost",
     "contextmenu",
+    "contextrestored",
     "controllerchange",
     "copy",
+    "cuechange",
     "cut",
     "dblclick",
     "deactivate",
@@ -157,6 +171,7 @@ const DOM_EVENT_TYPE_NAMES: phf::Set<&'static str> = phf::phf_set![
     "focusin",
     "focusout",
     "foreignfetch",
+    "formdata",
     "fullscreenchange",
     "gotpointercapture",
     "hashchange",
@@ -208,6 +223,7 @@ const DOM_EVENT_TYPE_NAMES: phf::Set<&'static str> = phf::phf_set![
     "pointermove",
     "pointerout",
     "pointerover",
+    "pointerrawupdate",
     "pointerup",
     "popstate",
     "progress",
@@ -219,7 +235,9 @@ const DOM_EVENT_TYPE_NAMES: phf::Set<&'static str> = phf::phf_set![
     "responsive",
     "rightclick",
     "scroll",
+    "scrollend",
     "search",
+    "securitypolicyviolation",
     "seeked",
     "seeking",
     "select",
@@ -227,6 +245,7 @@ const DOM_EVENT_TYPE_NAMES: phf::Set<&'static str> = phf::phf_set![
     "selectstart",
     "show",
     "sizechanged",
+    "slotchange",
     "sourceclosed",
     "sourceended",
     "sourceopen",
@@ -236,15 +255,18 @@ const DOM_EVENT_TYPE_NAMES: phf::Set<&'static str> = phf::phf_set![
     "submit",
     "suspend",
     "text",
-    "textInput",
     "textinput",
+    "textInput",
     "timeupdate",
     "toggle",
     "touchcancel",
     "touchend",
     "touchmove",
     "touchstart",
+    "transitioncancel",
     "transitionend",
+    "transitionrun",
+    "transitionstart",
     "unload",
     "unresponsive",
     "update",
@@ -263,39 +285,45 @@ fn test() {
     use crate::tester::Tester;
 
     let pass = vec![
-        (r"foo.addEventListener('click', () => {})", None),
-        (r"foo.removeEventListener('click', onClick)", None),
-        (r"foo.onclick", None),
-        (r"foo[onclick] = () => {}", None),
-        (r#"foo["onclick"] = () => {}"#, None),
-        (r"foo.onunknown = () => {}", None),
-        (r"foo.setCallBack = () => {console.log('foo')}", None),
-        (r"setCallBack = () => {console.log('foo')}", None),
-        (r"foo.onclick.bar = () => {}", None),
-        (r"foo['x'] = true;", None),
+        "foo.addEventListener('click', () => {})",
+        "foo.removeEventListener('click', onClick)",
+        "foo.onclick",
+        "foo[onclick] = () => {}",
+        r#"foo["onclick"] = () => {}"#,
+        "foo.onunknown = () => {}",
+        "foo.setCallBack = () => {console.log('foo')}",
+        "setCallBack = () => {console.log('foo')}",
+        "foo.onclick.bar = () => {}",
+        "foo['x'] = true;",
     ];
 
     let fail = vec![
-        (r"foo.onclick = () => {}", None),
-        (r"foo.onclick = 1", None),
-        (r"foo.bar.onclick = onClick", None),
-        (r"const bar = null; foo.onclick = bar;", None),
-        (r"foo.onkeydown = () => {}", None),
-        (r"foo.ondragend = () => {}", None),
-        (r"foo.onclick = null", None),
-        (r"foo.onclick = undefined", None),
-        (r"window.onbeforeunload = null", None),
-        (r"window.onbeforeunload = undefined", None),
-        (r"window.onbeforeunload = foo", None),
-        (r"window.onbeforeunload = () => 'foo'", None),
-        (r"myWorker.port.onmessage = function(e) {}", None),
-        (r"((foo)).onclick = ((0, listener))", None),
-        (r"window.onload = window.onunload = function() {};", None),
-        (r"window.onunload ??= function() {};", None),
-        (r"window.onunload ||= function() {};", None),
-        (r"window.onunload += function() {};", None),
-        (r"(el as HTMLElement).onmouseenter = onAnchorMouseEnter;", None),
+        "foo.onclick = () => {}",
+        "foo.onclick = 1",
+        "foo.bar.onclick = onClick",
+        "const bar = null; foo.onclick = bar;",
+        "foo.onkeydown = () => {}",
+        "foo.ondragend = () => {}",
+        "foo.onclick = null",
+        "foo.onclick = undefined",
+        "window.onbeforeunload = null",
+        "window.onbeforeunload = undefined",
+        "window.onbeforeunload = foo",
+        "window.onbeforeunload = () => 'foo'",
+        "myWorker.port.onmessage = function(e) {}",
+        "((foo)).onclick = ((0, listener))",
+        "window.onload = window.onunload = function() {};",
+        "window.onunload ??= function() {};",
+        "window.onunload ||= function() {};",
+        "window.onunload += function() {};",
+        "(el as HTMLElement).onmouseenter = onAnchorMouseEnter;",
     ];
+
+    // TODO: Implement autofix and use these tests.
+    // let _fix = vec![(
+    //     "(el as HTMLElement).onmouseenter = onAnchorMouseEnter;",
+    //     "(el as HTMLElement).addEventListener('mouseenter', onAnchorMouseEnter);",
+    // )];
 
     Tester::new(PreferAddEventListener::NAME, PreferAddEventListener::PLUGIN, pass, fail)
         .test_and_snapshot();

@@ -1,4 +1,4 @@
-use oxc_allocator::{Box as ArenaBox, CloneIn, Vec as ArenaVec};
+use oxc_allocator::{Allocator, Box as ArenaBox, CloneIn, Vec as ArenaVec};
 use oxc_ast::{NONE, ast::*};
 use oxc_span::{ContentEq, GetSpan, SPAN};
 
@@ -9,6 +9,27 @@ use crate::{
         method_must_have_explicit_return_type, property_must_have_explicit_type,
     },
 };
+
+struct AccessorAnnotation<'a> {
+    setter: Option<ArenaBox<'a, TSTypeAnnotation<'a>>>,
+    getter: Option<ArenaBox<'a, TSTypeAnnotation<'a>>>,
+}
+
+impl<'a> AccessorAnnotation<'a> {
+    fn get_setter_annotation(
+        &self,
+        allocator: &'a Allocator,
+    ) -> Option<ArenaBox<'a, TSTypeAnnotation<'a>>> {
+        self.setter.as_ref().or(self.getter.as_ref()).map(|t| t.clone_in(allocator))
+    }
+
+    fn get_getter_annotation(
+        &self,
+        allocator: &'a Allocator,
+    ) -> Option<ArenaBox<'a, TSTypeAnnotation<'a>>> {
+        self.getter.as_ref().or(self.setter.as_ref()).map(|t| t.clone_in(allocator))
+    }
+}
 
 impl<'a> IsolatedDeclarations<'a> {
     pub(crate) fn is_literal_key(key: &PropertyKey<'a>) -> bool {
@@ -211,7 +232,7 @@ impl<'a> IsolatedDeclarations<'a> {
             false,
             false,
             param.r#override,
-            param.pattern.optional,
+            param.optional,
             false,
             param.readonly,
             Self::transform_accessibility(param.accessibility),
@@ -249,32 +270,47 @@ impl<'a> IsolatedDeclarations<'a> {
             }
             MethodDefinitionKind::Set => {
                 let params = self.create_formal_parameters(
-                    self.ast.binding_pattern_kind_binding_identifier(SPAN, "value"),
+                    self.ast.binding_pattern_binding_identifier(SPAN, "value"),
                 );
                 self.transform_class_method_definition(method, params, None)
             }
         }
     }
 
-    fn transform_constructor_params_to_class_properties(
+    /// Transform constructor parameters to class properties.
+    ///
+    /// For example:
+    ///
+    /// `class C { constructor(public x: string) {} }`
+    ///
+    /// to
+    ///
+    /// `class C { public x: string; constructor(x: string) {} }`
+    fn transform_constructor_parameter_properties(
         &self,
         function: &Function<'a>,
-        params: &FormalParameters<'a>,
+        typed_params: &FormalParameters<'a>,
     ) -> ArenaVec<'a, ClassElement<'a>> {
         self.ast.vec_from_iter(
             function
                 .params
                 .items
                 .iter()
-                .filter(|param| param.has_modifier())
+                .filter(|param| {
+                    // To follow up `transform_formal_parameters`'s behavior
+                    typed_params.items.len() == function.params.items.len() || param.has_modifier()
+                })
                 .enumerate()
                 .filter_map(|(index, param)| {
+                    if !param.has_modifier() {
+                        return None;
+                    }
                     let type_annotation =
                         if param.accessibility.is_some_and(TSAccessibility::is_private) {
                             None
                         } else {
                             // transformed params will definitely have type annotation
-                            params.items[index].pattern.type_annotation.clone_in(self.ast.allocator)
+                            typed_params.items[index].type_annotation.clone_in(self.ast.allocator)
                         };
                     self.transform_formal_parameter_to_class_property(param, type_annotation)
                 }),
@@ -294,8 +330,8 @@ impl<'a> IsolatedDeclarations<'a> {
     fn collect_accessor_annotations(
         &self,
         decl: &Class<'a>,
-    ) -> Vec<(PropertyKey<'a>, ArenaBox<'a, TSTypeAnnotation<'a>>)> {
-        let mut method_annotations = Vec::new();
+    ) -> Vec<(PropertyKey<'a>, AccessorAnnotation<'a>)> {
+        let mut method_annotations: Vec<(PropertyKey<'_>, AccessorAnnotation<'_>)> = Vec::new();
         for element in &decl.body.body {
             if let ClassElement::MethodDefinition(method) = element {
                 if (method.key.is_private_identifier()
@@ -311,17 +347,35 @@ impl<'a> IsolatedDeclarations<'a> {
                             continue;
                         };
                         if let Some(annotation) =
-                            first_param.pattern.type_annotation.clone_in(self.ast.allocator)
+                            first_param.type_annotation.clone_in(self.ast.allocator)
                         {
-                            method_annotations
-                                .push((method.key.clone_in(self.ast.allocator), annotation));
+                            if let Some(entry) = method_annotations
+                                .iter_mut()
+                                .find(|(key, _)| method.key.content_eq(key))
+                            {
+                                entry.1.setter = Some(annotation);
+                            } else {
+                                method_annotations.push((
+                                    method.key.clone_in(self.ast.allocator),
+                                    AccessorAnnotation { setter: Some(annotation), getter: None },
+                                ));
+                            }
                         }
                     }
                     MethodDefinitionKind::Get => {
                         let function = &method.value;
                         if let Some(annotation) = self.infer_function_return_type(function) {
-                            method_annotations
-                                .push((method.key.clone_in(self.ast.allocator), annotation));
+                            if let Some(entry) = method_annotations
+                                .iter_mut()
+                                .find(|(key, _)| method.key.content_eq(key))
+                            {
+                                entry.1.getter = Some(annotation);
+                            } else {
+                                method_annotations.push((
+                                    method.key.clone_in(self.ast.allocator),
+                                    AccessorAnnotation { setter: None, getter: Some(annotation) },
+                                ));
+                            }
                         }
                     }
                     _ => {}
@@ -392,22 +446,24 @@ impl<'a> IsolatedDeclarations<'a> {
                             let params = &method.value.params;
                             if params.items.is_empty() {
                                 self.create_formal_parameters(
-                                    self.ast.binding_pattern_kind_binding_identifier(SPAN, "value"),
+                                    self.ast.binding_pattern_binding_identifier(SPAN, "value"),
                                 )
                             } else {
                                 let mut params = params.clone_in(self.ast.allocator);
-                                if let Some(param) = params.items.first_mut() {
-                                    if let Some(annotation) =
+                                if let Some(param) = params.items.first_mut()
+                                    && let Some(annotation) =
                                         accessor_annotations.iter().find_map(|(key, annotation)| {
                                             if method.key.content_eq(key) {
-                                                Some(annotation.clone_in(self.ast.allocator))
+                                                Some(
+                                                    annotation
+                                                        .get_setter_annotation(self.ast.allocator),
+                                                )
                                             } else {
                                                 None
                                             }
                                         })
-                                    {
-                                        param.pattern.type_annotation = Some(annotation);
-                                    }
+                                {
+                                    param.type_annotation = annotation;
                                 }
                                 params
                             }
@@ -420,9 +476,7 @@ impl<'a> IsolatedDeclarations<'a> {
                                 self.transform_formal_parameters(&function.params, is_private);
                             elements.splice(
                                 0..0,
-                                self.transform_constructor_params_to_class_properties(
-                                    function, &params,
-                                ),
+                                self.transform_constructor_parameter_properties(function, &params),
                             );
 
                             if is_function_overloads && function.body.is_some() {
@@ -461,7 +515,13 @@ impl<'a> IsolatedDeclarations<'a> {
                         MethodDefinitionKind::Get => {
                             let rt = accessor_annotations.iter().find_map(|(key, annotation)| {
                                 if method.key.content_eq(key) {
-                                    Some(annotation.clone_in(self.ast.allocator))
+                                    // No explicit return type for getter, should infer it from the first parameter of setter, if not exists,
+                                    // use the inferred return type of getter.
+                                    if method.value.return_type.is_none() {
+                                        annotation.get_setter_annotation(self.ast.allocator)
+                                    } else {
+                                        annotation.get_getter_annotation(self.ast.allocator)
+                                    }
                                 } else {
                                     None
                                 }
@@ -573,11 +633,19 @@ impl<'a> IsolatedDeclarations<'a> {
 
     pub(crate) fn create_formal_parameters(
         &self,
-        kind: BindingPatternKind<'a>,
+        kind: BindingPattern<'a>,
     ) -> ArenaBox<'a, FormalParameters<'a>> {
-        let pattern = self.ast.binding_pattern(kind, NONE, false);
-        let parameter =
-            self.ast.formal_parameter(SPAN, self.ast.vec(), pattern, None, false, false);
+        let parameter = self.ast.formal_parameter(
+            SPAN,
+            self.ast.vec(),
+            kind,
+            NONE,
+            NONE,
+            false,
+            None,
+            false,
+            false,
+        );
         let items = self.ast.vec1(parameter);
         self.ast.alloc_formal_parameters(SPAN, FormalParameterKind::Signature, items, NONE)
     }

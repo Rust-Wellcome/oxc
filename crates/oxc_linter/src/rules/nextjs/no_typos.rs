@@ -1,6 +1,6 @@
 use oxc_ast::{
     AstKind,
-    ast::{BindingPatternKind, Declaration, ModuleDeclaration},
+    ast::{BindingPattern, Declaration},
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
@@ -10,11 +10,12 @@ use crate::{
     AstNode,
     context::{ContextHost, LintContext},
     rule::Rule,
+    utils::best_match,
 };
 
 fn no_typos_diagnostic(typo: &str, suggestion: &str, span: Span) -> OxcDiagnostic {
-    OxcDiagnostic::warn(format!("{typo} may be a typo. Did you mean {suggestion}?"))
-        .with_help("Prevent common typos in Next.js's data fetching functions")
+    OxcDiagnostic::warn(format!("`{typo}` may be a typo. Did you mean `{suggestion}`?"))
+        .with_help(format!("Change `{typo}` to `{suggestion}`"))
         .with_label(span)
 }
 
@@ -24,10 +25,11 @@ pub struct NoTypos;
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// Prevent common typos in Next.js's data fetching functions
+    /// Detects common typos in Next.js data fetching function names.
     ///
     /// ### Why is this bad?
     ///
+    /// Next.js will not call incorrectly named data fetching functions, causing pages to render without expected data.
     ///
     /// ### Examples
     ///
@@ -56,102 +58,50 @@ const NEXTJS_DATA_FETCHING_FUNCTIONS: [&str; 3] =
     ["getStaticProps", "getStaticPaths", "getServerSideProps"];
 
 // 0 is the exact match
-const THRESHOLD: i32 = 1;
+const THRESHOLD: usize = 1;
 
 impl Rule for NoTypos {
     fn should_run(&self, ctx: &ContextHost) -> bool {
-        let Some(path) = ctx.file_path().to_str() else {
-            return false;
-        };
-        let Some(path_after_pages) = path.split("pages").nth(1) else {
-            return false;
-        };
-        if path_after_pages.starts_with("/api") {
-            return false;
+        let path = ctx.file_path();
+        let mut found_pages = false;
+        for component in path.components() {
+            if found_pages {
+                return component.as_os_str() != "api";
+            }
+            if component.as_os_str() == "pages" {
+                found_pages = true;
+            }
         }
-        true
+        false
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
-        if let AstKind::ModuleDeclaration(ModuleDeclaration::ExportNamedDeclaration(en_decl)) =
-            node.kind()
+        if let AstKind::ExportNamedDeclaration(en_decl) = node.kind()
+            && let Some(decl) = &en_decl.declaration
         {
-            if let Some(decl) = &en_decl.declaration {
-                match decl {
-                    Declaration::VariableDeclaration(decl) => {
-                        for decl in &decl.declarations {
-                            let BindingPatternKind::BindingIdentifier(id) = &decl.id.kind else {
-                                continue;
-                            };
-                            let Some(potential_typo) = get_potential_typo(&id.name) else {
-                                continue;
-                            };
-                            ctx.diagnostic(no_typos_diagnostic(
-                                id.name.as_str(),
-                                potential_typo,
-                                id.span,
-                            ));
+            match decl {
+                Declaration::VariableDeclaration(decl) => {
+                    for decl in &decl.declarations {
+                        if let BindingPattern::BindingIdentifier(id) = &decl.id {
+                            check_function_name(&id.name, id.span, ctx);
                         }
                     }
-                    Declaration::FunctionDeclaration(decl) => {
-                        let Some(id) = &decl.id else { return };
-                        let Some(potential_typo) = get_potential_typo(&id.name) else {
-                            return;
-                        };
-                        ctx.diagnostic(no_typos_diagnostic(
-                            id.name.as_str(),
-                            potential_typo,
-                            id.span,
-                        ));
-                    }
-                    _ => {}
                 }
+                Declaration::FunctionDeclaration(decl) => {
+                    if let Some(id) = &decl.id {
+                        check_function_name(&id.name, id.span, ctx);
+                    }
+                }
+                _ => {}
             }
         }
     }
 }
 
-fn get_potential_typo(fn_name: &str) -> Option<&str> {
-    let mut potential_typos: Vec<_> = NEXTJS_DATA_FETCHING_FUNCTIONS
-        .iter()
-        .map(|&o| {
-            let distance = min_distance(o, fn_name);
-            (o, distance)
-        })
-        .filter(|&(_, distance)| distance <= THRESHOLD as usize && distance > 0)
-        .collect();
-
-    potential_typos.sort_by(|a, b| a.1.cmp(&b.1));
-
-    potential_typos.first().map(|(option, _)| *option)
-}
-
-// the minimum number of operations required to convert string a to string b.
-fn min_distance(a: &str, b: &str) -> usize {
-    let m = a.len();
-    let n = b.len();
-
-    if m < n {
-        return min_distance(b, a);
+fn check_function_name(name: &str, span: Span, ctx: &LintContext) {
+    if let Some(suggestion) = best_match(name, NEXTJS_DATA_FETCHING_FUNCTIONS, THRESHOLD) {
+        ctx.diagnostic(no_typos_diagnostic(name, suggestion, span));
     }
-
-    if n == 0 {
-        return m;
-    }
-
-    let mut previous_row: Vec<usize> = (0..=n).collect();
-
-    for (i, s1) in a.char_indices() {
-        let mut current_row = vec![i + 1];
-        for (j, s2) in b.char_indices() {
-            let insertions = previous_row[j + 1] + 1;
-            let deletions = current_row[j] + 1;
-            let substitutions = previous_row[j] + usize::from(s1 != s2);
-            current_row.push(insertions.min(deletions).min(substitutions));
-        }
-        previous_row = current_row;
-    }
-    previous_row[n]
 }
 
 #[test]
@@ -244,16 +194,16 @@ fn test() {
         ),
         // even though there is a typo match, this should not fail because a file is inside pages/api directory
         (
-            r"
-                export default function Page() {
-                return <div></div>;
-                }
-                export const getStaticpaths = async () => {};
-                export const getStaticProps = async () => {};
-            ",
+            r"export const getStaticpaths = async () => {};",
             None,
             None,
             Some(PathBuf::from("pages/api/test.tsx")),
+        ),
+        (
+            r"export const getStaticpaths = async () => {};",
+            None,
+            None,
+            Some(PathBuf::from("pages\\api\\test.tsx")),
         ),
     ];
 

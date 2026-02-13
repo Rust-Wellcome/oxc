@@ -1,10 +1,64 @@
+use std::borrow::Cow;
+
 use bitflags::bitflags;
 use schemars::{JsonSchema, r#gen::SchemaGenerator, schema::Schema};
-use serde::{
-    Deserialize, Serialize,
-    de::{self, Deserializer},
-    ser::Serializer,
-};
+use serde::{Deserialize, Serialize, de::Deserializer, ser::Serializer};
+
+/// Normalizes plugin names by stripping common ESLint plugin prefixes and suffixes.
+///
+/// This handles the various naming conventions used in the ESLint ecosystem:
+/// - `eslint-plugin-foo` → `foo`
+/// - `@scope/eslint-plugin` → `@scope`
+/// - `@scope/eslint-plugin-foo` → `@scope/foo`
+///
+/// This logic is replicated on JS side in `normalizePluginName` in `apps/oxlint/src-js/plugins/load.ts`.
+/// The 2 implementations must be kept in sync.
+///
+/// # Examples
+///
+/// ```
+/// use oxc_linter::normalize_plugin_name;
+///
+/// assert_eq!(normalize_plugin_name("eslint-plugin-react"), "react");
+/// assert_eq!(normalize_plugin_name("@typescript-eslint/eslint-plugin"), "@typescript-eslint");
+/// assert_eq!(normalize_plugin_name("@foo/eslint-plugin-bar"), "@foo/bar");
+/// ```
+pub fn normalize_plugin_name(plugin_name: &str) -> Cow<'_, str> {
+    // Handle scoped packages (@scope/...)
+    if let Some((scope, rest)) = plugin_name.split_once('/') {
+        // Check if it's @scope/eslint-plugin or @scope/eslint-plugin-something
+        if rest == "eslint-plugin" {
+            // @foo/eslint-plugin -> @foo
+            return Cow::Borrowed(scope);
+        } else if let Some(suffix) = rest.strip_prefix("eslint-plugin-") {
+            // @foo/eslint-plugin-bar -> @foo/bar
+            return Cow::Owned(format!("{scope}/{suffix}"));
+        }
+    }
+
+    // Handle non-scoped packages
+    if let Some(suffix) = plugin_name.strip_prefix("eslint-plugin-") {
+        // eslint-plugin-foo -> foo
+        return Cow::Borrowed(suffix);
+    }
+
+    // No normalization needed
+    Cow::Borrowed(plugin_name)
+}
+
+/// Checks if the given plugin name is valid.
+///
+/// Returns `true` if the given plugin name is already in its normalized form.
+///
+/// Returns `false` if it starts with `eslint-plugin-`, or is of the form `@scope/eslint-plugin`
+/// or `@scope/eslint-plugin-something`.
+pub fn is_normal_plugin_name(plugin_name: &str) -> bool {
+    let normalized = normalize_plugin_name(plugin_name);
+    match normalized {
+        Cow::Owned(_) => false,
+        Cow::Borrowed(normalized) => normalized.len() == plugin_name.len(),
+    }
+}
 
 bitflags! {
     // NOTE: may be increased to a u32 if needed
@@ -26,7 +80,7 @@ bitflags! {
         const JSDOC = 1 << 5;
         /// `eslint-plugin-jest`
         const JEST = 1 << 6;
-        /// `eslint-plugin-vitest`
+        /// `@vitest/eslint-plugin`
         const VITEST = 1 << 7;
         /// `eslint-plugin-jsx-a11y`
         const JSX_A11Y = 1 << 8;
@@ -38,11 +92,15 @@ bitflags! {
         const PROMISE = 1 << 11;
         /// `eslint-plugin-node`
         const NODE = 1 << 12;
+        /// `eslint-plugin-vue`
+        const VUE = 1 << 13;
     }
 }
+
 impl Default for LintPlugins {
     #[inline]
     fn default() -> Self {
+        // update `oxc_linter::table::RuleTable` when changing the defaults
         LintPlugins::UNICORN | LintPlugins::TYPESCRIPT | LintPlugins::OXC
     }
 }
@@ -63,7 +121,7 @@ impl LintPlugins {
     /// Returns `true` if Jest or Vitest plugins are enabled.
     #[inline]
     pub fn has_test(self) -> bool {
-        self.intersects(LintPlugins::JEST.union(LintPlugins::VITEST))
+        self.intersects(LintPlugins::JEST | LintPlugins::VITEST)
     }
 
     /// Returns `true` if the import plugin is enabled.
@@ -73,29 +131,37 @@ impl LintPlugins {
     }
 }
 
-impl From<&str> for LintPlugins {
-    fn from(value: &str) -> Self {
+impl TryFrom<&str> for LintPlugins {
+    type Error = ();
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        // Normalize plugin name first to handle eslint-plugin-* naming
+        let normalized = normalize_plugin_name(value);
+        let value = normalized.as_ref();
+
         match value {
-            "react" | "react-hooks" | "react_hooks" => LintPlugins::REACT,
-            "unicorn" => LintPlugins::UNICORN,
+            "react" | "react-hooks" | "react_hooks" => Ok(LintPlugins::REACT),
+            "unicorn" => Ok(LintPlugins::UNICORN),
             "typescript" | "typescript-eslint" | "typescript_eslint" | "@typescript-eslint" => {
-                LintPlugins::TYPESCRIPT
+                Ok(LintPlugins::TYPESCRIPT)
             }
             // deepscan for backwards compatibility. Those rules have been moved into oxc
-            "oxc" | "deepscan" => LintPlugins::OXC,
+            "oxc" | "deepscan" => Ok(LintPlugins::OXC),
             // import-x has the same rules but better performance
-            "import" | "import-x" => LintPlugins::IMPORT,
-            "jsdoc" => LintPlugins::JSDOC,
-            "jest" => LintPlugins::JEST,
-            "vitest" => LintPlugins::VITEST,
-            "jsx-a11y" | "jsx_a11y" => LintPlugins::JSX_A11Y,
-            "nextjs" => LintPlugins::NEXTJS,
-            "react-perf" | "react_perf" => LintPlugins::REACT_PERF,
-            "promise" => LintPlugins::PROMISE,
-            "node" => LintPlugins::NODE,
+            "import" | "import-x" => Ok(LintPlugins::IMPORT),
+            "jsdoc" => Ok(LintPlugins::JSDOC),
+            "jest" => Ok(LintPlugins::JEST),
+            "vitest" => Ok(LintPlugins::VITEST),
+            "jsx-a11y" | "jsx_a11y" => Ok(LintPlugins::JSX_A11Y),
+            "nextjs" => Ok(LintPlugins::NEXTJS),
+            "react-perf" | "react_perf" => Ok(LintPlugins::REACT_PERF),
+            "promise" => Ok(LintPlugins::PROMISE),
+            "node" => Ok(LintPlugins::NODE),
+            "vue" => Ok(LintPlugins::VUE),
             // "eslint" is not really a plugin, so it's 'empty'. This has the added benefit of
             // making it the default value.
-            _ => LintPlugins::empty(),
+            "eslint" => Ok(LintPlugins::ESLINT),
+            _ => Err(()),
         }
     }
 }
@@ -116,76 +182,46 @@ impl From<LintPlugins> for &'static str {
             LintPlugins::REACT_PERF => "react-perf",
             LintPlugins::PROMISE => "promise",
             LintPlugins::NODE => "node",
+            LintPlugins::VUE => "vue",
             _ => "",
         }
     }
 }
 
-impl<S: AsRef<str>> FromIterator<S> for LintPlugins {
-    fn from_iter<T: IntoIterator<Item = S>>(iter: T) -> Self {
-        iter.into_iter()
-            .map(|plugin| plugin.as_ref().into())
-            .fold(LintPlugins::empty(), LintPlugins::union)
-    }
-}
-
 impl<'de> Deserialize<'de> for LintPlugins {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct LintPluginsVisitor;
-        impl<'de> de::Visitor<'de> for LintPluginsVisitor {
-            type Value = LintPlugins;
+        let plugin_names: Vec<String> = Vec::deserialize(deserializer)?;
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a list of plugin names")
-            }
+        let mut lint_plugins = LintPlugins::empty();
 
-            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
-                Ok(LintPlugins::from(value))
-            }
-
-            fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(LintPlugins::from(v.as_str()))
-            }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: de::SeqAccess<'de>,
-            {
-                let mut plugins = LintPlugins::empty();
-                loop {
-                    // serde_json::from_str will provide an &str, while
-                    // serde_json::from_value provides a String. The former is
-                    // used in almost all cases, but the latter is more
-                    // convenient for test cases.
-                    match seq.next_element::<String>() {
-                        Ok(Some(next)) => {
-                            plugins |= next.as_str().into();
-                        }
-                        Ok(None) => break,
-                        Err(_) => match seq.next_element::<&str>() {
-                            Ok(Some(next)) => {
-                                plugins |= next.into();
-                            }
-                            Ok(None) | Err(_) => break,
-                        },
-                    }
-                }
-
-                Ok(plugins)
+        for plugin in &plugin_names {
+            if let Ok(plugin_flag) = LintPlugins::try_from(plugin.as_str()) {
+                lint_plugins |= plugin_flag;
+            } else {
+                return Err(serde::de::Error::custom(format!("Unknown plugin: '{plugin}'.")));
             }
         }
 
-        deserializer.deserialize_any(LintPluginsVisitor)
+        Ok(lint_plugins)
     }
 }
 
 impl Serialize for LintPlugins {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let vec: Vec<&str> = self.iter().map(Into::into).collect();
-        vec.serialize(serializer)
+        use serde::ser::SerializeSeq;
+
+        let mut seq = serializer.serialize_seq(Some(self.bits().count_ones() as usize))?;
+
+        for flag in LintPlugins::all().iter() {
+            if self.contains(flag) {
+                let s: &'static str = flag.into();
+                if !s.is_empty() {
+                    seq.serialize_element(s)?;
+                }
+            }
+        }
+
+        seq.end()
     }
 }
 
@@ -217,7 +253,134 @@ impl JsonSchema for LintPlugins {
             ReactPerf,
             Promise,
             Node,
+            Vue,
         }
-        r#gen.subschema_for::<Vec<LintPluginOptionsSchema>>()
+
+        let enum_schema = r#gen.subschema_for::<LintPluginOptionsSchema>();
+
+        let item_schema = Schema::Object(schemars::schema::SchemaObject {
+            subschemas: Some(Box::new(schemars::schema::SubschemaValidation {
+                any_of: Some(vec![enum_schema]),
+                ..Default::default()
+            })),
+            ..Default::default()
+        });
+
+        Schema::Object(schemars::schema::SchemaObject {
+            instance_type: Some(schemars::schema::SingleOrVec::Single(Box::new(
+                schemars::schema::InstanceType::Array,
+            ))),
+            array: Some(Box::new(schemars::schema::ArrayValidation {
+                items: Some(schemars::schema::SingleOrVec::Single(Box::new(item_schema))),
+                ..Default::default()
+            })),
+            ..Default::default()
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_plugins_default() {
+        let default = LintPlugins::default();
+        assert_eq!(default, LintPlugins::UNICORN | LintPlugins::TYPESCRIPT | LintPlugins::OXC);
+        assert!(!default.contains(LintPlugins::REACT));
+    }
+
+    #[test]
+    fn test_plugin_from_str() {
+        assert_eq!(LintPlugins::try_from("react"), Ok(LintPlugins::REACT));
+        assert_eq!(LintPlugins::try_from("typescript-eslint"), Ok(LintPlugins::TYPESCRIPT));
+        assert_eq!(LintPlugins::try_from("deepscan"), Ok(LintPlugins::OXC));
+        assert_eq!(LintPlugins::try_from("unknown"), Err(()));
+    }
+
+    #[test]
+    fn test_plugin_to_str() {
+        assert_eq!(<&'static str>::from(LintPlugins::REACT), "react");
+        assert_eq!(<&'static str>::from(LintPlugins::JEST), "jest");
+        assert_eq!(<&'static str>::from(LintPlugins::ESLINT), "");
+    }
+
+    #[test]
+    fn test_has_helpers() {
+        let plugins = LintPlugins::JEST | LintPlugins::IMPORT;
+        assert!(plugins.has_jest());
+        assert!(!plugins.has_vitest());
+        assert!(plugins.has_test());
+        assert!(plugins.has_import());
+    }
+
+    #[test]
+    fn test_serialize_lint_plugins() {
+        let plugins = LintPlugins::OXC | LintPlugins::REACT;
+        let json = serde_json::to_string(&plugins).unwrap();
+        let mut parsed = serde_json::from_str::<Vec<String>>(&json).unwrap();
+        parsed.sort_unstable();
+        assert_eq!(parsed, ["oxc", "react"]);
+    }
+
+    #[test]
+    fn test_deserialize_lint_plugins() {
+        // `eslint` is ignored
+        let json = r#"["react", "eslint", "jsdoc"]"#;
+        let plugins: LintPlugins = serde_json::from_str(json).unwrap();
+        assert_eq!(plugins, LintPlugins::REACT | LintPlugins::JSDOC);
+    }
+
+    #[test]
+    fn test_deserialize_lint_plugins_with_unknown_plugin() {
+        let json = r#"["react", "not-a-real-plugin"]"#;
+        let result = serde_json::from_str::<LintPlugins>(json);
+
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+        assert_eq!(error, "Unknown plugin: 'not-a-real-plugin'.");
+    }
+
+    #[test]
+    fn test_plugin_normalization() {
+        // Test eslint-plugin- prefix normalization
+        assert_eq!(LintPlugins::try_from("eslint-plugin-react"), Ok(LintPlugins::REACT));
+        assert_eq!(LintPlugins::try_from("eslint-plugin-unicorn"), Ok(LintPlugins::UNICORN));
+        assert_eq!(LintPlugins::try_from("eslint-plugin-import"), Ok(LintPlugins::IMPORT));
+        assert_eq!(LintPlugins::try_from("eslint-plugin-jest"), Ok(LintPlugins::JEST));
+
+        // Test @scope/eslint-plugin normalization
+        assert_eq!(
+            LintPlugins::try_from("@typescript-eslint/eslint-plugin"),
+            Ok(LintPlugins::TYPESCRIPT)
+        );
+
+        // Verify existing plugin names still work
+        assert_eq!(LintPlugins::try_from("react"), Ok(LintPlugins::REACT));
+        assert_eq!(LintPlugins::try_from("unicorn"), Ok(LintPlugins::UNICORN));
+        assert_eq!(LintPlugins::try_from("@typescript-eslint"), Ok(LintPlugins::TYPESCRIPT));
+
+        assert_eq!(LintPlugins::try_from("vitest"), Ok(LintPlugins::VITEST));
+        assert_eq!(LintPlugins::try_from("eslint-plugin-vitest"), Ok(LintPlugins::VITEST));
+    }
+
+    #[test]
+    fn test_normalize_plugin_name() {
+        use super::normalize_plugin_name;
+
+        // Test eslint-plugin- prefix stripping
+        assert_eq!(normalize_plugin_name("eslint-plugin-foo"), "foo");
+        assert_eq!(normalize_plugin_name("eslint-plugin-react"), "react");
+
+        // Test @scope/eslint-plugin suffix stripping
+        assert_eq!(normalize_plugin_name("@foo/eslint-plugin"), "@foo");
+        assert_eq!(normalize_plugin_name("@bar/eslint-plugin"), "@bar");
+
+        // Test @scope/eslint-plugin-name normalization
+        assert_eq!(normalize_plugin_name("@foo/eslint-plugin-bar"), "@foo/bar");
+
+        // Test no change for already normalized names
+        assert_eq!(normalize_plugin_name("react"), "react");
+        assert_eq!(normalize_plugin_name("@typescript-eslint"), "@typescript-eslint");
     }
 }

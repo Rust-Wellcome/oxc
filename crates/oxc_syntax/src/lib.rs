@@ -1,5 +1,4 @@
 //! Common code for JavaScript Syntax
-#![warn(missing_docs)]
 
 use std::num::NonZeroU32;
 
@@ -10,6 +9,7 @@ pub mod comment_node;
 pub mod es_target;
 pub mod identifier;
 pub mod keyword;
+pub mod line_terminator;
 pub mod module_record;
 pub mod node;
 pub mod number;
@@ -24,7 +24,7 @@ pub mod xml_entities;
 
 mod generated {
     #[cfg(debug_assertions)]
-    pub mod assert_layouts;
+    mod assert_layouts;
     mod derive_clone_in;
     mod derive_content_eq;
     mod derive_dummy;

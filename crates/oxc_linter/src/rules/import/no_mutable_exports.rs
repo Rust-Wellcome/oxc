@@ -17,7 +17,7 @@ fn no_mutable_exports_diagnostic(span: Span, kind: VariableDeclarationKind) -> O
         .with_label(span)
 }
 
-/// <https://github.com/import-js/eslint-plugin-import/blob/v2.31.0/docs/rules/no-mutable-exports.md>
+// <https://github.com/import-js/eslint-plugin-import/blob/v2.31.0/docs/rules/no-mutable-exports.md>
 #[derive(Debug, Default, Clone)]
 pub struct NoMutableExports;
 
@@ -116,13 +116,10 @@ fn get_reference_declaration<'a>(
     let reference_node = ctx.symbol_declaration(symbol_id);
     if matches!(reference_node.kind(), AstKind::VariableDeclarator(_)) {
         // we need return reference_node's parent node
-        if let Some(parent) = ctx.nodes().parent_node(reference_node.id()) {
-            if let AstKind::VariableDeclaration(decl) = parent.kind() {
-                if matches!(decl.kind, VariableDeclarationKind::Let | VariableDeclarationKind::Var)
-                {
-                    return Some(decl);
-                }
-            }
+        if let AstKind::VariableDeclaration(decl) = ctx.nodes().parent_kind(reference_node.id())
+            && matches!(decl.kind, VariableDeclarationKind::Let | VariableDeclarationKind::Var)
+        {
+            return Some(decl);
         }
     }
     None

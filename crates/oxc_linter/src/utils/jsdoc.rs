@@ -1,10 +1,11 @@
+use rustc_hash::FxHashSet;
+
 use oxc_ast::{
     AstKind,
-    ast::{BindingPattern, BindingPatternKind, Expression, FormalParameters},
+    ast::{BindingPattern, Expression, FormalParameters},
 };
 use oxc_semantic::{JSDoc, JSDocTag, Semantic};
 use oxc_span::Span;
-use rustc_hash::FxHashSet;
 
 use crate::{AstNode, config::JSDocPluginSettings};
 
@@ -60,10 +61,11 @@ pub fn get_function_nearest_jsdoc_node<'a, 'b>(
 ) -> Option<&'b AstNode<'a>> {
     let mut current_node = node;
     // Whether the node has attached JSDoc or not is determined by `JSDocBuilder`
-    while semantic.jsdoc().get_all_by_node(current_node).is_none() {
+    while semantic.jsdoc().get_all_by_node(semantic.nodes(), current_node).is_none() {
         // Tie-breaker, otherwise every loop will end at `Program` node!
         // Maybe more checks should be added
         match current_node.kind() {
+            AstKind::Program(_) => return None,
             AstKind::VariableDeclaration(_)
             | AstKind::MethodDefinition(_)
             | AstKind::PropertyDefinition(_)
@@ -79,13 +81,13 @@ pub fn get_function_nearest_jsdoc_node<'a, 'b>(
             => {
                 // /** This JSDoc should NOT found for `VariableDeclaration` */
                 // export const foo = () => {}
-                let parent_node = semantic.nodes().parent_node(current_node.id())?;
+                let parent_node = semantic.nodes().parent_node(current_node.id());
                 match parent_node.kind() {
                     AstKind::ExportDefaultDeclaration(_) | AstKind::ExportNamedDeclaration(_) => return Some(parent_node),
                     _ => return None
                 }
             },
-            _ => current_node = semantic.nodes().parent_node(current_node.id())?,
+            _ => current_node = semantic.nodes().parent_node(current_node.id()),
         }
     }
 
@@ -170,11 +172,11 @@ pub fn collect_params(params: &FormalParameters) -> Vec<ParamKind> {
     //           ^^^^   ^
     // Tests are not covering these cases...
     fn get_param_name(pattern: &BindingPattern, is_rest: bool) -> ParamKind {
-        match &pattern.kind {
-            BindingPatternKind::BindingIdentifier(ident) => {
+        match &pattern {
+            BindingPattern::BindingIdentifier(ident) => {
                 ParamKind::Single(Param { span: ident.span, name: ident.name.to_string(), is_rest })
             }
-            BindingPatternKind::ObjectPattern(obj_pat) => {
+            BindingPattern::ObjectPattern(obj_pat) => {
                 let mut collected = vec![];
 
                 for prop in &obj_pat.properties {
@@ -210,7 +212,7 @@ pub fn collect_params(params: &FormalParameters) -> Vec<ParamKind> {
 
                 ParamKind::Nested(collected)
             }
-            BindingPatternKind::ArrayPattern(arr_pat) => {
+            BindingPattern::ArrayPattern(arr_pat) => {
                 let mut collected = vec![];
 
                 for (idx, elm) in arr_pat.elements.iter().enumerate() {
@@ -233,7 +235,7 @@ pub fn collect_params(params: &FormalParameters) -> Vec<ParamKind> {
 
                 ParamKind::Nested(collected)
             }
-            BindingPatternKind::AssignmentPattern(assign_pat) => match &assign_pat.right {
+            BindingPattern::AssignmentPattern(assign_pat) => match &assign_pat.right {
                 Expression::Identifier(_) => get_param_name(&assign_pat.left, false),
                 _ => {
                     // TODO: If `config.useDefaultObjectProperties` = true,
@@ -251,7 +253,7 @@ pub fn collect_params(params: &FormalParameters) -> Vec<ParamKind> {
         params.items.iter().map(|param| get_param_name(&param.pattern, false)).collect::<Vec<_>>();
 
     if let Some(rest) = &params.rest {
-        match get_param_name(&rest.argument, true) {
+        match get_param_name(&rest.rest.argument, true) {
             ParamKind::Single(param) => collected.push(ParamKind::Single(param)),
             ParamKind::Nested(params) => collected.push(ParamKind::Nested(params)),
         }

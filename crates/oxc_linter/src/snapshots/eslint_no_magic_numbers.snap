@@ -1,6 +1,7 @@
 ---
 source: crates/oxc_linter/src/tester.rs
 ---
+
   ⚠ eslint(no-magic-numbers): Number constants declarations must use 'const'.
    ╭─[no_magic_numbers.tsx:1:11]
  1 │ var foo = 42
@@ -833,4 +834,46 @@ source: crates/oxc_linter/src/tester.rs
    ╭─[no_magic_numbers.tsx:1:12]
  1 │ type Foo = -7.1e-8;
    ·            ───────
+   ╰────
+
+  ⚠ eslint(no-magic-numbers): No magic number: 42
+   ╭─[no_magic_numbers.tsx:1:19]
+ 1 │ type Foo = { bar: 42 };
+   ·                   ──
+   ╰────
+
+  ⚠ eslint(no-magic-numbers): No magic number: 2
+   ╭─[no_magic_numbers.tsx:1:19]
+ 1 │ type Foo = { bar: 2 | 3 };
+   ·                   ─
+   ╰────
+
+  ⚠ eslint(no-magic-numbers): No magic number: 3
+   ╭─[no_magic_numbers.tsx:1:23]
+ 1 │ type Foo = { bar: 2 | 3 };
+   ·                       ─
+   ╰────
+
+  ⚠ eslint(no-magic-numbers): No magic number: 1
+   ╭─[no_magic_numbers.tsx:1:25]
+ 1 │ type Foo = { bar: Bar[((1 & -2) | 3) | 4] };
+   ·                         ─
+   ╰────
+
+  ⚠ eslint(no-magic-numbers): No magic number: -2
+   ╭─[no_magic_numbers.tsx:1:29]
+ 1 │ type Foo = { bar: Bar[((1 & -2) | 3) | 4] };
+   ·                             ──
+   ╰────
+
+  ⚠ eslint(no-magic-numbers): No magic number: 3
+   ╭─[no_magic_numbers.tsx:1:35]
+ 1 │ type Foo = { bar: Bar[((1 & -2) | 3) | 4] };
+   ·                                   ─
+   ╰────
+
+  ⚠ eslint(no-magic-numbers): No magic number: 4
+   ╭─[no_magic_numbers.tsx:1:40]
+ 1 │ type Foo = { bar: Bar[((1 & -2) | 3) | 4] };
+   ·                                        ─
    ╰────

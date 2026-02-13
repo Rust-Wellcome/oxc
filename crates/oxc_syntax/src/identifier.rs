@@ -4,6 +4,8 @@ use unicode_id_start::{is_id_continue_unicode, is_id_start_unicode};
 
 use oxc_data_structures::assert_unchecked;
 
+use crate::line_terminator::{CR, LF, LS, PS};
+
 pub const EOF: char = '\0';
 
 // 11.1 Unicode Format-Control Characters
@@ -54,6 +56,17 @@ const MMSP: char = '\u{205f}';
 
 const IDEOGRAPHIC_SPACE: char = '\u{3000}';
 
+fn is_unicode_space_separator(c: char) -> bool {
+    // is_whitespace matches Unicode `White_Space` property
+    // exclude the characters that are included in `White_Space`, but not `Space_Separator`
+    // <https://util.unicode.org/UnicodeJsps/list-unicodeset.jsp?a=%5Cp%7BWhite_Space%7D%26%5CP%7BGeneral_Category%3DSpace_Separator%7D>
+    c.is_whitespace() && !matches!(c, TAB | LF | VT | FF | CR | NEL | LS | PS)
+}
+
+pub fn is_white_space(c: char) -> bool {
+    matches!(c, TAB | VT | FF | ZWNBSP) || is_unicode_space_separator(c)
+}
+
 // https://eslint.org/docs/latest/rules/no-irregular-whitespace#rule-details
 #[rustfmt::skip]
 pub fn is_irregular_whitespace(c: char) -> bool {
@@ -68,32 +81,6 @@ pub fn is_white_space_single_line(c: char) -> bool {
     // Note: nextLine is in the Zs space, and should be considered to be a whitespace.
     // It is explicitly not a line-break as it isn't in the exact set specified by EcmaScript.
     matches!(c, SP | TAB) || is_irregular_whitespace(c)
-}
-
-// 11.3 Line Terminators
-
-///  U+000A LINE FEED, abbreviated in the spec as `<LF>`.
-pub const LF: char = '\u{a}';
-
-/// U+000D CARRIAGE RETURN, abbreviated in the spec as `<CR>`.
-pub const CR: char = '\u{d}';
-
-/// U+2028 LINE SEPARATOR, abbreviated `<LS>`.
-pub const LS: char = '\u{2028}';
-
-/// U+2029 PARAGRAPH SEPARATOR, abbreviated `<PS>`.
-pub const PS: char = '\u{2029}';
-
-pub fn is_regular_line_terminator(c: char) -> bool {
-    matches!(c, LF | CR)
-}
-
-pub fn is_irregular_line_terminator(c: char) -> bool {
-    matches!(c, LS | PS)
-}
-
-pub fn is_line_terminator(c: char) -> bool {
-    is_regular_line_terminator(c) || is_irregular_line_terminator(c)
 }
 
 const XX: bool = true;

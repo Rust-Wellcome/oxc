@@ -2,7 +2,6 @@ use oxc_ast::{AstKind, ast::Expression};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, Span};
-use phf::phf_map;
 
 use crate::{AstNode, context::LintContext, rule::Rule, utils::is_node_value_not_dom_node};
 
@@ -19,11 +18,13 @@ fn prefer_query_selector_diagnostic(
 #[derive(Debug, Default, Clone)]
 pub struct PreferQuerySelector;
 
-const DISALLOWED_IDENTIFIER_NAMES: phf::Map<&'static str, &'static str> = phf_map!(
-    "getElementById" => "querySelector",
-    "getElementsByClassName" => "querySelectorAll",
-    "getElementsByTagName" => "querySelectorAll"
-);
+fn get_preferred_identifier_name(ident_name: &str) -> Option<&'static str> {
+    match ident_name {
+        "getElementById" => Some("querySelector"),
+        "getElementsByClassName" | "getElementsByTagName" => Some("querySelectorAll"),
+        _ => None,
+    }
+}
 
 declare_oxc_lint!(
     /// ### What it does
@@ -89,20 +90,13 @@ impl Rule for PreferQuerySelector {
             return;
         };
 
-        for (cur_property_name, preferred_selector) in &DISALLOWED_IDENTIFIER_NAMES {
-            if cur_property_name != &property_name {
-                continue;
-            }
-
-            let diagnostic = prefer_query_selector_diagnostic(
-                preferred_selector,
-                cur_property_name,
-                property_span,
-            );
+        if let Some(preferred_selector) = get_preferred_identifier_name(property_name) {
+            let diagnostic =
+                prefer_query_selector_diagnostic(preferred_selector, property_name, property_span);
 
             if argument_expr.is_null() {
                 return ctx.diagnostic_with_fix(diagnostic, |fixer| {
-                    fixer.replace(property_span, *preferred_selector)
+                    fixer.replace(property_span, preferred_selector)
                 });
             }
 
@@ -121,12 +115,12 @@ impl Rule for PreferQuerySelector {
             if let Some(literal_value) = literal_value {
                 return ctx.diagnostic_with_fix(diagnostic, |fixer| {
                     if literal_value.is_empty() {
-                        return fixer.replace(property_span, *preferred_selector);
+                        return fixer.replace(property_span, preferred_selector);
                     }
 
                     let source_text = fixer.source_range(argument_expr.span());
                     let quotes_symbol = source_text.chars().next().unwrap();
-                    let argument = match *cur_property_name {
+                    let argument = match property_name {
                         "getElementById" => format!("#{literal_value}"),
                         "getElementsByClassName" => {
                             format!(
@@ -141,6 +135,19 @@ impl Rule for PreferQuerySelector {
                         span,
                         format!("{preferred_selector}({quotes_symbol}{argument}{quotes_symbol}"),
                     )
+                });
+            }
+
+            // For non-literal arguments, we can still auto-fix `getElementById(id)` -> `querySelector(`#${id}`)
+            // Only apply this fix for simple identifiers so we avoid nested template literals
+            // and complex expressions like member/call expressions or template literals
+            if property_name == "getElementById"
+                && matches!(argument_expr, Expression::Identifier(_))
+            {
+                return ctx.diagnostic_with_fix(diagnostic, |fixer| {
+                    let source_text = fixer.source_range(argument_expr.span());
+                    let span = property_span.merge(argument_expr.span());
+                    fixer.replace(span, format!("{preferred_selector}(`#${{{source_text}}}`"))
                 });
             }
 
@@ -199,21 +206,21 @@ fn test() {
     ];
 
     let fix = vec![
-        ("document.getElementsByTagName('foo');", "document.querySelectorAll('foo');", None),
-        (
-            "document.getElementsByClassName(`foo bar`);",
-            "document.querySelectorAll(`.foo .bar`);",
-            None,
-        ),
-        ("document.getElementsByClassName(null);", "document.querySelectorAll(null);", None),
-        ("document.getElementsByTagName(`   `);", "document.querySelectorAll(`   `);", None),
-        ("document.getElementById(`id`);", "document.querySelector(`#id`);", None),
+        ("document.getElementsByTagName('foo');", "document.querySelectorAll('foo');"),
+        ("document.getElementsByClassName(`foo bar`);", "document.querySelectorAll(`.foo .bar`);"),
+        ("document.getElementsByClassName(null);", "document.querySelectorAll(null);"),
+        ("document.getElementsByTagName(`   `);", "document.querySelectorAll(`   `);"),
+        ("document.getElementById(123);", "document.getElementById(123);"),
+        ("document.getElementById(`id`);", "document.querySelector(`#id`);"),
+        ("document.getElementById(obj.id);", "document.getElementById(obj.id);"),
+        ("document.getElementById(getId());", "document.getElementById(getId());"),
+        ("document.getElementById(`${foo}`);", "document.getElementById(`${foo}`);"),
+        ("document.getElementById(searchInputId);", "document.querySelector(`#${searchInputId}`);"),
         (
             "document.getElementsByClassName(foo + \"bar\");",
             "document.getElementsByClassName(foo + \"bar\");",
-            None,
         ),
-        ("document.getElementsByClassName(fn());", "document.getElementsByClassName(fn());", None),
+        ("document.getElementsByClassName(fn());", "document.getElementsByClassName(fn());"),
     ];
 
     Tester::new(PreferQuerySelector::NAME, PreferQuerySelector::PLUGIN, pass, fail)

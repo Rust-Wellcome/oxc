@@ -1,6 +1,6 @@
 use std::{cell::Cell, num::NonZeroU8};
 
-use super::super::{GroupId, TextSize, format_element::PrintMode};
+use super::super::{GroupId, format_element::PrintMode};
 
 /// A Tag marking the start and end of some content to which some special formatting should be applied.
 ///
@@ -56,10 +56,6 @@ pub enum Tag {
     StartLineSuffix,
     EndLineSuffix,
 
-    /// A token that tracks tokens/nodes that are printed as verbatim.
-    StartVerbatim(VerbatimKind),
-    EndVerbatim,
-
     /// Special semantic element marking the content with a label.
     /// This does not directly influence how the content will be printed.
     ///
@@ -82,7 +78,6 @@ impl Tag {
                 | Tag::StartFill
                 | Tag::StartEntry
                 | Tag::StartLineSuffix
-                | Tag::StartVerbatim(_)
                 | Tag::StartLabelled(_)
         )
     }
@@ -95,9 +90,9 @@ impl Tag {
     pub const fn kind(&self) -> TagKind {
         use Tag::{
             EndAlign, EndConditionalContent, EndDedent, EndEntry, EndFill, EndGroup, EndIndent,
-            EndIndentIfGroupBreaks, EndLabelled, EndLineSuffix, EndVerbatim, StartAlign,
+            EndIndentIfGroupBreaks, EndLabelled, EndLineSuffix, StartAlign,
             StartConditionalContent, StartDedent, StartEntry, StartFill, StartGroup, StartIndent,
-            StartIndentIfGroupBreaks, StartLabelled, StartLineSuffix, StartVerbatim,
+            StartIndentIfGroupBreaks, StartLabelled, StartLineSuffix,
         };
 
         match self {
@@ -110,7 +105,6 @@ impl Tag {
             StartFill | EndFill => TagKind::Fill,
             StartEntry | EndEntry => TagKind::Entry,
             StartLineSuffix | EndLineSuffix => TagKind::LineSuffix,
-            StartVerbatim(_) | EndVerbatim => TagKind::Verbatim,
             StartLabelled(_) | EndLabelled => TagKind::Labelled,
         }
     }
@@ -130,8 +124,8 @@ pub enum TagKind {
     Fill,
     Entry,
     LineSuffix,
-    Verbatim,
     Labelled,
+    TailwindClass,
 }
 
 #[derive(Debug, Copy, Default, Clone, Eq, PartialEq)]
@@ -259,7 +253,8 @@ impl PartialEq for LabelId {
 }
 
 impl LabelId {
-    pub fn of<T: Label>(label: &T) -> Self {
+    #[expect(clippy::needless_pass_by_value)] // The `Label` trait is unnecessary, would refactor it later.
+    pub fn of<T: Label>(label: T) -> Self {
         Self {
             value: label.id(),
             #[cfg(debug_assertions)]
@@ -276,22 +271,4 @@ pub trait Label {
 
     /// Returns the name of the label that is shown in debug builds.
     fn debug_name(&self) -> &'static str;
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-pub enum VerbatimKind {
-    Bogus,
-    Suppressed,
-    /// This was intentionally skipped, not as a result of suppression.
-    Skipped,
-    Verbatim {
-        /// the length of the formatted node
-        length: TextSize,
-    },
-}
-
-impl VerbatimKind {
-    pub const fn is_bogus(self) -> bool {
-        matches!(self, VerbatimKind::Bogus)
-    }
 }

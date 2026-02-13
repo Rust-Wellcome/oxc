@@ -49,48 +49,104 @@ impl ESTree for ExpressionStatementDirective<'_, '_> {
 #[ast_meta]
 #[estree(raw_deser = "
     const kind = DESER[TSModuleDeclarationKind](POS_OFFSET.kind),
-        global = kind === 'global',
         start = DESER[u32](POS_OFFSET.span.start),
         end = DESER[u32](POS_OFFSET.span.end),
         declare = DESER[bool](POS_OFFSET.declare);
-    let id = DESER[TSModuleDeclarationName](POS_OFFSET.id),
-        body = DESER[Option<TSModuleDeclarationBody>](POS_OFFSET.body);
 
-    // Flatten `body`, and nest `id`
-    if (body !== null && body.type === 'TSModuleDeclaration') {
-        let innerId = body.id;
-        if (innerId.type === 'Identifier') {
-            id = {
-                type: 'TSQualifiedName',
-                start: id.start,
-                end: innerId.end,
-                left: id,
-                right: innerId,
-            };
+    let node;
+    const previousParent = parent;
+
+    let body = DESER[Option<TSModuleDeclarationBody>](POS_OFFSET.body);
+    if (body === null) {
+        node = parent = {
+            type: 'TSModuleDeclaration',
+            id: null,
+            // No `body` field
+            kind,
+            declare,
+            global: false,
+            start,
+            end,
+            ...(RANGE && { range: [start, end] }),
+            ...(PARENT && { parent }),
+        };
+        node.id = DESER[TSModuleDeclarationName](POS_OFFSET.id);
+    } else {
+        node = parent = {
+            type: 'TSModuleDeclaration',
+            id: null,
+            body,
+            kind,
+            declare,
+            global: false,
+            start,
+            end,
+            ...(RANGE && { range: [start, end] }),
+            ...(PARENT && { parent }),
+        };
+
+        const id = DESER[TSModuleDeclarationName](POS_OFFSET.id);
+
+        if (body.type === 'TSModuleBlock') {
+            node.id = id;
+            if (PARENT) body.parent = node;
         } else {
-            // Replace `left` of innermost `TSQualifiedName` with a nested `TSQualifiedName` with `id` of
-            // this module on left, and previous `left` of innermost `TSQualifiedName` on right
-            while (true) {
-                innerId.start = id.start;
-                if (innerId.left.type === 'Identifier') break;
-                innerId = innerId.left;
+            let innerId = body.id;
+            if (innerId.type === 'Identifier') {
+                let start, end;
+                const outerId = node.id = parent = {
+                    type: 'TSQualifiedName',
+                    left: id,
+                    right: innerId,
+                    start: start = id.start,
+                    end: end = innerId.end,
+                    ...(RANGE && { range: [start, end] }),
+                    ...(PARENT && { parent: node }),
+                };
+                if (PARENT) id.parent = innerId.parent = outerId;
+            } else {
+                // Replace `left` of innermost `TSQualifiedName` with a nested `TSQualifiedName` with `id` of
+                // this module on left, and previous `left` of innermost `TSQualifiedName` on right
+                node.id = innerId;
+                if (PARENT) innerId.parent = node;
+
+                const { start } = id;
+                while (true) {
+                    if (RANGE) {
+                        innerId.start = innerId.range[0] = start;
+                    } else {
+                        innerId.start = start;
+                    }
+                    if (innerId.left.type === 'Identifier') break;
+                    innerId = innerId.left;
+                }
+
+                let end;
+                const right = innerId.left;
+                const left = innerId.left = {
+                    type: 'TSQualifiedName',
+                    left: id,
+                    right,
+                    start,
+                    end: end = right.end,
+                    ...(RANGE && { range: [start, end] }),
+                    ...(PARENT && { parent: innerId }),
+                };
+                if (PARENT) id.parent = right.parent = left;
             }
-            innerId.left = {
-                type: 'TSQualifiedName',
-                start: id.start,
-                end: innerId.left.end,
-                left: id,
-                right: innerId.left,
-            };
-            id = body.id;
+
+            if (Object.hasOwn(body, 'body')) {
+                body = body.body;
+                node.body = body;
+                if (PARENT) body.parent = node;
+            } else {
+                body = null;
+            }
         }
-        body = Object.hasOwn(body, 'body') ? body.body : null;
     }
 
-    // Skip `body` field if `null`
-    const node = body === null
-        ? { type: 'TSModuleDeclaration', start, end, id, kind, declare, global }
-        : { type: 'TSModuleDeclaration', start, end, id, body, kind, declare, global };
+    if (PARENT) parent = previousParent;
+
     node
 ")]
 pub struct TSModuleDeclarationConverter<'a, 'b>(pub &'b TSModuleDeclaration<'a>);
@@ -101,8 +157,6 @@ impl ESTree for TSModuleDeclarationConverter<'_, '_> {
 
         let mut state = serializer.serialize_struct();
         state.serialize_field("type", &JsonSafeString("TSModuleDeclaration"));
-        state.serialize_field("start", &module.span.start);
-        state.serialize_field("end", &module.span.end);
 
         match &module.body {
             Some(TSModuleDeclarationBody::TSModuleDeclaration(inner_module)) => {
@@ -156,7 +210,10 @@ impl ESTree for TSModuleDeclarationConverter<'_, '_> {
 
         state.serialize_field("kind", &module.kind);
         state.serialize_field("declare", &module.declare);
-        state.serialize_field("global", &TSModuleDeclarationGlobal(module));
+        state.serialize_field("global", &false);
+
+        state.serialize_span(module.span);
+
         state.end();
     }
 }
@@ -168,13 +225,10 @@ impl ESTree for TSModuleDeclarationIdParts<'_, '_> {
         let parts = self.0;
         assert!(!parts.is_empty());
 
-        let span_start = parts[0].span.start;
         let (&last, rest) = parts.split_last().unwrap();
 
         let mut state = serializer.serialize_struct();
         state.serialize_field("type", &JsonSafeString("TSQualifiedName"));
-        state.serialize_field("start", &span_start);
-        state.serialize_field("end", &last.span.end);
 
         if rest.len() == 1 {
             // Only one part remaining (e.g. `X`). Serialize as `Identifier`.
@@ -185,20 +239,44 @@ impl ESTree for TSModuleDeclarationIdParts<'_, '_> {
         }
 
         state.serialize_field("right", last);
+
+        let span = Span::new(parts[0].span.start, last.span.end);
+        state.serialize_span(span);
+
         state.end();
     }
 }
 
-/// Serializer for `global` field of `TSModuleDeclaration`.
+/// Serializer for `id` field of `TSGlobalDeclaration`.
 ///
-/// `true` if `kind` is `TSModuleDeclarationKind::Global`.
+/// Contains an identifier `global`, with the span from `global_span` field.
 #[ast_meta]
-#[estree(ts_type = "boolean", raw_deser = "THIS.kind === 'global'")]
-pub struct TSModuleDeclarationGlobal<'a, 'b>(pub &'b TSModuleDeclaration<'a>);
+#[estree(
+    ts_type = "IdentifierName",
+    raw_deser = "
+        let keywordStart, keywordEnd;
+        const ident = {
+            type: 'Identifier',
+            ...(IS_TS && { decorators: [] }),
+            name: 'global',
+            ...(IS_TS && {
+                optional: false,
+                typeAnnotation: null,
+            }),
+            start: keywordStart = DESER[u32](POS_OFFSET.global_span.start),
+            end: keywordEnd = DESER[u32](POS_OFFSET.global_span.end),
+            ...(RANGE && { range: [keywordStart, keywordEnd] }),
+            ...(PARENT && { parent }),
+        };
+        ident
+    "
+)]
+pub struct TSGlobalDeclarationId<'a, 'b>(pub &'b TSGlobalDeclaration<'a>);
 
-impl ESTree for TSModuleDeclarationGlobal<'_, '_> {
+impl ESTree for TSGlobalDeclarationId<'_, '_> {
     fn serialize<S: Serializer>(&self, serializer: S) {
-        self.0.kind.is_global().serialize(serializer);
+        let ident = IdentifierName { span: self.0.global_span, name: Atom::from("global").into() };
+        ident.serialize(serializer);
     }
 }
 
@@ -226,62 +304,6 @@ impl ESTree for TSMappedTypeOptional<'_, '_> {
     }
 }
 
-/// Serializer for `key` field of `TSMappedType`.
-#[ast_meta]
-#[estree(
-    ts_type = "TSTypeParameter['name']",
-    raw_deser = "
-        const typeParameter = DESER[Box<TSTypeParameter>](POS_OFFSET.type_parameter);
-        typeParameter.name
-    "
-)]
-pub struct TSMappedTypeKey<'a, 'b>(pub &'b TSMappedType<'a>);
-
-impl ESTree for TSMappedTypeKey<'_, '_> {
-    fn serialize<S: Serializer>(&self, serializer: S) {
-        self.0.type_parameter.name.serialize(serializer);
-    }
-}
-
-/// Serializer for `constraint` field of `TSMappedType`.
-///
-/// NOTE: Variable `typeParameter` in `raw_deser` is shared between `key` and `constraint` serializers.
-/// They will be concatenated in the generated code.
-#[ast_meta]
-#[estree(ts_type = "TSTypeParameter['constraint']", raw_deser = "typeParameter.constraint")]
-pub struct TSMappedTypeConstraint<'a, 'b>(pub &'b TSMappedType<'a>);
-
-impl ESTree for TSMappedTypeConstraint<'_, '_> {
-    fn serialize<S: Serializer>(&self, serializer: S) {
-        self.0.type_parameter.constraint.serialize(serializer);
-    }
-}
-
-/// Serializer for `IdentifierReference` variant of `TSTypeName`.
-///
-/// Where is an identifier called `this`, TS-ESTree presents it as a `ThisExpression`.
-#[ast_meta]
-#[estree(
-    ts_type = "IdentifierReference | ThisExpression",
-    raw_deser = "
-        let id = DESER[Box<IdentifierReference>](POS);
-        if (id.name === 'this') id = { type: 'ThisExpression', start: id.start, end: id.end };
-        id
-    "
-)]
-pub struct TSTypeNameIdentifierReference<'a, 'b>(pub &'b IdentifierReference<'a>);
-
-impl ESTree for TSTypeNameIdentifierReference<'_, '_> {
-    fn serialize<S: Serializer>(&self, serializer: S) {
-        let ident = self.0;
-        if ident.name == "this" {
-            ThisExpression { span: ident.span }.serialize(serializer);
-        } else {
-            ident.serialize(serializer);
-        }
-    }
-}
-
 /// Serializer for `expression` field of `TSClassImplements`.
 ///
 /// Our AST represents `X.Y` in `class C implements X.Y {}` as a `TSQualifiedName`.
@@ -295,27 +317,45 @@ impl ESTree for TSTypeNameIdentifierReference<'_, '_> {
     raw_deser = "
         let expression = DESER[TSTypeName](POS_OFFSET.expression);
         if (expression.type === 'TSQualifiedName') {
-            let parent = expression = {
+            let object = expression.left;
+            const { right } = expression;
+            let start, end;
+            let previous = expression = {
                 type: 'MemberExpression',
-                start: expression.start,
-                end: expression.end,
-                object: expression.left,
-                property: expression.right,
+                object,
+                property: right,
                 optional: false,
                 computed: false,
+                start: start = expression.start,
+                end: end = expression.end,
+                ...(RANGE && { range: [start, end] }),
+                ...(PARENT && { parent }),
             };
 
-            while (parent.object.type === 'TSQualifiedName') {
-                const object = parent.object;
-                parent = parent.object = {
+            if (PARENT) right.parent = previous;
+
+            while (true) {
+                if (object.type !== 'TSQualifiedName') {
+                    if (PARENT) object.parent = previous;
+                    break;
+                }
+
+                const { left, right } = object;
+                previous = previous.object = {
                     type: 'MemberExpression',
-                    start: object.start,
-                    end: object.end,
-                    object: object.left,
-                    property: object.right,
+                    object: left,
+                    property: right,
                     optional: false,
                     computed: false,
+                    start: start = object.start,
+                    end: end = object.end,
+                    ...(RANGE && { range: [start, end] }),
+                    ...(PARENT && { parent: previous }),
                 };
+
+                if (PARENT) right.parent = previous;
+
+                object = left;
             }
         }
         expression
@@ -336,20 +376,22 @@ impl ESTree for TSTypeNameAsMemberExpression<'_, '_> {
     fn serialize<S: Serializer>(&self, serializer: S) {
         match self.0 {
             TSTypeName::IdentifierReference(ident) => {
-                TSTypeNameIdentifierReference(ident).serialize(serializer);
+                ident.serialize(serializer);
             }
             TSTypeName::QualifiedName(name) => {
                 // Convert to `TSQualifiedName` to `MemberExpression`.
                 // Recursively convert `left` to `MemberExpression` too if it's a `TSQualifiedName`.
                 let mut state = serializer.serialize_struct();
                 state.serialize_field("type", &JsonSafeString("MemberExpression"));
-                state.serialize_field("start", &name.span.start);
-                state.serialize_field("end", &name.span.end);
                 state.serialize_field("object", &TSTypeNameAsMemberExpression(&name.left));
                 state.serialize_field("property", &name.right);
                 state.serialize_field("optional", &false);
                 state.serialize_field("computed", &false);
+                state.serialize_span(name.span);
                 state.end();
+            }
+            TSTypeName::ThisExpression(e) => {
+                e.serialize(serializer);
             }
         }
     }
@@ -418,5 +460,48 @@ impl ESTree for TSFunctionTypeParams<'_, '_> {
     fn serialize<S: Serializer>(&self, serializer: S) {
         let fn_type = self.0;
         Concat2(&fn_type.this_param, fn_type.params.as_ref()).serialize(serializer);
+    }
+}
+
+/// Converter for [`TSParenthesizedType`].
+///
+/// In raw transfer, do not produce a `TSParenthesizedType` node in AST if `PRESERVE_PARENS` is false.
+///
+/// Not useful in `oxc-parser`, as can use parser option `preserve_parens`.
+/// Required for `oxlint` plugins where we run parser with `preserve_parens` set to `true`,
+/// to preserve them on Rust side, but need to remove them on JS side.
+///
+/// ESTree implementation is unchanged from the auto-generated version.
+#[ast_meta]
+#[estree(raw_deser = "
+    let node;
+    if (PRESERVE_PARENS) {
+        let start, end;
+        const previousParent = parent;
+        node = parent = {
+            type: 'TSParenthesizedType',
+            typeAnnotation: null,
+            start: start = DESER[u32]( POS_OFFSET.span.start ),
+            end: end = DESER[u32]( POS_OFFSET.span.end ),
+            ...(RANGE && { range: [start, end] }),
+            ...(PARENT && { parent }),
+        };
+        node.typeAnnotation = DESER[TSType](POS_OFFSET.type_annotation);
+        if (PARENT) parent = previousParent;
+    } else {
+        node = DESER[TSType](POS_OFFSET.type_annotation);
+    }
+    node
+")]
+pub struct TSParenthesizedTypeConverter<'a, 'b>(pub &'b TSParenthesizedType<'a>);
+
+impl ESTree for TSParenthesizedTypeConverter<'_, '_> {
+    fn serialize<S: Serializer>(&self, serializer: S) {
+        let paren_type = self.0;
+        let mut state = serializer.serialize_struct();
+        state.serialize_field("type", &JsonSafeString("TSParenthesizedType"));
+        state.serialize_field("typeAnnotation", &paren_type.type_annotation);
+        state.serialize_span(paren_type.span);
+        state.end();
     }
 }

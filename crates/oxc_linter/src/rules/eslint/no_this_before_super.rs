@@ -1,5 +1,5 @@
 use oxc_ast::{
-    AstKind,
+    AstKind, AstType,
     ast::{Argument, Expression, MethodDefinitionKind},
 };
 use oxc_cfg::{
@@ -15,8 +15,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::{AstNode, context::LintContext, rule::Rule};
 
 fn no_this_before_super_diagnostic(span: Span) -> OxcDiagnostic {
-    OxcDiagnostic::warn("Expected to always call super() before this/super property access.")
-        .with_help("Call super() before this/super property access.")
+    OxcDiagnostic::warn("Expected to always call `super()` before `this`/`super` property access.")
+        .with_help("Call `super()` before `this`/`super` property access.")
         .with_label(span)
 }
 
@@ -28,10 +28,13 @@ declare_oxc_lint!(
     ///
     /// Requires calling `super()` before using `this` or `super`.
     ///
+    /// This rule can be disabled for TypeScript code, as the TypeScript compiler
+    /// enforces this check.
+    ///
     /// ### Why is this bad?
     ///
-    /// Getters should always return a value.
-    /// If they don't, it's probably a mistake.
+    /// In the constructor of derived classes, if `this`/`super` are used before `super()` calls,
+    /// it raises a `ReferenceError`.
     ///
     /// ### Examples
     ///
@@ -58,6 +61,11 @@ enum DefinitelyCallsThisBeforeSuper {
     Maybe(BlockNodeId),
 }
 
+/// Node types that should be in the file in order to run this analysis. Otherwise, the AST
+/// will be skipped for linting.
+const NEEDED_NODE_TYPES: &AstTypesBitset =
+    &AstTypesBitset::from_types(&[AstType::ThisExpression, AstType::Super]);
+
 impl Rule for NoThisBeforeSuper {
     fn run_once(&self, ctx: &LintContext) {
         let cfg = ctx.cfg();
@@ -75,15 +83,13 @@ impl Rule for NoThisBeforeSuper {
                     }
                 }
                 AstKind::Super(_) => {
-                    let basic_block_id = node.cfg_id();
-                    if let Some(parent) = ctx.nodes().parent_node(node.id()) {
-                        if let AstKind::CallExpression(call_expr) = parent.kind() {
-                            let has_this_or_super_in_args =
-                                Self::contains_this_or_super_in_args(&call_expr.arguments);
+                    let basic_block_id = ctx.nodes().cfg_id(node.id());
+                    if let AstKind::CallExpression(call_expr) = ctx.nodes().parent_kind(node.id()) {
+                        let has_this_or_super_in_args =
+                            Self::contains_this_or_super_in_args(&call_expr.arguments);
 
-                            if !has_this_or_super_in_args {
-                                basic_blocks_with_super_called.insert(basic_block_id);
-                            }
+                        if !has_this_or_super_in_args {
+                            basic_blocks_with_super_called.insert(basic_block_id);
                         }
                     }
                     if !basic_blocks_with_super_called.contains(&basic_block_id) {
@@ -94,7 +100,7 @@ impl Rule for NoThisBeforeSuper {
                     }
                 }
                 AstKind::ThisExpression(_) => {
-                    let basic_block_id = node.cfg_id();
+                    let basic_block_id = ctx.nodes().cfg_id(node.id());
                     if !basic_blocks_with_super_called.contains(&basic_block_id) {
                         basic_blocks_with_local_violations
                             .entry(basic_block_id)
@@ -111,7 +117,7 @@ impl Rule for NoThisBeforeSuper {
         for node in wanted_nodes {
             let output = Self::analyze(
                 cfg,
-                node.cfg_id(),
+                ctx.nodes().cfg_id(node.id()),
                 &basic_blocks_with_super_called,
                 &basic_blocks_with_local_violations,
                 false,
@@ -129,21 +135,25 @@ impl Rule for NoThisBeforeSuper {
                 // the parent must exist, because of Self::is_wanted_node
                 // so the unwrap() is safe here. The parent node is the
                 // AstKind::MethodDefinition for `constructor`.
-                let parent_span = ctx.nodes().parent_node(node.id()).unwrap().kind().span();
+                let parent_span = ctx.nodes().parent_kind(node.id()).span();
                 ctx.diagnostic(no_this_before_super_diagnostic(parent_span));
             }
         }
+    }
+
+    fn should_run(&self, ctx: &crate::context::ContextHost) -> bool {
+        ctx.semantic().nodes().contains_any(NEEDED_NODE_TYPES)
     }
 }
 
 impl NoThisBeforeSuper {
     fn is_wanted_node(node: &AstNode, ctx: &LintContext<'_>) -> Option<bool> {
-        let parent = ctx.nodes().parent_node(node.id())?;
+        let parent = ctx.nodes().parent_node(node.id());
         let method_def = parent.kind().as_method_definition()?;
 
         if matches!(method_def.kind, MethodDefinitionKind::Constructor) {
-            let parent_2 = ctx.nodes().parent_node(parent.id())?;
-            let parent_3 = ctx.nodes().parent_node(parent_2.id())?;
+            let parent_2 = ctx.nodes().parent_node(parent.id());
+            let parent_3 = ctx.nodes().parent_node(parent_2.id());
 
             let class = parent_3.kind().as_class()?;
             let super_class = class.super_class.as_ref()?;

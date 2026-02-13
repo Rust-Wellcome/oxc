@@ -5,8 +5,10 @@ use oxc_semantic::AstNodes;
 use oxc_span::GetSpan;
 use oxc_span::Span;
 use schemars::JsonSchema;
+use serde::Deserialize;
 use serde_json::Value;
 
+use crate::rule::DefaultRuleConfig;
 use crate::{AstNode, ast_util::is_function_node, context::LintContext, rule::Rule};
 
 fn max_depth_diagnostic(num: usize, max: usize, span: Span) -> OxcDiagnostic {
@@ -17,8 +19,10 @@ fn max_depth_diagnostic(num: usize, max: usize, span: Span) -> OxcDiagnostic {
 
 const DEFAULT_MAX_DEPTH: usize = 4;
 
-#[derive(Debug, Clone, JsonSchema)]
+#[derive(Debug, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct MaxDepth {
+    /// The `max` enforces a maximum depth that blocks can be nested
     max: usize,
 }
 
@@ -85,37 +89,31 @@ declare_oxc_lint!(
     ///   }
     /// }
     /// ```
-    ///
-    /// ### Options
-    ///
-    /// #### max
-    ///
-    /// `{ type: number, default: 4 }`
-    ///
-    /// The `max` enforces a maximum depth that blocks can be nested
-    ///
-    /// Example:
-    ///
-    /// ```json
-    /// "eslint/max-depth": ["error", 4]
-    ///
-    /// "eslint/max-depth": [
-    ///   "error",
-    ///   {
-    ///     max: 4
-    ///   }
-    /// ]
-    /// ```
     MaxDepth,
     eslint,
-    pedantic
+    pedantic,
     config = MaxDepth,
 );
 
 impl Rule for MaxDepth {
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        if let Some(max) = value
+            .get(0)
+            .and_then(Value::as_number)
+            .and_then(serde_json::Number::as_u64)
+            .and_then(|v| usize::try_from(v).ok())
+        {
+            Ok(MaxDepth { max })
+        } else {
+            Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
+                .unwrap_or_default()
+                .into_inner())
+        }
+    }
+
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
         if should_count(node, ctx.nodes()) {
-            let depth = ctx
+            let depth = 1 + ctx
                 .nodes()
                 .ancestors(node.id())
                 .take_while(|node| !should_stop(node))
@@ -126,28 +124,10 @@ impl Rule for MaxDepth {
             }
         }
     }
-
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let config = value.get(0);
-        let max = if let Some(max) = config
-            .and_then(Value::as_number)
-            .and_then(serde_json::Number::as_u64)
-            .and_then(|v| usize::try_from(v).ok())
-        {
-            max
-        } else {
-            config
-                .and_then(|config| config.get("max"))
-                .and_then(Value::as_number)
-                .and_then(serde_json::Number::as_u64)
-                .map_or(DEFAULT_MAX_DEPTH, |v| usize::try_from(v).unwrap_or(DEFAULT_MAX_DEPTH))
-        };
-        Self { max }
-    }
 }
 
 fn should_count(node: &AstNode<'_>, nodes: &AstNodes<'_>) -> bool {
-    matches!(node.kind(), AstKind::IfStatement(_) if !matches!(nodes.parent_kind(node.id()), Some(AstKind::IfStatement(_))))
+    matches!(node.kind(), AstKind::IfStatement(_) if !matches!(nodes.parent_kind(node.id()), AstKind::IfStatement(_)))
         || matches!(node.kind(), |AstKind::SwitchStatement(_)| AstKind::TryStatement(_)
             | AstKind::DoWhileStatement(_)
             | AstKind::WhileStatement(_)

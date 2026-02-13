@@ -10,17 +10,89 @@ fn mangle(source_text: &str, options: MangleOptions) -> String {
     let allocator = Allocator::default();
     let source_type = SourceType::mjs();
     let ret = Parser::new(&allocator, source_text, source_type).parse();
+    assert!(ret.errors.is_empty(), "Parser errors: {:?}", ret.errors);
     let program = ret.program;
-    let symbol_table = Mangler::new().with_options(options).build(&program);
-    Codegen::new().with_scoping(Some(symbol_table)).build(&program).code
+    let mangler_return = Mangler::new().with_options(options).build(&program);
+    Codegen::new()
+        .with_scoping(Some(mangler_return.scoping))
+        .with_private_member_mappings(Some(mangler_return.class_private_mappings))
+        .build(&program)
+        .code
+}
+
+fn test(source_text: &str, expected: &str, options: MangleOptions) {
+    let mangled = mangle(source_text, options);
+    let expected = {
+        let allocator = Allocator::default();
+        let source_type = SourceType::mjs();
+        let ret = Parser::new(&allocator, expected, source_type).parse();
+        assert!(ret.errors.is_empty(), "Parser errors: {:?}", ret.errors);
+        Codegen::new().build(&ret.program).code
+    };
+    assert_eq!(
+        mangled, expected,
+        "\nfor source\n{source_text}\nexpect\n{expected}\ngot\n{mangled}"
+    );
 }
 
 #[test]
 fn direct_eval() {
-    let source_text = "function foo() { let NO_MANGLE; eval('') }";
     let options = MangleOptions::default();
+
+    // Symbols in scopes with direct eval should NOT be mangled
+    let source_text = "function foo() { let NO_MANGLE; eval('') }";
     let mangled = mangle(source_text, options);
     assert_eq!(mangled, "function foo() {\n\tlet NO_MANGLE;\n\teval(\"\");\n}\n");
+
+    // Nested direct eval: parent scope also should not mangle
+    let source_text = "function foo() { let NO_MANGLE; function bar() { eval('') } }";
+    let mangled = mangle(source_text, options);
+    assert_eq!(
+        mangled,
+        "function foo() {\n\tlet NO_MANGLE;\n\tfunction bar() {\n\t\teval(\"\");\n\t}\n}\n"
+    );
+
+    // Sibling scope without direct eval should be mangled
+    let source_text =
+        "function foo() { let NO_MANGLE; eval('') } function bar() { let SHOULD_MANGLE; }";
+    let mangled = mangle(source_text, options);
+    // SHOULD_MANGLE gets mangled (to some short name), NO_MANGLE stays as is
+    assert!(mangled.contains("NO_MANGLE"));
+    assert!(!mangled.contains("SHOULD_MANGLE"));
+
+    // Child function scope without direct eval CAN be mangled (eval in parent cannot access child function locals)
+    let source_text = "function foo() { eval(''); function bar() { let CAN_MANGLE; } }";
+    let mangled = mangle(source_text, options);
+    assert!(!mangled.contains("CAN_MANGLE"));
+
+    // Indirect eval should still allow mangling
+    let source_text = "function foo() { let SHOULD_MANGLE; (0, eval)('') }";
+    let mangled = mangle(source_text, options);
+    assert!(!mangled.contains("SHOULD_MANGLE"));
+
+    test(
+        r#"var e = () => {}; var foo = (bar) => e(bar); var pt = (() => { eval("") })();"#,
+        r#"var e = () => {}; var foo = (t) => e(t); var pt = (() => { eval(""); })();"#,
+        MangleOptions::default(),
+    );
+
+    test(
+        r#"var e = () => {}; var foo = (bar) => e(bar); var pt = (() => { eval("") })();"#,
+        r#"var e = () => {}; var foo = (t) => e(t); var pt = (() => { eval(""); })();"#,
+        MangleOptions { top_level: true, ..MangleOptions::default() },
+    );
+
+    test(
+        r"function outer() { let e = 1; eval(''); function inner() { let longNameToMangle = 2; console.log(e); } }",
+        r#"function outer() { let e = 1; eval(""); function inner() { let t = 2; console.log(e); } }"#,
+        MangleOptions::default(),
+    );
+
+    test(
+        r"function evalScope() { let x = 1; eval(''); } function siblingScope() { let longName = 2; console.log(longName); }",
+        r#"function evalScope() {let x = 1; eval(""); } function siblingScope() { let e = 2; console.log(e); }"#,
+        MangleOptions::default(),
+    );
 }
 
 #[test]
@@ -31,7 +103,10 @@ fn mangler() {
         "function foo(a) { let { x } = y }",
         "var x; function foo(a) { ({ x } = y) }",
         "import { x } from 's'; export { x }",
-        "function _ (exports) { Object.defineProperty(exports, '__esModule', { value: true }) }",
+        "Object.defineProperty(exports, '__esModule', { value: true })",
+        "var exports = {}; Object.defineProperty(exports, '__esModule', { value: true })",
+        "function _(exports) { Object.defineProperty(exports, '__esModule', { value: true }) }",
+        "function _() { console.log(arguments) }",
         "function foo(foo_a, foo_b, foo_c) {}; function bar(bar_a, bar_b, bar_c) {}", // foo_a and bar_a can be reused
         "function _() { function foo() { var x; foo; } }", // x should not use the same name with foo
         "function _() { var x; function foo() { var y; function bar() { x } } }", // y should not shadow x
@@ -40,8 +115,8 @@ fn mangler() {
         "function _() { var x; { var y }}",     // y should not shadow x
         "function _() { var x; { let y }}",     // y can shadow x
         "function _() { let x; { let y }}",     // y can shadow x
-        "function _() { var x; { const y }}",   // y can shadow x
-        "function _() { let x; { const y }}",   // y can shadow x
+        "function _() { var x; { const y = 1 }}", // y can shadow x
+        "function _() { let x; { const y = 1 }}", // y can shadow x
         "function _() { var x; { class Y{} }}", // Y can shadow x
         "function _() { let x; { class Y{} }}", // Y can shadow x
         "function _() { var x; try { throw 0 } catch (e) { e } }", // e can shadow x
@@ -53,6 +128,13 @@ fn mangler() {
         "function _() { { var x; let y; } }", // x and y should have different names
         "function _() { let a; { let b; { let c; { let d; var x; } } } }",
         "function _() { let a; { let b; { let c; { console.log(a); let d; var x; } } } }",
+        "function _() {
+          if (bar) var a = 0;
+          else {
+            let b = 0;
+            var a = 1;
+          }
+        }", // a and b should have different names
     ];
     let top_level_cases = [
         "function foo(a) {a}",
@@ -91,5 +173,37 @@ fn mangler() {
 
     insta::with_settings!({ prepend_module_to_snapshot => false, omit_expression => true }, {
         insta::assert_snapshot!("mangler", snapshot);
+    });
+}
+
+#[test]
+fn private_member_mangling() {
+    let cases = [
+        "class Foo { #privateField = 1; method() { return this.#privateField; } }",
+        "class Foo { #a = 1; #b = 2; method() { return this.#a + this.#b; } }",
+        "class Foo { #method() { return 1; } publicMethod() { return this.#method(); } }",
+        "class Foo { #field; #method() { return this.#field; } get() { return this.#method(); } }",
+        "class Foo { #x; check() { return #x in this; } }",
+        // Nested classes
+        "class Outer { #outerField = 1; inner() { return class Inner { #innerField = 2; get() { return this.#innerField; } }; } }",
+        "class Outer { #shared = 1; getInner() { let self = this; return class { method() { return self.#shared; } }; } }",
+        "class Outer { #shared = 1; getInner() { return class { #shared = 2; method() { return this.#shared; } }; } }",
+        // Mixed public and private
+        "class Foo { publicField = 1; #privateField = 2; getSum() { return this.publicField + this.#privateField; } }",
+        // Test same names across different classes should reuse mangled names
+        "class A { #field = 1; #method() { return this.#field; } } class B { #field = 2; #method() { return this.#field; } }",
+        "class A { #field = 1; #method() { return this.#field; } } class B { #field2 = 2; #method2() { return this.#field2; } }",
+        "class Outer { #shared = 1; #getInner() { return class { #method() { return this.#shared; } }; } }",
+    ];
+
+    let mut snapshot = String::new();
+    cases.into_iter().fold(&mut snapshot, |w, case| {
+        let options = MangleOptions::default();
+        write!(w, "{case}\n{}\n", mangle(case, options)).unwrap();
+        w
+    });
+
+    insta::with_settings!({ prepend_module_to_snapshot => false, omit_expression => true }, {
+        insta::assert_snapshot!("private_member_mangling", snapshot);
     });
 }

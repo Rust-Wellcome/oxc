@@ -10,8 +10,8 @@ use crate::{AstNode, context::LintContext, rule::Rule};
 
 fn no_danger_with_children_diagnostic(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Only set one of `children` or `props.dangerouslySetInnerHTML`")
-			.with_help("`dangerouslySetInnerHTML` is not compatible with also passing children and React will throw a warning at runtime.")
-			.with_label(span)
+            .with_help("`dangerouslySetInnerHTML` is not compatible with also passing children and React will throw a warning at runtime.")
+            .with_label(span)
 }
 
 #[derive(Debug, Default, Clone)]
@@ -309,10 +309,10 @@ fn does_object_var_have_prop_name(
             };
             // If the next symbol is the same as the current symbol, then there is a cycle,
             // for example: `const props = {...props}`, so we will stop searching.
-            if let Some(next_symbol) = find_var_in_scope(ctx, node, ident.name.as_str()) {
-                if next_symbol.id() == symbol.id() {
-                    return false;
-                }
+            if let Some(next_symbol) = find_var_in_scope(ctx, node, ident.name.as_str())
+                && next_symbol.id() == symbol.id()
+            {
+                return false;
             }
 
             does_object_var_have_prop_name(ctx, symbol, ident.name.as_str(), prop_name)

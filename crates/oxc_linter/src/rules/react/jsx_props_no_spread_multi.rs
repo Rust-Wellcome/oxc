@@ -77,8 +77,9 @@ impl Rule for JsxPropsNoSpreadMulti {
             for spread_attr in spread_attrs {
                 let argument_without_parenthesized = spread_attr.argument.without_parentheses();
 
-                if let Some(identifier_name) =
-                    argument_without_parenthesized.get_identifier_reference().map(|arg| arg.name)
+                if let Some(identifier_name) = argument_without_parenthesized
+                    .get_identifier_reference()
+                    .map(|arg| Atom::from(arg.name))
                 {
                     identifier_names
                         .entry(identifier_name)
@@ -109,7 +110,7 @@ impl Rule for JsxPropsNoSpreadMulti {
                             .rev()
                             .skip(1)
                             .map(|span| Fix::delete(*span))
-                            .collect::<RuleFix<'a>>()
+                            .collect::<RuleFix>()
                             .with_message(REMOVE_DUPLICATE_SPREAD)
                     },
                 );

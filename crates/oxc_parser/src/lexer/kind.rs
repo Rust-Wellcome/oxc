@@ -105,6 +105,12 @@ pub enum Kind {
     Public,
     Static,
     Yield,
+    // 12.9.1 Null Literals
+    // 12.9.2 Boolean Literals
+    // Moved here to make all keywords contiguous for range check optimization
+    True,
+    False,
+    Null,
     // 12.8 punctuators
     Amp, // &
     Amp2,
@@ -164,11 +170,6 @@ pub enum Kind {
     Tilde,
     // arrow function
     Arrow,
-    // 12.9.1 Null Literals
-    Null,
-    // 12.9.2 Boolean Literals
-    True,
-    False,
     // 12.9.3 Numeric Literals
     Decimal,
     Float,
@@ -179,6 +180,11 @@ pub enum Kind {
     PositiveExponential,
     // for `1e-10`
     NegativeExponential,
+    // BigInt Literals (numeric literals with 'n' suffix)
+    DecimalBigInt,
+    BinaryBigInt,
+    OctalBigInt,
+    HexBigInt,
     // 12.9.4 String Literals
     /// String Type
     Str,
@@ -203,15 +209,13 @@ use Kind::*;
 impl Kind {
     #[inline]
     pub fn is_eof(self) -> bool {
-        matches!(self, Eof)
+        self == Eof
     }
 
+    /// All numeric literals are contiguous from Decimal..=HexBigInt in the enum.
     #[inline]
     pub fn is_number(self) -> bool {
-        matches!(
-            self,
-            Float | Decimal | Binary | Octal | Hex | PositiveExponential | NegativeExponential
-        )
+        matches!(self as u8, x if x >= Decimal as u8 && x <= HexBigInt as u8)
     }
 
     #[inline] // Inline into `read_non_decimal` - see comment there as to why
@@ -266,9 +270,10 @@ impl Kind {
     }
 
     /// `IdentifierName`
+    /// All identifier names are either `Ident` or keywords (Await..=Null in the enum).
     #[inline]
     pub fn is_identifier_name(self) -> bool {
-        matches!(self, Ident) || self.is_any_keyword()
+        self == Ident || matches!(self as u8, x if x >= Await as u8 && x <= Null as u8)
     }
 
     /// Check the succeeding token of a `let` keyword.
@@ -310,28 +315,27 @@ impl Kind {
 
     #[inline]
     pub fn is_identifier_or_keyword(self) -> bool {
-        self.is_literal_property_name() || matches!(self, Self::PrivateIdentifier)
-    }
-
-    #[inline]
-    pub fn is_variable_declaration(self) -> bool {
-        matches!(self, Var | Let | Const)
+        self.is_literal_property_name() || self == Self::PrivateIdentifier
     }
 
     #[rustfmt::skip]
     #[inline]
     pub fn is_assignment_operator(self) -> bool {
-        matches!(self, Eq | PlusEq | MinusEq | StarEq | SlashEq | PercentEq | ShiftLeftEq | ShiftRightEq
-            | ShiftRight3Eq | Pipe2Eq | Amp2Eq | PipeEq | CaretEq | AmpEq | Question2Eq
-            | Star2Eq)
+        matches!(
+            self,
+            Eq | PlusEq | MinusEq | StarEq | SlashEq | PercentEq | ShiftLeftEq | ShiftRightEq
+            | ShiftRight3Eq | Pipe2Eq | Amp2Eq | PipeEq | CaretEq | AmpEq | Question2Eq | Star2Eq
+        )
     }
 
     #[rustfmt::skip]
     #[inline]
     pub fn is_binary_operator(self) -> bool {
-        matches!(self, Eq2 | Neq | Eq3 | Neq2 | LAngle | LtEq | RAngle | GtEq | ShiftLeft | ShiftRight
-            | ShiftRight3 | Plus | Minus | Star | Slash | Percent | Pipe | Caret | Amp | In
-            | Instanceof | Star2)
+        matches!(
+            self,
+            Eq2 | Neq | Eq3 | Neq2 | LAngle | LtEq | RAngle | GtEq | ShiftLeft | ShiftRight | ShiftRight3
+            | Plus | Minus | Star | Slash | Percent | Pipe | Caret | Amp | In | Instanceof | Star2
+        )
     }
 
     #[inline]
@@ -350,21 +354,22 @@ impl Kind {
     }
 
     /// [Keywords and Reserved Words](https://tc39.es/ecma262/#sec-keywords-and-reserved-words)
+    /// All keywords are contiguous from Await..=Null in the enum for optimal range check.
     #[inline]
     pub fn is_any_keyword(self) -> bool {
-        self.is_reserved_keyword()
-            || self.is_contextual_keyword()
-            || self.is_strict_mode_contextual_keyword()
-            || self.is_future_reserved_keyword()
+        matches!(self as u8, x if x >= Await as u8 && x <= Null as u8)
     }
 
     #[rustfmt::skip]
     #[inline]
     pub fn is_reserved_keyword(self) -> bool {
-        matches!(self, Await | Break | Case | Catch | Class | Const | Continue | Debugger | Default
+        matches!(
+            self,
+            Await | Break | Case | Catch | Class | Const | Continue | Debugger | Default
             | Delete | Do | Else | Enum | Export | Extends | False | Finally | For | Function | If
             | Import | In | Instanceof | New | Null | Return | Super | Switch | This | Throw
-            | True | Try | Typeof | Var | Void | While | With | Yield)
+            | True | Try | Typeof | Var | Void | While | With | Yield
+        )
     }
 
     #[rustfmt::skip]
@@ -376,12 +381,13 @@ impl Kind {
     #[rustfmt::skip]
     #[inline]
     pub fn is_contextual_keyword(self) -> bool {
-        matches!(self, Async | From | Get | Meta | Of | Set | Target | Accessor | Abstract | As | Asserts
-            | Assert | Any | Boolean | Constructor | Declare | Infer | Intrinsic | Is | KeyOf | Module
-            | Namespace | Never | Out | Readonly | Require | Number | Object | Satisfies | String
-            | Symbol | Type | Undefined | Unique | Unknown | Using | Global | BigInt | Override
-            | Source | Defer
-            )
+        matches!(
+            self,
+            Async | From | Get | Meta | Of | Set | Target | Accessor | Abstract | As | Asserts | Assert
+            | Any | Boolean | Constructor | Declare | Infer | Intrinsic | Is | KeyOf | Module | Namespace
+            | Never | Out | Readonly | Require | Number | Object | Satisfies | String | Symbol | Type
+            | Undefined | Unique | Unknown | Using | Global | BigInt | Override | Source | Defer
+        )
     }
 
     #[rustfmt::skip]
@@ -398,8 +404,12 @@ impl Kind {
     #[rustfmt::skip]
     #[inline]
     pub fn is_modifier_kind(self) -> bool {
-        matches!(self, Abstract | Accessor | Async | Const | Declare
-          | In | Out | Public | Private | Protected | Readonly | Static | Override)
+        matches!(
+            self,
+            Abstract | Accessor | Async | Const | Declare
+            | In | Out | Public | Private | Protected | Readonly | Static | Override
+            | Default | Export
+        )
     }
 
     #[inline]
@@ -407,9 +417,11 @@ impl Kind {
         matches!(self, LCurly | LBrack | PrivateIdentifier) || self.is_binding_identifier()
     }
 
+    #[cold]
     pub fn match_keyword(s: &str) -> Self {
         let len = s.len();
-        if len <= 1 || len >= 12 || !s.as_bytes()[0].is_ascii_lowercase() {
+        // SAFETY: Already checked `len <= 1`.
+        if len <= 1 || len >= 12 || !unsafe { s.as_bytes().get_unchecked(0) }.is_ascii_lowercase() {
             return Ident;
         }
         Self::match_keyword_impl(s)
@@ -651,6 +663,10 @@ impl Kind {
             Binary => "binary",
             Octal => "octal",
             Hex => "hex",
+            DecimalBigInt => "decimal bigint",
+            BinaryBigInt => "binary bigint",
+            OctalBigInt => "octal bigint",
+            HexBigInt => "hex bigint",
             Str | String => "string",
             RegExp => "/regexp/",
             NoSubstitutionTemplate => "${}",

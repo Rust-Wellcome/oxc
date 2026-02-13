@@ -172,8 +172,6 @@ impl<'a> TakeIn<'a> for DebuggerStatement {}
 
 impl<'a> TakeIn<'a> for BindingPattern<'a> {}
 
-impl<'a> TakeIn<'a> for BindingPatternKind<'a> {}
-
 impl<'a> TakeIn<'a> for AssignmentPattern<'a> {}
 
 impl<'a> TakeIn<'a> for ObjectPattern<'a> {}
@@ -189,6 +187,8 @@ impl<'a> TakeIn<'a> for Function<'a> {}
 impl<'a> TakeIn<'a> for FormalParameters<'a> {}
 
 impl<'a> TakeIn<'a> for FormalParameter<'a> {}
+
+impl<'a> TakeIn<'a> for FormalParameterRest<'a> {}
 
 impl<'a> TakeIn<'a> for FunctionBody<'a> {}
 
@@ -422,6 +422,8 @@ impl<'a> TakeIn<'a> for TSModuleDeclarationName<'a> {}
 
 impl<'a> TakeIn<'a> for TSModuleDeclarationBody<'a> {}
 
+impl<'a> TakeIn<'a> for TSGlobalDeclaration<'a> {}
+
 impl<'a> TakeIn<'a> for TSModuleBlock<'a> {}
 
 impl<'a> TakeIn<'a> for TSTypeLiteral<'a> {}
@@ -433,6 +435,10 @@ impl<'a> TakeIn<'a> for TSTypeQuery<'a> {}
 impl<'a> TakeIn<'a> for TSTypeQueryExprName<'a> {}
 
 impl<'a> TakeIn<'a> for TSImportType<'a> {}
+
+impl<'a> TakeIn<'a> for TSImportTypeQualifier<'a> {}
+
+impl<'a> TakeIn<'a> for TSImportTypeQualifiedName<'a> {}
 
 impl<'a> TakeIn<'a> for TSFunctionType<'a> {}
 

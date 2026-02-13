@@ -3,11 +3,12 @@ use oxc_cfg::{
     EdgeType, ErrorEdgeKind, Instruction, InstructionKind,
     graph::{
         Direction,
-        visit::{Control, DfsEvent, EdgeRef, depth_first_search},
+        visit::{Control, DfsEvent, EdgeRef, set_depth_first_search},
     },
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
+use oxc_semantic::NodeId;
 use oxc_span::{GetSpan, Span};
 
 use crate::{context::LintContext, rule::Rule};
@@ -23,7 +24,10 @@ pub struct NoUnreachable;
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// Disallow unreachable code after `return`, `throw`, `continue`, and `break` statements
+    /// Disallow unreachable code after `return`, `throw`, `continue`, and `break` statements.
+    ///
+    /// This rule can be disabled for TypeScript code if `allowUnreachableCode: false` is configured
+    /// in the `tsconfig.json`, as the TypeScript compiler enforces this check.
     ///
     /// ### Why is this bad?
     ///
@@ -54,7 +58,7 @@ declare_oxc_lint!(
 impl Rule for NoUnreachable {
     fn run_once(&self, ctx: &LintContext) {
         let nodes = ctx.nodes();
-        let Some(root) = nodes.root_node() else { return };
+        let root = nodes.get_node(NodeId::ROOT);
         let cfg = ctx.cfg();
         let graph = cfg.graph();
 
@@ -67,18 +71,19 @@ impl Rule for NoUnreachable {
         let mut infinite_loops = Vec::new();
 
         // Set the root as reachable.
-        unreachables[root.cfg_id().index()] = false;
+        let root_cfg_id = ctx.nodes().cfg_id(root.id());
+        unreachables[root_cfg_id.index()] = false;
 
         // In our first path we first check if each block is definitely unreachable, If it is then
         // we set it as such, If we encounter an infinite loop we keep its end block since it can
         // prevent other reachable blocks from ever getting executed.
-        let _: Control<()> = depth_first_search(graph, Some(root.cfg_id()), |event| {
+        let _: Control<()> = set_depth_first_search(graph, Some(root_cfg_id), |event| {
             if let DfsEvent::Finish(node, _) = event {
                 let unreachable = cfg.basic_block(node).is_unreachable();
                 unreachables[node.index()] = unreachable;
 
-                if !unreachable {
-                    if let Some(it) = cfg.is_infinite_loop_start(node, |instruction| {
+                if !unreachable
+                    && let Some(it) = cfg.is_infinite_loop_start(node, |instruction| {
                         use oxc_cfg::EvalConstConditionResult::{Eval, Fail, NotFound};
                         match instruction {
                             Instruction { kind: InstructionKind::Condition, node_id: Some(id) } => {
@@ -89,9 +94,9 @@ impl Rule for NoUnreachable {
                             }
                             _ => NotFound,
                         }
-                    }) {
-                        infinite_loops.push(it);
-                    }
+                    })
+                {
+                    infinite_loops.push(it);
                 }
             }
             Control::Continue
@@ -110,7 +115,7 @@ impl Rule for NoUnreachable {
                 .collect();
 
             // Search with all `Normal` edges as starting point(s).
-            let _: Control<()> = depth_first_search(graph, starts, |event| match event {
+            let _: Control<()> = set_depth_first_search(graph, starts, |event| match event {
                 DfsEvent::Discover(node, _) => {
                     let mut incoming = graph.edges_directed(node, Direction::Incoming);
                     if incoming.any(|e| match e.weight() {
@@ -167,7 +172,7 @@ impl Rule for NoUnreachable {
                 continue;
             }
 
-            if unreachables[node.cfg_id().index()] {
+            if unreachables[ctx.nodes().cfg_id(node.id()).index()] {
                 ctx.diagnostic(no_unreachable_diagnostic(node.kind().span()));
             }
         }

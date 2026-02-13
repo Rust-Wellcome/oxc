@@ -4,6 +4,121 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.111.0] - 2026-01-26
+
+### 💥 BREAKING CHANGES
+
+- 777fc40 ast: [**BREAKING**] Add `Ident` type (#18354) (Boshen)
+- af0ca46 span: [**BREAKING**] Use `ModuleKind::CommonJS` for `SourceType::cjs()` (#18276) (sapphi-red)
+
+## [0.109.0] - 2026-01-19
+
+### 💥 BREAKING CHANGES
+
+- ba9c750 span: [**BREAKING**] Use `ModuleKind::CommonJS` for `.cjs` and `.cts` file extensions (#18117) (Boshen)
+
+### 🚀 Features
+
+- 66b8c02 parser: Implement unambiguous module parsing for JS/TS files (#18124) (Boshen)
+- 08dad63 span: Add `sourceType: 'commonjs'` support (#18089) (Boshen)
+
+## [0.104.0] - 2025-12-19
+
+### 🚀 Features
+
+- 5586823 span: Extract TS declaration file check to its own function (#17037) (camchenry)
+
+## [0.100.0] - 2025-12-01
+
+### ⚡ Performance
+
+- cc2f352 span: Add `#[inline]` to `Atom` methods (#16311) (overlookmotel)
+- ffca070 span: Add `#[repr(transparent)]` to `Atom` (#16310) (overlookmotel)
+
+## [0.99.0] - 2025-11-24
+
+### 🚀 Features
+
+- 6cff132 span: Add `Span::merge_within` method (#15869) (sapphi-red)
+
+## [0.97.0] - 2025-11-11
+
+### 📚 Documentation
+
+- 3dc24b5 linter,minifier: Always refer as "ES Modules" instead of "ES6 Modules" (#15409) (sapphi-red)
+
+
+
+
+
+
+## [0.91.0] - 2025-09-22
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
+
+
+
+## [0.88.0] - 2025-09-15
+
+### 🐛 Bug Fixes
+
+- ab51394 raw_transfer: Disable layout assertions on some 32-bit platforms (#13716) (overlookmotel)
+
+### 🚜 Refactor
+
+- babbaca all: Remove `pub` from modules with no exports (#13618) (overlookmotel)
+
+
+
+
+
+
+
+
+
+
+
+
+## [0.80.0] - 2025-08-03
+
+### 🚀 Features
+
+- 43eb80d span: Add `move_right` and `move_left` (#12646) (Sysix)
+
+### 📚 Documentation
+
+- de1de35 rust: Add comprehensive README.md documentation for all Rust crates (#12706) (Copilot)
+
+
+
+
+
+
+## [0.77.2] - 2025-07-17
+
+### 🐛 Bug Fixes
+
+- dac4db9 linter/exhaustive-deps: Better diagnostics for missing dependencies (#12337) (Don Isaac)
+
+
+
+
+
+## [0.75.1] - 2025-07-03
+
+### 🐛 Bug Fixes
+
+- d7076b3 ast/estree: Add optional `range` field to `Span` in TS type defs (#12014) (overlookmotel)
+
+### 🚜 Refactor
+
+- 016634f ast/estree: Introduce `serialize_span` method (#12013) (overlookmotel)
+
+
 
 
 

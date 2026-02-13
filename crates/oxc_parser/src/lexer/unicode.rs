@@ -2,13 +2,15 @@ use std::{borrow::Cow, fmt::Write};
 
 use cow_utils::CowUtils;
 
-use oxc_allocator::StringBuilder;
-use oxc_syntax::identifier::{
-    CR, FF, LF, LS, PS, TAB, VT, is_identifier_part, is_identifier_start,
-    is_identifier_start_unicode, is_irregular_line_terminator, is_irregular_whitespace,
-};
-
 use crate::diagnostics;
+use oxc_allocator::StringBuilder;
+use oxc_syntax::{
+    identifier::{
+        FF, TAB, VT, is_identifier_part, is_identifier_start, is_identifier_start_unicode,
+        is_irregular_whitespace,
+    },
+    line_terminator::{CR, LF, LS, PS, is_irregular_line_terminator},
+};
 
 use super::{Kind, Lexer, Span};
 
@@ -31,29 +33,49 @@ impl<'a> Lexer<'a> {
     pub(super) fn unicode_char_handler(&mut self) -> Kind {
         let c = self.peek_char().unwrap();
         match c {
+            // U+FFFD (replacement character) appears when a binary file is decoded as UTF-8.
+            // This is likely a binary file that cannot be parsed.
+            // <https://github.com/microsoft/TypeScript/blob/main/src/compiler/scanner.ts>
+            '\u{FFFD}' => self.handle_binary_file(),
             c if is_identifier_start_unicode(c) => {
                 let start_pos = self.source.position();
                 self.consume_char();
                 self.identifier_tail_after_unicode(start_pos);
                 Kind::Ident
             }
-            c if is_irregular_whitespace(c) => {
-                self.consume_char();
-                self.trivia_builder.add_irregular_whitespace(self.token.start(), self.offset());
-                Kind::Skip
-            }
-            c if is_irregular_line_terminator(c) => {
-                self.consume_char();
-                self.token.set_is_on_new_line(true);
-                self.trivia_builder.add_irregular_whitespace(self.token.start(), self.offset());
-                Kind::Skip
-            }
-            _ => {
-                self.consume_char();
-                self.error(diagnostics::invalid_character(c, self.unterminated_range()));
-                Kind::Undetermined
-            }
+            c if is_irregular_whitespace(c) => self.handle_irregular_whitespace(c),
+            c if is_irregular_line_terminator(c) => self.handle_irregular_line_terminator(c),
+            _ => self.handle_invalid_unicode_char(c),
         }
+    }
+
+    #[cold]
+    fn handle_binary_file(&mut self) -> Kind {
+        self.error(diagnostics::file_appears_to_be_binary());
+        self.source.advance_to_end();
+        Kind::Eof
+    }
+
+    #[cold]
+    fn handle_irregular_whitespace(&mut self, _c: char) -> Kind {
+        self.consume_char();
+        self.trivia_builder.add_irregular_whitespace(self.token.start(), self.offset());
+        Kind::Skip
+    }
+
+    #[cold]
+    fn handle_irregular_line_terminator(&mut self, _c: char) -> Kind {
+        self.consume_char();
+        self.token.set_is_on_new_line(true);
+        self.trivia_builder.add_irregular_whitespace(self.token.start(), self.offset());
+        Kind::Skip
+    }
+
+    #[cold]
+    fn handle_invalid_unicode_char(&mut self, c: char) -> Kind {
+        self.consume_char();
+        self.error(diagnostics::invalid_character(c, self.unterminated_range()));
+        Kind::Undetermined
     }
 
     /// Identifier `UnicodeEscapeSequence`
@@ -287,14 +309,14 @@ impl<'a> Lexer<'a> {
 
         // The second code unit of a surrogate pair is always in the range from 0xDC00 to 0xDFFF,
         // and is called a low surrogate or a trail surrogate.
-        if let Some(low) = self.hex_4_digits() {
-            if (MIN_LOW..=MAX_LOW).contains(&low) {
-                let code_point = pair_to_code_point(high, low);
-                // SAFETY: `high` and `low` have been checked to be in ranges which always yield a `code_point`
-                // which is a valid `char`
-                let ch = unsafe { char::from_u32_unchecked(code_point) };
-                return Some(UnicodeEscape::SurrogatePair(ch));
-            }
+        if let Some(low) = self.hex_4_digits()
+            && (MIN_LOW..=MAX_LOW).contains(&low)
+        {
+            let code_point = pair_to_code_point(high, low);
+            // SAFETY: `high` and `low` have been checked to be in ranges which always yield a `code_point`
+            // which is a valid `char`
+            let ch = unsafe { char::from_u32_unchecked(code_point) };
+            return Some(UnicodeEscape::SurrogatePair(ch));
         }
 
         // Not a valid surrogate pair.

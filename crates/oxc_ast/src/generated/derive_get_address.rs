@@ -313,6 +313,7 @@ impl GetAddress for Statement<'_> {
             Self::TSInterfaceDeclaration(it) => GetAddress::address(it),
             Self::TSEnumDeclaration(it) => GetAddress::address(it),
             Self::TSModuleDeclaration(it) => GetAddress::address(it),
+            Self::TSGlobalDeclaration(it) => GetAddress::address(it),
             Self::TSImportEqualsDeclaration(it) => GetAddress::address(it),
             Self::ImportDeclaration(it) => GetAddress::address(it),
             Self::ExportAllDeclaration(it) => GetAddress::address(it),
@@ -336,6 +337,7 @@ impl GetAddress for Declaration<'_> {
             Self::TSInterfaceDeclaration(it) => GetAddress::address(it),
             Self::TSEnumDeclaration(it) => GetAddress::address(it),
             Self::TSModuleDeclaration(it) => GetAddress::address(it),
+            Self::TSGlobalDeclaration(it) => GetAddress::address(it),
             Self::TSImportEqualsDeclaration(it) => GetAddress::address(it),
         }
     }
@@ -414,7 +416,7 @@ impl GetAddress for ForStatementLeft<'_> {
     }
 }
 
-impl GetAddress for BindingPatternKind<'_> {
+impl GetAddress for BindingPattern<'_> {
     // `#[inline]` because compiler should boil this down to a single assembly instruction
     #[inline]
     fn address(&self) -> Address {
@@ -727,6 +729,7 @@ impl GetAddress for TSTypeName<'_> {
         match self {
             Self::IdentifierReference(it) => GetAddress::address(it),
             Self::QualifiedName(it) => GetAddress::address(it),
+            Self::ThisExpression(it) => GetAddress::address(it),
         }
     }
 }
@@ -763,6 +766,18 @@ impl GetAddress for TSTypeQueryExprName<'_> {
         match self {
             Self::TSImportType(it) => GetAddress::address(it),
             Self::IdentifierReference(it) => GetAddress::address(it),
+            Self::QualifiedName(it) => GetAddress::address(it),
+            Self::ThisExpression(it) => GetAddress::address(it),
+        }
+    }
+}
+
+impl GetAddress for TSImportTypeQualifier<'_> {
+    // `#[inline]` because compiler should boil this down to a single assembly instruction
+    #[inline]
+    fn address(&self) -> Address {
+        match self {
+            Self::Identifier(it) => GetAddress::address(it),
             Self::QualifiedName(it) => GetAddress::address(it),
         }
     }

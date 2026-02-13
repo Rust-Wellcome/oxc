@@ -42,8 +42,13 @@ impl Symbol<'_, '_> {
                 AstKind::ParenthesizedExpression(_)
                 | AstKind::VariableDeclaration(_)
                 | AstKind::BindingIdentifier(_)
-                | AstKind::SimpleAssignmentTarget(_)
-                | AstKind::AssignmentTarget(_) => {}
+                | AstKind::IdentifierReference(_)
+                | AstKind::ComputedMemberExpression(_)
+                | AstKind::StaticMemberExpression(_)
+                | AstKind::PrivateFieldExpression(_)
+                | AstKind::AssignmentTargetPropertyIdentifier(_)
+                | AstKind::ArrayAssignmentTarget(_)
+                | AstKind::ObjectAssignmentTarget(_) => {}
                 AstKind::ForInStatement(ForInStatement { body, .. })
                 | AstKind::ForOfStatement(ForOfStatement { body, .. }) => match body {
                     Statement::ReturnStatement(_) => return true,
@@ -65,16 +70,47 @@ impl Symbol<'_, '_> {
     pub fn is_in_declared_module(&self) -> bool {
         let scopes = self.scoping();
         let nodes = self.nodes();
-        scopes.scope_ancestors(self.scope_id())
+        scopes
+            .scope_ancestors(self.scope_id())
             .map(|scope_id| scopes.get_node_id(scope_id))
             .map(|node_id| nodes.get_node(node_id))
-            .any(|node| matches!(node.kind(), AstKind::TSModuleDeclaration(namespace) if is_ambient_namespace(namespace)))
+            .any(|node| match node.kind() {
+                AstKind::TSModuleDeclaration(namespace) => {
+                    is_ambient_namespace_without_explicit_exports(namespace)
+                }
+                // No need to check `declare` field, as `global` is only valid in ambient context
+                AstKind::TSGlobalDeclaration(_) => true,
+                _ => false,
+            })
     }
 }
 
 #[inline]
-fn is_ambient_namespace(namespace: &TSModuleDeclaration) -> bool {
-    namespace.declare || namespace.kind.is_global()
+fn is_ambient_namespace_without_explicit_exports(namespace: &TSModuleDeclaration) -> bool {
+    // Must be declared (ambient context)
+    if !namespace.declare {
+        return false;
+    }
+
+    // If the module has explicit exports, unused types should still be checked
+    // For modules with string literal names (like `declare module 'foo'`), if they have
+    // an export statement, then only exported items are available externally
+    if let Some(TSModuleDeclarationBody::TSModuleBlock(block)) = &namespace.body {
+        let has_export = block.body.iter().any(|stmt| {
+            matches!(
+                stmt,
+                Statement::ExportAllDeclaration(_)
+                    | Statement::ExportDefaultDeclaration(_)
+                    | Statement::ExportNamedDeclaration(_)
+                    | Statement::TSExportAssignment(_)
+            )
+        });
+        if has_export {
+            return false;
+        }
+    }
+
+    true
 }
 
 impl NoUnusedVars {
@@ -84,10 +120,7 @@ impl NoUnusedVars {
         symbol: &Symbol<'_, 'a>,
         namespace: &TSModuleDeclaration<'a>,
     ) -> bool {
-        if is_ambient_namespace(namespace) {
-            return true;
-        }
-        symbol.is_in_declared_module()
+        namespace.declare || symbol.is_in_declared_module()
     }
 
     /// Returns `true` if this unused variable declaration should be allowed
@@ -106,6 +139,10 @@ impl NoUnusedVars {
             return true;
         }
 
+        if self.ignore_using_declarations && decl.kind.is_using() {
+            return true;
+        }
+
         false
     }
 
@@ -115,7 +152,7 @@ impl NoUnusedVars {
         symbol: &Symbol<'_, '_>,
         declaration_id: NodeId,
     ) -> bool {
-        matches!(symbol.nodes().parent_kind(declaration_id), Some(AstKind::TSMappedType(_)))
+        matches!(symbol.nodes().parent_kind(declaration_id), AstKind::TSMappedType(_))
     }
 
     /// Returns `true` if this unused parameter should be allowed (i.e. not
@@ -161,7 +198,7 @@ impl NoUnusedVars {
         // positional arguments after the last used argument will be checked.
 
         // unused non-positional arguments are never allowed
-        if param.pattern.kind.is_destructuring_pattern() {
+        if param.pattern.is_destructuring_pattern() {
             return false;
         }
 
@@ -204,7 +241,7 @@ impl NoUnusedVars {
         param: &FormalParameter<'a>,
         params_id: NodeId,
     ) -> bool {
-        let mut parents_iter = semantic.nodes().ancestor_kinds(params_id).skip(1);
+        let mut parents_iter = semantic.nodes().ancestor_kinds(params_id);
 
         // in function declarations, the parent immediately before the
         // FormalParameters is a TSDeclareBlock

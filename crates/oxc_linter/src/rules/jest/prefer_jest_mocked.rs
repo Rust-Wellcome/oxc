@@ -1,6 +1,6 @@
 use oxc_ast::{
     AstKind,
-    ast::{TSAsExpression, TSType, TSTypeAssertion, TSTypeName, TSTypeReference},
+    ast::{AssignmentTarget, TSAsExpression, TSType, TSTypeAssertion, TSTypeName, TSTypeReference},
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
@@ -30,6 +30,14 @@ declare_oxc_lint!(
     /// - `jest.MockedClass`
     /// - `jest.MockedObject`
     ///
+    /// ### Why is this bad?
+    ///
+    /// Using type assertions like `fn as jest.Mock` is a less safe approach
+    /// than using `jest.mocked()`. The `jest.mocked()` helper provides better
+    /// type safety by preserving the original function signature while adding
+    /// mock capabilities. It also makes the code more readable and explicit
+    /// about mocking intentions.
+    ///
     /// ### Examples
     ///
     /// Examples of **incorrect** code for this rule:
@@ -57,7 +65,7 @@ declare_oxc_lint!(
 impl Rule for PreferJestMocked {
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
         if let AstKind::TSAsExpression(ts_expr) = node.kind() {
-            if !matches!(ctx.nodes().parent_kind(node.id()), Some(AstKind::TSAsExpression(_))) {
+            if !matches!(ctx.nodes().parent_kind(node.id()), AstKind::TSAsExpression(_)) {
                 Self::check_ts_as_expression(node, ts_expr, ctx);
             }
         } else if let AstKind::TSTypeAssertion(assert_type) = node.kind() {
@@ -125,8 +133,26 @@ impl PreferJestMocked {
 }
 
 fn can_fix<'a>(node: &AstNode<'a>, ctx: &LintContext<'a>) -> bool {
-    outermost_paren_parent(node, ctx)
-        .is_some_and(|parent| !matches!(parent.kind(), AstKind::SimpleAssignmentTarget(_)))
+    outermost_paren_parent(node, ctx).is_some_and(|parent| {
+        let parent_kind = parent.kind();
+        // Disallow fix if parent is AssignmentExpression and node is the left-hand side
+        if let AstKind::AssignmentExpression(assign_expr) = parent_kind
+            && is_left_hand_side_of_assignment(&assign_expr.left, node)
+        {
+            return false;
+        }
+        !matches!(
+            parent_kind,
+            AstKind::IdentifierReference(_)
+                | AstKind::ComputedMemberExpression(_)
+                | AstKind::PrivateFieldExpression(_)
+        )
+    })
+}
+
+/// Check if the current node is the left-hand side of an assignment expression
+fn is_left_hand_side_of_assignment(assignment_target: &AssignmentTarget, node: &AstNode) -> bool {
+    assignment_target.span() == node.span()
 }
 
 #[test]

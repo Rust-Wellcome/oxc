@@ -61,21 +61,23 @@ impl Rule for PreferDomNodeTextContent {
                     return;
                 }
 
-                let mut ancestor_kinds = ctx.nodes().ancestor_kinds(node.id()).skip(1);
-                let (Some(parent_node_kind), Some(grand_parent_node_kind)) =
-                    (ancestor_kinds.next(), ancestor_kinds.next())
-                else {
-                    return;
-                };
+                let parent_node = ctx.nodes().parent_node(node.id());
+                let grand_parent_node = ctx.nodes().parent_node(parent_node.id());
 
-                if matches!(parent_node_kind, AstKind::PropertyKey(_))
-                    && (matches!(grand_parent_node_kind, AstKind::ObjectPattern(_))
-                        || matches!(
-                            grand_parent_node_kind,
-                            AstKind::ObjectAssignmentTarget(_)
-                                | AstKind::SimpleAssignmentTarget(_)
-                                | AstKind::AssignmentTarget(_)
-                        ))
+                if matches!(
+                    parent_node.kind(),
+                    AstKind::BindingProperty(_) | AstKind::AssignmentTargetPropertyProperty(_)
+                ) && (matches!(grand_parent_node.kind(), AstKind::ObjectPattern(_))
+                    || matches!(
+                        grand_parent_node.kind(),
+                        AstKind::IdentifierReference(_)
+                            | AstKind::ObjectAssignmentTarget(_)
+                            | AstKind::AssignmentTargetPropertyIdentifier(_)
+                            | AstKind::ArrayAssignmentTarget(_)
+                            | AstKind::ComputedMemberExpression(_)
+                            | AstKind::StaticMemberExpression(_)
+                            | AstKind::PrivateFieldExpression(_)
+                    ))
                 {
                     ctx.diagnostic(prefer_dom_node_text_content_diagnostic(identifier.span));
                 }
@@ -86,19 +88,22 @@ impl Rule for PreferDomNodeTextContent {
                     return;
                 }
 
-                let mut ancestor_kinds = ctx.nodes().ancestor_kinds(node.id()).skip(1);
-                let (Some(parent_node_kind), Some(grand_parent_node_kind)) =
-                    (ancestor_kinds.next(), ancestor_kinds.next())
-                else {
-                    return;
-                };
+                let mut ancestor_kinds = ctx.nodes().ancestor_kinds(node.id());
 
-                if matches!(
-                    parent_node_kind,
-                    AstKind::ObjectAssignmentTarget(_)
-                        | AstKind::AssignmentTarget(_)
-                        | AstKind::SimpleAssignmentTarget(_)
-                ) && matches!(grand_parent_node_kind, AstKind::AssignmentTargetPattern(_))
+                let Some(mut parent_node_kind) = ancestor_kinds.next() else { return };
+                if matches!(parent_node_kind, AstKind::AssignmentTargetPropertyIdentifier(_)) {
+                    let Some(next) = ancestor_kinds.next() else { return };
+                    parent_node_kind = next;
+                }
+                let Some(grand_parent_node_kind) = ancestor_kinds.next() else { return };
+
+                if matches!(parent_node_kind, AstKind::ObjectAssignmentTarget(_))
+                    && matches!(
+                        grand_parent_node_kind,
+                        AstKind::ExpressionStatement(_)
+                            | AstKind::AssignmentExpression(_)
+                            | AstKind::ObjectAssignmentTarget(_)
+                    )
                 {
                     ctx.diagnostic(prefer_dom_node_text_content_diagnostic(identifier_ref.span));
                 }
@@ -146,7 +151,7 @@ fn test() {
     ];
 
     // TODO: implement a fixer for destructuring assignment cases
-    let fix = vec![
+    let fix: Vec<(&'static str, &'static str)> = vec![
         ("node.innerText;", "node.textContent;"),
         ("node?.innerText;", "node?.textContent;"),
         ("node.innerText = 'foo';", "node.textContent = 'foo';"),

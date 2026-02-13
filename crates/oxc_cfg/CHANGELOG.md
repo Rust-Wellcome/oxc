@@ -4,6 +4,72 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.109.0] - 2026-01-19
+
+### 🐛 Bug Fixes
+
+- 2aae4fc linter: Fix stack overflow in `no-unreachable` rule on large files (#18077) (Boshen)
+
+## [0.96.0] - 2025-10-30
+
+### 📚 Documentation
+
+- a1cda35 semantic/cfg: Add documentation for `EdgeType` (#14859) (camc314)
+
+
+
+## [0.94.0] - 2025-10-06
+
+### 🚀 Features
+
+- 3656908 rust: Oxc-index-vec v4.0 (#14254) (Boshen)
+
+
+
+
+## [0.91.0] - 2025-09-22
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## [0.82.0] - 2025-08-12
+
+### 🚜 Refactor
+
+- 1cb8e1b cfg, formatter: Remove unnecessary `return` statements (#12896) (overlookmotel)
+
+
+
+## [0.80.0] - 2025-08-03
+
+### 📚 Documentation
+
+- de1de35 rust: Add comprehensive README.md documentation for all Rust crates (#12706) (Copilot)
+
+
+
+
+
+
+
+
+
+
+
 
 
 

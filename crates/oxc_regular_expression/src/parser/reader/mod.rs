@@ -1,6 +1,12 @@
+mod ast;
+mod characters;
+mod options;
 mod reader_impl;
 mod string_literal_parser;
+mod template_literal_parser;
 
+pub use ast::*;
+pub use options::Options;
 pub use reader_impl::Reader;
 
 #[cfg(test)]
@@ -154,5 +160,30 @@ mod test {
                 }
             }
         }
+    }
+
+    #[test]
+    fn escape_kind_tracking() {
+        use crate::parser::reader::EscapeKind;
+
+        // For regexp literal, escape kind should be None (escapes are handled by pattern parser)
+        let mut reader1 = Reader::initialize(r"A\u0301", true, false).unwrap();
+        assert_eq!(reader1.peek_escape_kind(), EscapeKind::None); // 'A'
+        reader1.advance();
+        assert_eq!(reader1.peek_escape_kind(), EscapeKind::None); // '\' - literal in regexp
+        reader1.advance();
+        assert_eq!(reader1.peek_escape_kind(), EscapeKind::None); // 'u'
+
+        // For string literal, unicode escapes should be tracked
+        let mut reader2 = Reader::initialize(r#""A\u0301""#, true, true).unwrap();
+        assert_eq!(reader2.peek_escape_kind(), EscapeKind::None); // 'A'
+        reader2.advance();
+        assert_eq!(reader2.peek_escape_kind(), EscapeKind::Unicode); // \u0301 resolved to U+0301
+
+        // For string literal with hex escape
+        let mut reader3 = Reader::initialize(r#""A\x41""#, true, true).unwrap();
+        assert_eq!(reader3.peek_escape_kind(), EscapeKind::None); // 'A'
+        reader3.advance();
+        assert_eq!(reader3.peek_escape_kind(), EscapeKind::Hexadecimal); // \x41 resolved to 'A'
     }
 }

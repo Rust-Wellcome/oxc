@@ -4,11 +4,10 @@ use std::{
 };
 
 use cow_utils::CowUtils;
-use similar::TextDiff;
 
 use oxc::{
     allocator::Allocator,
-    codegen::{Codegen, CodegenOptions},
+    codegen::{Codegen, CodegenOptions, CommentOptions, IndentChar},
     diagnostics::{NamedSource, OxcDiagnostic},
     parser::{ParseOptions, Parser},
     span::{SourceType, VALID_EXTENSIONS},
@@ -44,10 +43,10 @@ impl TestCase {
     pub fn new(cwd: &Path, path: &Path) -> Option<Self> {
         let mut options_directory_path = path.parent().unwrap().to_path_buf();
         // Try to find the override options.json
-        if let Some(path) = Self::convert_to_override_path(options_directory_path.as_path()) {
-            if path.join("options.json").exists() {
-                options_directory_path = path;
-            }
+        if let Some(path) = Self::convert_to_override_path(options_directory_path.as_path())
+            && path.join("options.json").exists()
+        {
+            options_directory_path = path;
         }
 
         let mut options = BabelOptions::from_test_path(options_directory_path.as_path());
@@ -118,13 +117,13 @@ impl TestCase {
             })?;
 
         // Try to find the override output path
-        if let Some(output_path) = Self::convert_to_override_path(&babel_output_path) {
-            if output_path.exists() {
-                return Some(output_path);
-            }
+        if let Some(output_path) = Self::convert_to_override_path(&babel_output_path)
+            && output_path.exists()
+        {
+            Some(output_path)
+        } else {
+            Some(babel_output_path)
         }
-
-        Some(babel_output_path)
     }
 
     pub fn write_override_output(&self) {
@@ -140,8 +139,7 @@ impl TestCase {
             return;
         };
         fs::create_dir_all(override_output_path.parent().unwrap()).unwrap();
-        let transformed_code = self.transformed_code.cow_replace("\t", "  ");
-        fs::write(&override_output_path, transformed_code.as_bytes()).unwrap();
+        fs::write(&override_output_path, self.transformed_code.as_bytes()).unwrap();
     }
 
     pub fn skip_test_case(&self) -> bool {
@@ -202,6 +200,19 @@ impl TestCase {
         // Skip custom preset and flow
         if options.presets.unsupported.iter().any(|s| s.starts_with("./") || s == "flow") {
             return true;
+        }
+
+        // Skip tests that expect parser errors.
+        // Parser errors are already tested by parser conformance tests.
+        // Transform conformance should only test transformation logic.
+        if options.throws.is_some()
+            && let Ok(source) = fs::read_to_string(&self.path)
+        {
+            let allocator = Allocator::default();
+            let ret = Parser::new(&allocator, &source, self.source_type).parse();
+            if !ret.errors.is_empty() {
+                return true;
+            }
         }
 
         false
@@ -325,10 +336,14 @@ impl TestCase {
 
                     Codegen::new()
                         .with_options(CodegenOptions {
-                            comments: false,
-                            // Disable pure annotation comments for async_to_generator plugin,
-                            // because it's weird some tests have it and some don't.
-                            annotation_comments: !babel_options.plugins.async_to_generator,
+                            comments: CommentOptions {
+                                // Disable pure annotation comments for async_to_generator plugin,
+                                // because it's weird some tests have it and some don't.
+                                annotation: !babel_options.plugins.async_to_generator,
+                                ..CommentOptions::default()
+                            },
+                            indent_char: IndentChar::Space,
+                            indent_width: 2,
                             ..CodegenOptions::default()
                         })
                         .build(&ret.program)
@@ -358,26 +373,22 @@ impl TestCase {
                 if let Some(actual_errors) = &actual_errors {
                     println!("{actual_errors}\n");
                     if !passed {
-                        let diff = TextDiff::from_lines(&output, actual_errors);
                         println!("Diff:\n");
-                        print_diff_in_terminal(&diff);
+                        print_diff_in_terminal(&output, actual_errors);
                     }
                 }
             } else {
                 println!("Expected:\n");
-                let output = output.cow_replace("\t", "  ");
                 println!("{output}\n");
                 println!("Transformed:\n");
-                let transformed_code = self.transformed_code.cow_replace("\t", "  ");
-                println!("{transformed_code}");
+                println!("{}\n", self.transformed_code);
                 println!("Errors:\n");
                 if let Some(actual_errors) = &actual_errors {
                     println!("{actual_errors}\n");
                 }
                 if !passed {
-                    let diff = TextDiff::from_lines(&output, &transformed_code);
                     println!("Diff:\n");
-                    print_diff_in_terminal(&diff);
+                    print_diff_in_terminal(&output, &self.transformed_code);
                 }
             }
 

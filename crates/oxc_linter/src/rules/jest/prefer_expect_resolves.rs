@@ -4,7 +4,7 @@ use oxc_ast::{
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
-use oxc_span::Span;
+use oxc_span::{GetSpan, Span};
 
 use crate::{
     context::LintContext,
@@ -24,19 +24,24 @@ pub struct PreferExpectResolves;
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// When working with promises, there are two primary ways you can test the resolved
-    /// value:
+    /// Prefer `await expect(...).resolves` over `expect(await ...)` when testing
+    /// promises.
+    ///
+    /// ### Why is this bad?
+    ///
+    /// When working with promises, there are two primary ways you can test the
+    /// resolved value:
     /// 1. use the `resolve` modifier on `expect`
     /// (`await expect(...).resolves.<matcher>` style)
     /// 2. `await` the promise and assert against its result
     /// (`expect(await ...).<matcher>` style)
     ///
-    /// While the second style is arguably less dependent on `jest`, if the promise
-    /// rejects it will be treated as a general error, resulting in less predictable
-    /// behaviour and output from `jest`.
+    /// While the second style is arguably less dependent on `jest`, if the
+    /// promise rejects it will be treated as a general error, resulting in less
+    /// predictable behaviour and output from `jest`.
     ///
-    /// Additionally, favoring the first style ensures consistency with its `rejects`
-    /// counterpart, as there is no way of "awaiting" a rejection.
+    /// Additionally, favoring the first style ensures consistency with its
+    /// `rejects` counterpart, as there is no way of "awaiting" a rejection.
     ///
     /// ### Examples
     ///
@@ -66,6 +71,17 @@ declare_oxc_lint!(
     ///         'oh noes!',
     ///     );
     /// });
+    /// ```
+    ///
+    /// This rule is compatible with [eslint-plugin-vitest](https://github.com/vitest-dev/eslint-plugin-vitest/blob/main/docs/rules/prefer-expect-resolves.md),
+    /// to use it, add the following configuration to your `.oxlintrc.json`:
+    ///
+    /// ```json
+    /// {
+    ///   "rules": {
+    ///      "vitest/prefer-expect-resolves": "error"
+    ///   }
+    /// }
     /// ```
     PreferExpectResolves,
     jest,
@@ -97,21 +113,10 @@ impl Rule for PreferExpectResolves {
         let Argument::AwaitExpression(await_expr) = argument else {
             return;
         };
-        let Some(ident) = call_expr.callee.get_identifier_reference() else {
-            return;
-        };
         ctx.diagnostic_with_fix(expect_resolves(await_expr.span), |fixer| {
-            let offset = match &await_expr.argument {
-                Expression::CallExpression(call_expr) => call_expr.span.start - ident.span.end,
-                Expression::Identifier(promise_ident) => promise_ident.span.start - ident.span.end,
-                _ => 0,
-            };
-            let arg_span = Span::new(
-                call_expr.span.start + (ident.span.end - ident.span.start) + offset,
-                await_expr.span.end,
-            );
             let local = jest_expect_fn_call.local.as_ref();
-            let argument = fixer.source_range(arg_span);
+            // Get the source text of the awaited expression (without the `await` keyword)
+            let argument = fixer.source_range(await_expr.argument.span());
             let mut code = String::with_capacity(local.len() + argument.len() + 17);
             code.push_str("await ");
             code.push_str(local);
@@ -238,6 +243,11 @@ fn tests() {
                     await pleaseExpect(myPromise).resolves.toBe(true);
                 });
             ",
+            None,
+        ),
+        (
+            "it('is true', async () => { expect(await mockTaskManager.runSoon).toHaveBeenCalledTimes(1); });",
+            "it('is true', async () => { await expect(mockTaskManager.runSoon).resolves.toHaveBeenCalledTimes(1); });",
             None,
         ),
     ];

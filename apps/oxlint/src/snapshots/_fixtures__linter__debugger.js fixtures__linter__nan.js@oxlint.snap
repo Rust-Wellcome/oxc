@@ -6,22 +6,29 @@ arguments: fixtures/linter/debugger.js fixtures/linter/nan.js
 working directory: 
 ----------
 
-  ! ]8;;https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-debugger.html\eslint(no-debugger)]8;;\: `debugger` statement is not allowed
+  ! eslint(no-debugger): `debugger` statement is not allowed
    ,-[fixtures/linter/debugger.js:1:1]
  1 | debugger;
    : ^^^^^^^^^
    `----
   help: Remove the debugger statement
 
-  ! ]8;;https://oxc.rs/docs/guide/usage/linter/rules/eslint/use-isnan.html\eslint(use-isnan)]8;;\: Requires calls to isNaN() when checking for NaN
+  ! eslint(no-unused-expressions): Expected expression to be used
+   ,-[fixtures/linter/nan.js:1:1]
+ 1 | 123 == NaN;
+   : ^^^^^^^^^^^
+   `----
+  help: Consider using this expression or removing it
+
+  ! eslint(use-isnan): Checking equality with NaN will always return false
    ,-[fixtures/linter/nan.js:1:8]
  1 | 123 == NaN;
    :        ^^^
    `----
-  help: Use the isNaN function to compare with NaN.
+  help: Use the `isNaN` function to compare with NaN.
 
-Found 2 warnings and 0 errors.
-Finished in <variable>ms on 2 files with 87 rules using 1 threads.
+Found 3 warnings and 0 errors.
+Finished in <variable>ms on 2 files with 92 rules using 1 threads.
 ----------
 CLI result: LintSucceeded
 ----------

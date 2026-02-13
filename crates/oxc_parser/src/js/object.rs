@@ -18,14 +18,19 @@ impl<'a> ParserImpl<'a> {
     ///     { `PropertyDefinitionList`[?Yield, ?Await] , }
     pub(crate) fn parse_object_expression(&mut self) -> Box<'a, ObjectExpression<'a>> {
         let span = self.start_span();
+        let opening_span = self.cur_token().span();
         self.expect(Kind::LCurly);
-        let (object_expression_properties, _) = self.context(Context::In, Context::empty(), |p| {
+        let (object_expression_properties, comma_span) = self.context_add(Context::In, |p| {
             p.parse_delimited_list(
                 Kind::RCurly,
                 Kind::Comma,
+                opening_span,
                 Self::parse_object_expression_property,
             )
         });
+        if let Some(comma_span) = comma_span {
+            self.state.trailing_commas.insert(span, self.end_span(comma_span));
+        }
         self.expect(Kind::RCurly);
         self.ast.alloc_object_expression(self.end_span(span), object_expression_properties)
     }
@@ -63,6 +68,7 @@ impl<'a> ParserImpl<'a> {
             self.verify_modifiers(
                 &modifiers,
                 ModifierFlags::ASYNC,
+                true,
                 diagnostics::modifier_cannot_be_used_here,
             );
             let method = self.parse_method(
@@ -84,6 +90,7 @@ impl<'a> ParserImpl<'a> {
         self.verify_modifiers(
             &modifiers,
             ModifierFlags::empty(),
+            true,
             diagnostics::modifier_cannot_be_used_here,
         );
 
@@ -180,11 +187,7 @@ impl<'a> ParserImpl<'a> {
     pub(crate) fn parse_computed_property_name(&mut self) -> Expression<'a> {
         self.bump_any(); // advance `[`
 
-        let expression = self.context(
-            Context::In,
-            Context::empty(),
-            Self::parse_assignment_expression_or_higher,
-        );
+        let expression = self.context_add(Context::In, Self::parse_assignment_expression_or_higher);
 
         self.expect(Kind::RBrack);
         expression
@@ -209,6 +212,7 @@ impl<'a> ParserImpl<'a> {
         self.verify_modifiers(
             modifiers,
             ModifierFlags::empty(),
+            true,
             diagnostics::modifier_cannot_be_used_here,
         );
         self.ast.alloc_object_property(

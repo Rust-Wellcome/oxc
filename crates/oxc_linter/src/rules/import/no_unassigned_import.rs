@@ -1,4 +1,6 @@
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use schemars::JsonSchema;
+use serde_json::Value;
+
 use oxc_ast::{
     AstKind,
     ast::{Argument, Expression},
@@ -6,9 +8,13 @@ use oxc_ast::{
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{CompactStr, Span};
-use serde_json::Value;
+use serde::Deserialize;
 
-use crate::{AstNode, context::LintContext, rule::Rule};
+use crate::{
+    AstNode,
+    context::LintContext,
+    rule::{DefaultRuleConfig, Rule},
+};
 
 fn no_unassigned_import_diagnostic(span: Span, msg: &str) -> OxcDiagnostic {
     OxcDiagnostic::warn(msg.to_string())
@@ -16,12 +22,17 @@ fn no_unassigned_import_diagnostic(span: Span, msg: &str) -> OxcDiagnostic {
         .with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct NoUnassignedImport(Box<NoUnassignedImportConfig>);
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NoUnassignedImportConfig {
-    globs: GlobSet,
+    /// A list of glob patterns to allow unassigned imports for specific modules.
+    /// For example:
+    /// `{ "allow": ["**/*.css"] }` will allow unassigned imports for any module ending with `.css`.
+    #[serde(rename = "allow", default)]
+    globs: Vec<CompactStr>,
 }
 
 impl std::ops::Deref for NoUnassignedImport {
@@ -39,7 +50,7 @@ declare_oxc_lint!(
     ///
     /// ### Why is this bad?
     ///
-    /// With both CommonJS' require and the ES6 modules' import syntax,
+    /// With both CommonJS' require and the ES modules' import syntax,
     /// it is possible to import a module but not to use its result.
     /// This can be done explicitly by not assigning the module to a variable.
     /// Doing so can mean either of the following things:
@@ -69,38 +80,21 @@ declare_oxc_lint!(
     NoUnassignedImport,
     import,
     suspicious,
+    config = NoUnassignedImportConfig
 );
 
-fn build_globset(patterns: Vec<CompactStr>) -> Result<GlobSet, globset::Error> {
-    if patterns.is_empty() {
-        return Ok(GlobSet::empty());
-    }
-    let mut builder = GlobSetBuilder::new();
-    for pattern in patterns {
-        let pattern_str = pattern.as_str();
-        builder.add(Glob::new(pattern_str)?);
-    }
-    builder.build()
-}
-
 impl Rule for NoUnassignedImport {
-    fn from_configuration(value: Value) -> Self {
-        let obj = value.get(0);
-        let allow = obj
-            .and_then(|v| v.get("allow"))
-            .and_then(Value::as_array)
-            .map(|v| v.iter().filter_map(Value::as_str).map(CompactStr::from).collect())
-            .unwrap_or_default();
-        Self(Box::new(NoUnassignedImportConfig { globs: build_globset(allow).unwrap_or_default() }))
+    fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
+
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
         match node.kind() {
             AstKind::ImportDeclaration(import_decl) => {
                 if import_decl.specifiers.is_some() {
                     return;
                 }
-                let source_str = import_decl.source.value.as_str();
-                if !self.globs.is_match(source_str) {
+                if !self.is_match_allow_globs(import_decl.source.value.as_str()) {
                     ctx.diagnostic(no_unassigned_import_diagnostic(
                         import_decl.span,
                         "Imported module should be assigned",
@@ -118,7 +112,7 @@ impl Rule for NoUnassignedImport {
                 let Argument::StringLiteral(source_str) = first_arg else {
                     return;
                 };
-                if !self.globs.is_match(source_str.value.as_str()) {
+                if !self.is_match_allow_globs(source_str.value.as_str()) {
                     ctx.diagnostic(no_unassigned_import_diagnostic(
                         call_expr.span,
                         "A `require()` style import is forbidden.",
@@ -127,6 +121,12 @@ impl Rule for NoUnassignedImport {
             }
             _ => {}
         }
+    }
+}
+
+impl NoUnassignedImportConfig {
+    fn is_match_allow_globs(&self, source: &str) -> bool {
+        self.globs.iter().any(|glob| fast_glob::glob_match(glob.as_str(), source))
     }
 }
 

@@ -1,10 +1,10 @@
+use nodejs_built_in_modules::is_nodejs_builtin_module;
 use oxc_ast::{
     AstKind,
-    ast::{Expression, ModuleDeclaration, TSModuleReference},
+    ast::{Expression, TSModuleReference},
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
-use oxc_resolver::NODEJS_BUILTINS;
 use oxc_span::Span;
 
 use crate::{AstNode, context::LintContext, rule::Rule};
@@ -60,13 +60,11 @@ impl Rule for PreferNodeProtocol {
             AstKind::CallExpression(call) if !call.optional => {
                 call.common_js_require().map(|s| (s.value, s.span))
             }
-            AstKind::ModuleDeclaration(ModuleDeclaration::ImportDeclaration(import)) => {
-                Some((import.source.value, import.source.span))
-            }
-            AstKind::ModuleDeclaration(ModuleDeclaration::ExportNamedDeclaration(export)) => {
+            AstKind::ImportDeclaration(import) => Some((import.source.value, import.source.span)),
+            AstKind::ExportNamedDeclaration(export) => {
                 export.source.as_ref().map(|item| (item.value, item.span))
             }
-            _ => None,
+            _ => return,
         };
         let Some((string_lit_value, span)) = string_lit_value_with_span else {
             return;
@@ -77,8 +75,7 @@ impl Rule for PreferNodeProtocol {
         } else {
             string_lit_value.as_str()
         };
-        if module_name.starts_with("node:") || NODEJS_BUILTINS.binary_search(&module_name).is_err()
-        {
+        if module_name.starts_with("node:") || !is_nodejs_builtin_module(module_name) {
             return;
         }
 
@@ -145,13 +142,13 @@ fn test() {
     ];
 
     let fix = vec![
-        (r#"import fs from "fs";"#, r#"import fs from "node:fs";"#, None),
-        (r#"import * as fs from "fs";"#, r#"import * as fs from "node:fs";"#, None),
-        (r"import fs from 'fs';", r"import fs from 'node:fs';", None),
-        (r"const fs = require('fs');", r"const fs = require('node:fs');", None),
-        (r"import fs = require('fs');", r"import fs = require('node:fs');", None),
-        (r#"import "child_process";"#, r#"import "node:child_process";"#, None),
-        (r#"import fs from "fs/promises";"#, r#"import fs from "node:fs/promises";"#, None),
+        (r#"import fs from "fs";"#, r#"import fs from "node:fs";"#),
+        (r#"import * as fs from "fs";"#, r#"import * as fs from "node:fs";"#),
+        (r"import fs from 'fs';", r"import fs from 'node:fs';"),
+        (r"const fs = require('fs');", r"const fs = require('node:fs');"),
+        (r"import fs = require('fs');", r"import fs = require('node:fs');"),
+        (r#"import "child_process";"#, r#"import "node:child_process";"#),
+        (r#"import fs from "fs/promises";"#, r#"import fs from "node:fs/promises";"#),
     ];
 
     Tester::new(PreferNodeProtocol::NAME, PreferNodeProtocol::PLUGIN, pass, fail)

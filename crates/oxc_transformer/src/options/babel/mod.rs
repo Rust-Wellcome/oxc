@@ -7,7 +7,7 @@ use crate::CompilerAssumptions;
 mod env;
 mod plugins;
 mod presets;
-pub use env::{BabelEnvOptions, BabelModule, BabelTargets};
+pub use env::{BabelEnvOptions, BabelModule};
 pub use plugins::BabelPlugins;
 pub use presets::BabelPresets;
 
@@ -53,6 +53,12 @@ pub struct BabelOptions {
 
     #[serde(default)]
     pub allow_undeclared_exports: bool,
+
+    #[serde(default)]
+    pub allow_new_target_outside_function: bool,
+
+    #[serde(default)]
+    pub allow_super_outside_method: bool,
 
     #[serde(default = "default_as_true")]
     pub external_helpers: bool,
@@ -111,28 +117,39 @@ fn default_as_true() -> bool {
 
 impl BabelOptions {
     /// Read options.json and merge them with options.json from ancestors directories.
+    ///
+    /// Babel's fixture hierarchy: task → suite → category.
+    /// Suite options.json REPLACES category plugins (not merge).
+    ///
     /// # Panics
     pub fn from_test_path(path: &Path) -> Self {
         let mut babel_options: Option<Self> = None;
         let mut plugins_json = None;
         let mut presets_json = None;
+        // Track if suite level (level 1) has options.json - if so, skip category plugins
+        let mut suite_has_options = false;
 
-        for path in path.ancestors().take(3) {
+        for (level, path) in path.ancestors().take(3).enumerate() {
             let file = path.join("options.json");
             if !file.exists() {
                 continue;
+            }
+
+            if level == 1 {
+                suite_has_options = true;
             }
 
             let content = std::fs::read_to_string(&file).unwrap();
             let mut new_value = serde_json::from_str::<serde_json::Value>(&content).unwrap();
 
             let new_plugins = new_value.as_object_mut().unwrap().remove("plugins");
-            if plugins_json.is_none() {
+            // Skip category (level 2) plugins if suite (level 1) has options.json
+            if plugins_json.is_none() && !(level == 2 && suite_has_options) {
                 plugins_json = new_plugins;
             }
 
             let new_presets = new_value.as_object_mut().unwrap().remove("presets");
-            if presets_json.is_none() {
+            if presets_json.is_none() && !(level == 2 && suite_has_options) {
                 presets_json = new_presets;
             }
 
@@ -140,15 +157,15 @@ impl BabelOptions {
                 .unwrap_or_else(|err| panic!("{err:?}\n{}\n{content}", file.display()));
 
             if let Some(existing_options) = babel_options.as_mut() {
-                if existing_options.source_type.is_none() {
-                    if let Some(source_type) = new_options.source_type {
-                        existing_options.source_type = Some(source_type);
-                    }
+                if existing_options.source_type.is_none()
+                    && let Some(source_type) = new_options.source_type
+                {
+                    existing_options.source_type = Some(source_type);
                 }
-                if existing_options.throws.is_none() {
-                    if let Some(throws) = new_options.throws {
-                        existing_options.throws = Some(throws);
-                    }
+                if existing_options.throws.is_none()
+                    && let Some(throws) = new_options.throws
+                {
+                    existing_options.throws = Some(throws);
                 }
             } else {
                 babel_options = Some(new_options);
@@ -182,11 +199,19 @@ impl BabelOptions {
         self.plugins.syntax_typescript.is_some_and(|o| o.dts)
     }
 
+    pub fn has_disallow_ambiguous_jsx_like(&self) -> bool {
+        self.plugins.syntax_typescript.is_some_and(|o| o.disallow_ambiguous_jsx_like)
+    }
+
     pub fn is_module(&self) -> bool {
         self.source_type.as_ref().is_some_and(|s| s.as_str() == "module")
     }
 
     pub fn is_unambiguous(&self) -> bool {
         self.source_type.as_ref().is_some_and(|s| s.as_str() == "unambiguous")
+    }
+
+    pub fn is_commonjs(&self) -> bool {
+        self.source_type.as_ref().is_some_and(|s| s.as_str() == "commonjs")
     }
 }

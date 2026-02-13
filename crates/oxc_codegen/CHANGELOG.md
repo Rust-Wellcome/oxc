@@ -4,6 +4,379 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.111.0] - 2026-01-26
+
+### 🚀 Features
+
+- 2ef5647 ast: Add escape_raw parameter to template_element builders (#18121) (Boshen)
+
+### 🐛 Bug Fixes
+
+- c205b0d ast: Remove `ThisExpression` from `TSModuleReference` (#18489) (Boshen)
+- aed3669 parser: Parse HTML-like comments in unambiguous mode (#18442) (Boshen)
+
+## [0.109.0] - 2026-01-19
+
+### 🐛 Bug Fixes
+
+- 4c16ae7 codegen: Remove spaces around `=` in minified type parameter defaults (#17989) (Boshen)
+- 06bd17b codegen: Remove unnecessary double parentheses from satisfies expressions (#17986) (Boshen)
+- 1874765 codegen: Fix inconsistent multiline EOF comment formatting (#17983) (Boshen)
+- 2619c66 codegen: Remove leading whitespace from export statements after comments (#17982) (Boshen)
+
+## [0.108.0] - 2026-01-12
+
+### 🚀 Features
+
+- 10426af codegen: Print soft space between inline block comments on the same line (#17799) (camc314)
+
+### 🐛 Bug Fixes
+
+- 7422b7e parser/trivia: Correctly mark whether a block comment is on a newline (#17754) (camc314)
+- c32e8d5 codegen: Wrap `TSAsExpression` in parens when used with in/instanceof operators (#17752) (camc314)
+- ef7e014 parser: Preserve `@__NO_SIDE_EFFECTS__` annotation with parenthesized expressions (#17711) (camc314)
+
+## [0.106.0] - 2025-12-29
+
+### 🚀 Features
+
+- e031056 codegen: Add `sourcemap` feature flag (#17305) (Boshen)
+
+### ⚡ Performance
+
+- 722fffa codegen: Restructure print_comments to avoid index comparisons in loop (#17402) (camc314)
+- 7ec39d0 codegen: Use print_ascii_byte in more places (#17401) (camc314)
+- 510ec00 codegen: Avoid allocation in PrivateIdentifier gen when not mangling (#17395) (camc314)
+
+## [0.104.0] - 2025-12-19
+
+### 🚀 Features
+
+- 67e9f9e codegen: Keep comments on the export specifiers (#16943) (夕舞八弦)
+
+## [0.103.0] - 2025-12-15
+
+### 💥 BREAKING CHANGES
+
+- 320c09f ast, parser, linter, codegen, formatter: [**BREAKING**] Rename `CommentKind::Block` to `CommentKind::SinglelineBlock` (#16501) (Dunqing)
+
+### 🚀 Features
+
+- 30a9076 ast, parser, codegen: Add `CommentKind::MultilineBlock` (#16479) (Dunqing)
+
+## [0.102.0] - 2025-12-08
+
+### 🚀 Features
+
+- a607cc4 codegen: Preserve comments between CatchClause's param and body (#16167) (copilot-swe-agent)
+
+## [0.100.0] - 2025-12-01
+
+### 💥 BREAKING CHANGES
+
+- 74cf572 ast: [**BREAKING**] Make `source` field of `TSImportType` a `StringLiteral` (#16114) (copilot-swe-agent)
+- 43156ae ast: [**BREAKING**] Rename `TSImportType` `argument` field to `source` (#16110) (overlookmotel)
+
+## [0.99.0] - 2025-11-24
+
+### 💥 BREAKING CHANGES
+
+- cbb27fd ast: [**BREAKING**] Add `TSGlobalDeclaration` type (#15712) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- e2ca770 codegen: Add support for printing type arguments in new expressions (#15963) (Ives van Hoorne)
+
+## [0.97.0] - 2025-11-11
+
+### 🐛 Bug Fixes
+
+- 020aa4f codegen: Print space before `BindingRestElement` in `ObjectPattern` (#15315) (overlookmotel)
+
+### ⚡ Performance
+
+- ab4b12b codegen: Reduce branches printing `ObjectPattern` (#15316) (overlookmotel)
+
+## [0.96.0] - 2025-10-30
+
+### 🐛 Bug Fixes
+
+- 3fbb307 codegen: Avoid invalid sourcemap tokens for positions beyond source bounds (#15069) (copilot-swe-agent)
+- 4904710 codegen: Print legal comments above directives (#14993) (Boshen)
+
+
+## [0.95.0] - 2025-10-15
+
+### ⚡ Performance
+
+- ea3f362 codegen: Reorder match arms based on usage patterns (#14496) (Boshen)
+
+
+## [0.94.0] - 2025-10-06
+
+### 🚀 Features
+
+- 3656908 rust: Oxc-index-vec v4.0 (#14254) (Boshen)
+
+### 🐛 Bug Fixes
+
+- fc519c8 mangler: Mangle private class members in subsequent classes correctly (#14361) (sapphi-red)
+- b83ffe5 mangler: Mangle private class members used in nested classes properly (#14218) (sapphi-red)
+
+
+## [0.93.0] - 2025-09-28
+
+### 🐛 Bug Fixes
+
+- aa927ab codegen: Don't inject parenthesis in optional chaining within new expressions (#14170) (sapphi-red)
+
+
+## [0.92.0] - 2025-09-24
+
+### 🚀 Features
+
+- 0fe4d95 mangler: Mangle private class members (#14027) (sapphi-red)
+
+
+## [0.91.0] - 2025-09-22
+
+### 🐛 Bug Fixes
+
+- 8f3f460 codegen: Add missing dot when printing import.defer and import.source (#13975) (Boshen)
+
+### ⚡ Performance
+
+- ed8ff7d codegen: Unroll loop in `SourcemapBuilder::update_generated_line_and_column` (#13903) (翠)
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
+
+
+
+## [0.88.0] - 2025-09-15
+
+### 🐛 Bug Fixes
+
+- bf50a02 codegen: Avoid backticks for object property keys in destructuring assignments (#13631) (copilot-swe-agent)
+
+### ⚡ Performance
+
+- d4608f1 codegen: Reduce memory usage in `SourcemapBuilder` (#13679) (overlookmotel)
+- 4ded22b codegen: Reduce allocations in `SourcemapBuilder` (#13677) (overlookmotel)
+- b35bf30 codegen: Optimize sourcemap builder to reduce allocations (#13670) (Boshen)
+- 641b252 codegen: Reduce branches when printing `ObjectProperty` and `BindingProperty` (#13659) (overlookmotel)
+
+
+## [0.87.0] - 2025-09-08
+
+### 🐛 Bug Fixes
+
+- e11a946 rust: Fix missing docs (#13541) (Boshen)
+- 34d3cde rust: Fix clippy issues (#13540) (Boshen)
+
+
+## [0.86.0] - 2025-08-31
+
+### 💥 BREAKING CHANGES
+
+- edeebc6 data_structures: [**BREAKING**] Rename `SliceIterExt` to `SliceIter` (#13439) (overlookmotel)
+
+### 🚀 Features
+
+- 5b139aa data_structures: Add `ptr` and `end_ptr` methods to `SliceIterExt` (#13435) (overlookmotel)
+- d8b027f data_structures: Add `SliceIterExt::peek` method (#13434) (overlookmotel)
+
+### 🚜 Refactor
+
+- 9c3b060 codegen: Clarify choice of quote when printing strings (#13440) (overlookmotel)
+
+### ⚡ Performance
+
+- 39fc0d6 codegen: Use `isize` for quote counters (#13441) (overlookmotel)
+
+
+
+
+## [0.83.0] - 2025-08-29
+
+### 🐛 Bug Fixes
+
+- b53a294 codegen: Add end sourcemaps for arguments (#13355) (sapphi-red)
+- 1044566 codegen: Add end sourcemaps for array literals and object literals (#13354) (sapphi-red)
+
+### 🧪 Testing
+
+- f547c94 codegen: Add test that verifies stack traces are correct (#13351) (sapphi-red)
+
+
+## [0.82.3] - 2025-08-20
+
+### 🐛 Bug Fixes
+
+- 8f533aa codegen: Correct `CRLF` handling in comment processing (#13169) (copilot-swe-agent)
+- f10ac33 codegen: Remove end sourcemaps for `}`, `]`, `)` (#13180) (Boshen)
+
+### 🚜 Refactor
+
+- 51ca0ad codegen: Reduce repeated code (#13191) (overlookmotel)
+- 3548cf4 sourcemap: Improve sourcemap visualization code (#13177) (Boshen)
+
+### ⚡ Performance
+
+- e3bfff1 codegen: Faster splitting comments into lines (#13190) (overlookmotel)
+
+
+## [0.82.2] - 2025-08-17
+
+### 🚀 Features
+
+- df3829c oxc_codegen: Support configure initial indent when using `oxc_codegen` (#13091) (IWANABETHATGUY)
+
+### 🚜 Refactor
+
+- 5223562 codegen: Adjust some source mappings (#13084) (Boshen)
+
+### ⚡ Performance
+
+- 1385c71 codegen: Further reduce memory allocations in `generate_line_offset_tables` (#13056) (overlookmotel)
+- ab685bd codegen: Reduce memory allocations in `generate_line_offset_tables` (#13054) (Boshen)
+
+
+## [0.82.1] - 2025-08-13
+
+### 🚀 Features
+
+- 2c5fa58 codegen: Allow attaching comment to the top of the file. (#13048) (Boshen)
+
+
+## [0.82.0] - 2025-08-12
+
+### 💥 BREAKING CHANGES
+
+- 128b527 data_structures: [**BREAKING**] Remove `PointerExt` trait (#12903) (overlookmotel)
+
+### 🚜 Refactor
+
+- f6475e1 codegen: Remove the redundant `base_len` variable (#12882) (Dunqing)
+
+### ⚡ Performance
+
+- 017e200 codegen: Comprehensive optimization of `print_minified_number` method (#12847) (Copilot)
+
+### 🎨 Styling
+
+- af065ff codegen: Re-order imports (#12918) (overlookmotel)
+
+
+## [0.81.0] - 2025-08-06
+
+### 💥 BREAKING CHANGES
+
+- 50b91ac ast: [**BREAKING**] Remove `IdentifierReference` from `qualifier` field of `TSImportType` (#12799) (camc314)
+
+### 🐛 Bug Fixes
+
+- 3eed87a codegen: Wrap parens for `TSUnionType` (#12830) (Boshen)
+
+### ⚡ Performance
+
+- 2c4369a syntax,codegen: Replace `ryu_js` with `dragonbox_ecma` for floating point formatting (#12821) (Copilot)
+
+
+## [0.80.0] - 2025-08-03
+
+### 💥 BREAKING CHANGES
+
+- cd93174 ast: [**BREAKING**] Introduce `WithClauseKeyword` (#12741) (overlookmotel)
+
+### 🚀 Features
+
+- af4d558 codegen: Add options to control indentation (#12691) (Copilot)
+
+### 📚 Documentation
+
+- 514322c rust: Add minimal documentation to example files in crates directory (#12731) (Copilot)
+- de1de35 rust: Add comprehensive README.md documentation for all Rust crates (#12706) (Copilot)
+
+### 🎨 Styling
+
+- c15da81 codegen, formatter, linter, minifier, transformer: Re-order imports (#12725) (Copilot)
+
+
+
+
+## [0.78.0] - 2025-07-24
+
+### 🚀 Features
+
+- c135beb codegen: Keep function expression PIFEs (#12470) (sapphi-red)
+
+
+## [0.77.3] - 2025-07-20
+
+### 🚀 Features
+
+- 0920e98 codegen: Keep arrow function PIFEs (#12353) (sapphi-red)
+
+### 🚜 Refactor
+
+- 8917a5f codegen: Remove clone of source text in sourcemap builder (#12393) (Boshen)
+
+### ⚡ Performance
+
+- 8bae417 codegen: Remove the useless tokens generated by some expressions (#12394) (Boshen)
+- 7d64eb9 codegen: Replace loop + push with `std::iter::repeat` (#12398) (Boshen)
+
+
+
+## [0.77.1] - 2025-07-16
+
+### 🚀 Features
+
+- 9b14fbc ast: Add `ThisExpression` to `TSTypeName` (#12156) (Boshen)
+
+### 🚜 Refactor
+
+- bb047a9 codegen: Use `SliceIterExt` in string printer (#12296) (overlookmotel)
+
+
+
+## [0.76.0] - 2025-07-08
+
+### 💥 BREAKING CHANGES
+
+- 8b30a5b codegen: [**BREAKING**] Introduce `CommentOptions` (#12114) (Boshen)
+
+### 🐛 Bug Fixes
+
+- 92af759 codegen: Wrap comment and object literal with parens to avoid invalid syntax (#12111) (Boshen)
+
+
+## [0.75.1] - 2025-07-03
+
+### 🚀 Features
+
+- 28fca3c codegen: Preserve comments for lingui /*i18n*/ (#12047) (Boshen)
+
+### 🐛 Bug Fixes
+
+- 22799c3 codegen: Escape `</script` (#11782) (Cheng Xu)
+- b8ede17 codegen: Fix sourcemap for template literals (#12028) (Boshen)
+
+### 🚜 Refactor
+
+- e0d70ef codegen: Clarify comments (#12036) (overlookmotel)
+
+### ⚡ Performance
+
+- 5b99cad codegen: Optimize printing strings (#12040) (overlookmotel)
+- 41ec54e codegen: Reduce branches printing `TemplateLiteral`s (#12041) (overlookmotel)
+- 3982963 codegen: Remove branch (#12037) (overlookmotel)
+
+
 ## [0.75.0] - 2025-06-25
 
 ### 🐛 Bug Fixes

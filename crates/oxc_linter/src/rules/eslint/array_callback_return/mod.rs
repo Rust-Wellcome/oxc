@@ -2,45 +2,118 @@ pub mod return_checker;
 
 use std::borrow::Cow;
 
-use oxc_ast::{AstKind, ast::Expression};
+use oxc_ast::{
+    AstKind,
+    ast::{Expression, FunctionBody, Statement},
+};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, Span};
 use schemars::JsonSchema;
+use serde::Deserialize;
 use serde_json::Value;
 
 use self::return_checker::{StatementReturnStatus, check_function_body};
 use crate::{
     AstNode,
-    ast_util::{get_enclosing_function, is_nth_argument, outermost_paren},
+    ast_util::{get_enclosing_function, outermost_paren},
     context::LintContext,
-    rule::Rule,
+    rule::{DefaultRuleConfig, Rule},
 };
 
-fn expect_return(method_name: &str, span: Span) -> OxcDiagnostic {
-    OxcDiagnostic::warn(format!("Missing return on some path for array method {method_name:?}"))
-        .with_help(format!(
-            "Array method {method_name:?} needs to have valid return on all code paths"
-        ))
-        .with_label(span)
+#[derive(Debug, Clone, Copy)]
+enum MissingReturnHint {
+    SwitchWithoutDefault,
+    IfWithoutElse,
 }
 
-fn expect_no_return(method_name: &str, span: Span) -> OxcDiagnostic {
-    OxcDiagnostic::warn(format!("Unexpected return for array method {method_name:?}"))
-        .with_help(format!(
-            "Array method {method_name:?} expects no useless return from the function"
-        ))
-        .with_label(span)
+fn guess_missing_return_hint(
+    function_body: &FunctionBody<'_>,
+) -> Option<(Span, MissingReturnHint)> {
+    let last_statement = function_body.statements.last()?;
+    match last_statement {
+        Statement::SwitchStatement(stmt) => {
+            let has_default = stmt.cases.iter().any(oxc_ast::ast::SwitchCase::is_default_case);
+            (!has_default).then_some((stmt.span, MissingReturnHint::SwitchWithoutDefault))
+        }
+        Statement::IfStatement(stmt) => {
+            (stmt.alternate.is_none()).then_some((stmt.span, MissingReturnHint::IfWithoutElse))
+        }
+        _ => None,
+    }
 }
 
-#[derive(Debug, Default, Clone, JsonSchema)]
-#[serde(rename_all = "camelCase", default)]
+fn expect_return(
+    method_name: &str,
+    array_method_span: Span,
+    function_body: &FunctionBody<'_>,
+    allow_implicit: bool,
+) -> OxcDiagnostic {
+    let (span, hint) = guess_missing_return_hint(function_body)
+        .map_or((function_body.span, None), |(span, hint)| (span, Some(hint)));
+
+    let value_requirement = if allow_implicit {
+        ""
+    } else {
+        "\nReturn a value on each path (or enable `allowImplicit` to allow `return;`)."
+    };
+
+    let (message, help) = match hint {
+        Some(MissingReturnHint::SwitchWithoutDefault) => (
+            format!(
+                "Callback for array method {method_name:?} may fall through a `switch` without returning"
+            ),
+            format!(
+                "This `switch` has no `default` case, so the callback may reach the end without a `return`. Add a `default` that returns/throws, or add a final `return` after the `switch`.{value_requirement}"
+            ),
+        ),
+        Some(MissingReturnHint::IfWithoutElse) => (
+            format!(
+                "Callback for array method {method_name:?} may reach the end of an `if` without returning"
+            ),
+            format!(
+                "This `if` has no `else` branch, so the callback may reach the end without a `return`. Add an `else`, or add a final `return`/`throw` after the `if`.{value_requirement}"
+            ),
+        ),
+        None => (
+            format!("Callback for array method {method_name:?} does not return on all code paths"),
+            format!(
+                "{method_name:?} uses the callback's return value. Add a `return` on every possible code path.{value_requirement}"
+            ),
+        ),
+    };
+
+    let mut diagnostic = OxcDiagnostic::warn(message).with_help(help).with_label(span);
+    if allow_implicit {
+        diagnostic = diagnostic.with_note("With `allowImplicit`, callbacks that don't explicitly return a value are considered to return `undefined`.");
+    }
+    if hint.is_some() {
+        diagnostic = diagnostic
+            .and_label(array_method_span.label(format!("{method_name:?} is called here.")));
+    }
+
+    diagnostic
+}
+
+fn expect_no_return(method_name: &str, call_span: Span, return_span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::warn(format!("Unexpected return value in callback for {method_name:?}"))
+        .with_help(format!(
+            "{method_name:?} ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array."
+        ))
+        .with_labels([
+            call_span.label(format!("{method_name:?} is called here.")),
+            return_span.label("This returned value is ignored."),
+        ])
+}
+
+#[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct ArrayCallbackReturn {
     /// When set to true, rule will also report forEach callbacks that return a value.
     check_for_each: bool,
     /// When set to true, allows callbacks of methods that require a return value to
     /// implicitly return undefined with a return statement containing no expression.
-    allow_implicit_return: bool,
+    allow_implicit: bool,
 }
 
 declare_oxc_lint!(
@@ -80,16 +153,8 @@ declare_oxc_lint!(
 );
 
 impl Rule for ArrayCallbackReturn {
-    fn from_configuration(value: Value) -> Self {
-        let (check_for_each, allow_implicit_return) =
-            value.get(0).map_or((false, false), |config| {
-                (
-                    config.get("checkForEach").and_then(Value::as_bool).unwrap_or_default(),
-                    config.get("allowImplicit").and_then(Value::as_bool).unwrap_or_default(),
-                )
-            });
-
-        Self { check_for_each, allow_implicit_return }
+    fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -110,20 +175,25 @@ impl Rule for ArrayCallbackReturn {
         };
 
         // Filter on target methods on Arrays
-        if let Some(array_method) = get_array_method_name(node, ctx) {
+        if let Some((array_method_span, array_method)) = get_array_method_info(node, ctx) {
             let return_status = if always_explicit_return {
                 StatementReturnStatus::AlwaysExplicit
             } else {
                 check_function_body(function_body)
             };
 
-            match (array_method, self.check_for_each, self.allow_implicit_return) {
+            match (array_method, self.check_for_each, self.allow_implicit) {
                 ("forEach", false, _) => (),
                 ("forEach", true, _) => {
                     if return_status.may_return_explicit() {
+                        let return_span = return_checker::get_explicit_return_spans(function_body)
+                            .into_iter()
+                            .next()
+                            .unwrap_or_else(|| function_body.span());
                         ctx.diagnostic(expect_no_return(
                             &full_array_method_name(array_method),
-                            function_body.span,
+                            array_method_span,
+                            return_span,
                         ));
                     }
                 }
@@ -131,7 +201,9 @@ impl Rule for ArrayCallbackReturn {
                     if !return_status.must_return() {
                         ctx.diagnostic(expect_return(
                             &full_array_method_name(array_method),
-                            function_body.span,
+                            array_method_span,
+                            function_body,
+                            self.allow_implicit,
                         ));
                     }
                 }
@@ -139,7 +211,9 @@ impl Rule for ArrayCallbackReturn {
                     if !return_status.must_return() || return_status.may_return_implicit() {
                         ctx.diagnostic(expect_return(
                             &full_array_method_name(array_method),
-                            function_body.span,
+                            array_method_span,
+                            function_body,
+                            self.allow_implicit,
                         ));
                     }
                 }
@@ -151,14 +225,17 @@ impl Rule for ArrayCallbackReturn {
 /// Code ported from [eslint](https://github.com/eslint/eslint/blob/v9.9.1/lib/rules/array-callback-return.js)
 /// We're currently on a `Function` or `ArrowFunctionExpression`, findout if it is an argument
 /// to the target array methods we're interested in.
-pub fn get_array_method_name<'a>(node: &AstNode<'a>, ctx: &LintContext<'a>) -> Option<&'a str> {
+pub fn get_array_method_info<'a>(
+    node: &AstNode<'a>,
+    ctx: &LintContext<'a>,
+) -> Option<(Span, &'a str)> {
     let mut current_node = node;
-    while let Some(parent) = ctx.nodes().parent_node(current_node.id()) {
+    loop {
+        let parent = ctx.nodes().parent_node(current_node.id());
         match parent.kind() {
             // foo.every(nativeFoo || function foo() { ... })
             AstKind::LogicalExpression(_)
             | AstKind::ConditionalExpression(_)
-            | AstKind::Argument(_)
             | AstKind::ParenthesizedExpression(_)
             | AstKind::ChainExpression(_) => {
                 current_node = parent;
@@ -174,7 +251,7 @@ pub fn get_array_method_name<'a>(node: &AstNode<'a>, ctx: &LintContext<'a>) -> O
                 let func_node = outermost_paren(func_node, ctx);
 
                 // the node that calls func_node
-                let func_parent = ctx.nodes().parent_node(func_node.id()).unwrap();
+                let func_parent = ctx.nodes().parent_node(func_node.id());
 
                 if let AstKind::CallExpression(call) = func_parent.kind() {
                     let expected_callee = &call.callee;
@@ -188,10 +265,6 @@ pub fn get_array_method_name<'a>(node: &AstNode<'a>, ctx: &LintContext<'a>) -> O
             }
 
             AstKind::CallExpression(call) => {
-                let AstKind::Argument(current_node_arg) = current_node.kind() else {
-                    return None;
-                };
-
                 let callee = call.callee.get_inner_expression();
                 let callee = if let Some(member) = callee.as_member_expression() {
                     member
@@ -204,20 +277,26 @@ pub fn get_array_method_name<'a>(node: &AstNode<'a>, ctx: &LintContext<'a>) -> O
                 // Array.from
                 if callee.is_specific_member_access("Array", "from") {
                     // Check that current node is parent's second argument
-                    if call.arguments.len() == 2 && is_nth_argument(call, current_node_arg, 1) {
-                        return Some("from");
+                    if call.arguments.len() == 2
+                        && let Some(call_arg) = call.arguments[1].as_expression()
+                        && call_arg.span() == current_node.kind().span()
+                    {
+                        return Some((callee.span(), "from"));
                     }
                 }
 
                 // "methods",
-                let array_method = callee.static_property_name()?;
+                let (array_method_span, array_method) = callee.static_property_info()?;
 
                 if TARGET_METHODS.contains(&array_method)
                     // Check that current node is parent's first argument
                     && call.arguments.len() == 1
-                    && is_nth_argument(call, current_node_arg, 0)
+                    && let Some(call_arg) = call.arguments.first()
+                        && call_arg
+                            .as_expression()
+                            .is_some_and(|arg| arg.span() == current_node.kind().span())
                 {
-                    return Some(array_method);
+                    return Some((array_method_span, array_method));
                 }
 
                 return None;
@@ -310,6 +389,7 @@ fn test() {
             None,
         ),
         ("foo.every(function() { try { bar(); } finally { return true; } })", None),
+        ("foo.every(function() { switch (a) { default: case0: return true; } })", None),
         (
             "Array.from(x, function() { return; })",
             Some(serde_json::json!([{"allowImplicit": true}])),
@@ -424,6 +504,10 @@ fn test() {
         ("foo[`${every}`](function() {})", None),
         ("foo.every(() => true)", None),
         ("return function() {}", None),
+        (
+            "array.map((node) => { if (isTaskNode(node)) { return someObj; } else if (isOtherNode(node)) { return otherObj; } else { throw new Error('Unsupported'); } })",
+            None,
+        ),
     ];
 
     let fail = vec![
@@ -447,6 +531,22 @@ fn test() {
         ("foo.flatMap(function foo() {})", None),
         ("foo.map(function() {})", None),
         ("foo.map(function foo() {})", None),
+        (
+            r#"const fruits = [{ name: "apple" }, { name: "banana" }] as const;
+
+const _test = fruits.map((fruit) => {
+  switch (fruit.name) {
+    case "apple": {
+      return "a"
+    }
+
+    case "banana": {
+      return "b"
+    }
+  }
+});"#,
+            None,
+        ),
         ("foo.reduce(function() {})", None),
         ("foo.reduce(function foo() {})", None),
         ("foo.reduceRight(function() {})", None),

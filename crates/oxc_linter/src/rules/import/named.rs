@@ -10,11 +10,11 @@ use crate::{
 
 fn named_diagnostic(imported_name: &str, module_name: &str, span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn(format!("named import {imported_name:?} not found"))
-        .with_help(format!("does {module_name:?} have the export {imported_name:?}?"))
+        .with_help(format!("Does {module_name:?} have the export {imported_name:?}?"))
         .with_label(span)
 }
 
-/// <https://github.com/import-js/eslint-plugin-import/blob/v2.29.1/docs/rules/named.md>
+// <https://github.com/import-js/eslint-plugin-import/blob/v2.29.1/docs/rules/named.md>
 #[derive(Debug, Default, Clone)]
 pub struct Named;
 
@@ -57,7 +57,7 @@ declare_oxc_lint!(
     /// // ./baz.js
     /// import { notFoo } from './foo'
     ///
-    /// // ES7 proposal
+    /// // re-export
     /// export { notFoo as defNotBar } from './foo'
     ///
     /// // will follow 'jsnext:main', if available
@@ -69,7 +69,7 @@ declare_oxc_lint!(
     /// // ./bar.js
     /// import { foo } from './foo'
     ///
-    /// // ES7 proposal
+    /// // re-export
     /// export { foo as bar } from './foo'
     ///
     /// // node_modules without jsnext:main are not analyzed by default
@@ -91,7 +91,6 @@ impl Rule for Named {
 
         let module_record = ctx.module_record();
 
-        let loaded_modules = module_record.loaded_modules.read().unwrap();
         for import_entry in &module_record.import_entries {
             // Get named import
             let ImportImportName::Name(import_name) = &import_entry.import_name else {
@@ -99,7 +98,7 @@ impl Rule for Named {
             };
             let specifier = import_entry.module_request.name();
             // Get remote module record
-            let Some(remote_module_record) = loaded_modules.get(specifier) else {
+            let Some(remote_module_record) = module_record.get_loaded_module(specifier) else {
                 continue;
             };
             if !remote_module_record.has_module_syntax {
@@ -127,7 +126,6 @@ impl Rule for Named {
             ctx.diagnostic(named_diagnostic(name, specifier, import_span));
         }
 
-        let loaded_modules = module_record.loaded_modules.read().unwrap();
         for export_entry in &module_record.indirect_export_entries {
             let Some(module_request) = &export_entry.module_request else {
                 continue;
@@ -137,7 +135,7 @@ impl Rule for Named {
             };
             let specifier = module_request.name();
             // Get remote module record
-            let Some(remote_module_record) = loaded_modules.get(specifier) else {
+            let Some(remote_module_record) = module_record.get_loaded_module(specifier) else {
                 continue;
             };
             if !remote_module_record.has_module_syntax {

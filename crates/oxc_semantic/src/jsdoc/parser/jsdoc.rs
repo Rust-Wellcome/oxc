@@ -38,14 +38,14 @@ impl<'a> JSDoc<'a> {
 mod test {
     use oxc_allocator::Allocator;
     use oxc_parser::Parser;
-    use oxc_span::SourceType;
+    use oxc_span::{SourceType, Span};
 
-    use crate::{Semantic, SemanticBuilder};
+    use crate::{Semantic, SemanticBuilder, jsdoc::parser::jsdoc_parts::JSDocCommentPart};
 
     fn build_semantic<'a>(allocator: &'a Allocator, source_text: &'a str) -> Semantic<'a> {
         let source_type = SourceType::default();
         let ret = Parser::new(allocator, source_text, source_type).parse();
-        SemanticBuilder::new().with_build_jsdoc(true).build(allocator.alloc(ret.program)).semantic
+        SemanticBuilder::new().build(allocator.alloc(ret.program)).semantic
     }
 
     #[test]
@@ -82,7 +82,12 @@ line2
     #[test]
     fn jsdoc_comment() {
         for (source_text, parsed, span_text, tag_len) in [
-            ("/** single line @k1 c1 @k2 */", "single line", " single line ", 2),
+            (
+                "/** single line @k1 c1 @k2 */",
+                "single line @k1 c1 @k2",
+                " single line @k1 c1 @k2 ",
+                0,
+            ),
             (
                 "/**
              * multi
@@ -162,9 +167,9 @@ line2
                 "
     /** ハロー @comment だよ*/
 ",
-                "ハロー",
-                " ハロー ",
-                1,
+                "ハロー @comment だよ",
+                " ハロー @comment だよ",
+                0,
             ),
         ] {
             let allocator = Allocator::default();
@@ -322,5 +327,26 @@ line2
 
         let tag = tags.next().unwrap();
         assert_eq!(tag.kind.parsed(), "example");
+    }
+
+    #[test]
+    fn parses_issue_11992() {
+        let allocator = Allocator::default();
+        let semantic = build_semantic(
+            &allocator,
+            "/**@property [
+*/",
+        );
+        let jsdoc = semantic.jsdoc().iter_all().next().unwrap();
+
+        let mut tags = jsdoc.tags().iter();
+        assert_eq!(tags.len(), 1);
+
+        let tag = tags.next().unwrap();
+        assert_eq!(
+            tag.type_name_comment(),
+            (None, None, JSDocCommentPart::new(" [\n", Span::new(12, 15)))
+        );
+        assert_eq!(tag.kind.parsed(), "property");
     }
 }

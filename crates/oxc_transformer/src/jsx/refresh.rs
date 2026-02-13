@@ -8,7 +8,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use sha1::{Digest, Sha1};
 
 use oxc_allocator::{
-    Address, CloneIn, GetAddress, StringBuilder as ArenaStringBuilder, TakeIn, Vec as ArenaVec,
+    CloneIn, GetAddress, StringBuilder as ArenaStringBuilder, TakeIn, UnstableAddress,
+    Vec as ArenaVec,
 };
 use oxc_ast::{AstBuilder, NONE, ast::*, match_expression};
 use oxc_ast_visit::{
@@ -181,6 +182,7 @@ impl<'a> Traverse<'a, TransformState<'a>> for ReactRefresh<'a, '_> {
                 SPAN,
                 VariableDeclarationKind::Var,
                 binding.create_binding_pattern(ctx),
+                NONE,
                 None,
                 false,
             ));
@@ -236,17 +238,12 @@ impl<'a> Traverse<'a, TransformState<'a>> for ReactRefresh<'a, '_> {
 
         if !matches!(expr, Expression::CallExpression(_)) {
             // Try to get binding from parent VariableDeclarator
-            if let Ancestor::VariableDeclaratorInit(declarator) = ctx.parent() {
-                if let Some(ident) = declarator.id().get_binding_identifier() {
-                    let id_binding = BoundIdentifier::from_binding_ident(ident);
-                    self.handle_function_in_variable_declarator(
-                        &id_binding,
-                        &binding,
-                        arguments,
-                        ctx,
-                    );
-                    return;
-                }
+            if let Ancestor::VariableDeclaratorInit(declarator) = ctx.parent()
+                && let Some(ident) = declarator.id().get_binding_identifier()
+            {
+                let id_binding = BoundIdentifier::from_binding_ident(ident);
+                self.handle_function_in_variable_declarator(&id_binding, &binding, arguments, ctx);
+                return;
             }
         }
 
@@ -312,7 +309,7 @@ impl<'a> Traverse<'a, TransformState<'a>> for ReactRefresh<'a, '_> {
             // Otherwise just a `function Foo() {}`
             // which is a `Statement::FunctionDeclaration`.
             // `Function` is always stored in a `Box`, so has a stable memory address.
-            _ => Address::from_ptr(func),
+            _ => func.unstable_address(),
         };
         self.ctx.statement_injector.insert_after(&address, statement);
     }
@@ -327,9 +324,9 @@ impl<'a> Traverse<'a, TransformState<'a>> for ReactRefresh<'a, '_> {
             return;
         }
 
-        let hook_name = match &call_expr.callee {
-            Expression::Identifier(ident) => ident.name,
-            Expression::StaticMemberExpression(member) => member.property.name,
+        let hook_name: Atom = match &call_expr.callee {
+            Expression::Identifier(ident) => ident.name.into(),
+            Expression::StaticMemberExpression(member) => member.property.name.into(),
             _ => return,
         };
 
@@ -339,11 +336,11 @@ impl<'a> Traverse<'a, TransformState<'a>> for ReactRefresh<'a, '_> {
 
         if !is_builtin_hook(&hook_name) {
             // Check if a corresponding binding exists where we emit the signature.
-            let (binding_name, is_member_expression) = match &call_expr.callee {
-                Expression::Identifier(ident) => (Some(ident.name), false),
+            let (binding_name, is_member_expression): (Option<Atom>, _) = match &call_expr.callee {
+                Expression::Identifier(ident) => (Some(ident.name.into()), false),
                 Expression::StaticMemberExpression(member) => {
                     if let Expression::Identifier(object) = &member.object {
-                        (Some(object.name), true)
+                        (Some(object.name.into()), true)
                     } else {
                         (None, false)
                     }
@@ -532,9 +529,9 @@ impl<'a> ReactRefresh<'a, '_> {
         id: &BindingIdentifier<'a>,
         ctx: &mut TraverseCtx<'a>,
     ) -> Statement<'a> {
-        let left = self.create_registration(id.name, ctx);
+        let left = self.create_registration(id.name.into(), ctx);
         let right =
-            ctx.create_bound_ident_expr(SPAN, id.name, id.symbol_id(), ReferenceFlags::Read);
+            ctx.create_bound_ident_expr(SPAN, id.name.into(), id.symbol_id(), ReferenceFlags::Read);
         let expr = ctx.ast.expression_assignment(SPAN, AssignmentOperator::Assign, left, right);
         ctx.ast.statement_expression(SPAN, expr)
     }
@@ -620,21 +617,23 @@ impl<'a> ReactRefresh<'a, '_> {
                 )),
             );
             let scope_id = ctx.create_child_scope_of_current(ScopeFlags::Function);
-            let function = Argument::from(ctx.ast.expression_function_with_scope_id_and_pure(
-                SPAN,
-                FunctionType::FunctionExpression,
-                None,
-                false,
-                false,
-                false,
-                NONE,
-                NONE,
-                formal_parameters,
-                NONE,
-                Some(function_body),
-                scope_id,
-                false,
-            ));
+            let function =
+                Argument::from(ctx.ast.expression_function_with_scope_id_and_pure_and_pife(
+                    SPAN,
+                    FunctionType::FunctionExpression,
+                    None,
+                    false,
+                    false,
+                    false,
+                    NONE,
+                    NONE,
+                    formal_parameters,
+                    NONE,
+                    Some(function_body),
+                    scope_id,
+                    false,
+                    false,
+                ));
             arguments.push(function);
         }
 
@@ -950,24 +949,21 @@ impl<'a> Visit<'a> for UsedInJSXBindingsCollector<'a, '_> {
             _ => false,
         };
 
-        if is_jsx_call {
-            if let Some(Argument::Identifier(ident)) = it.arguments.first() {
-                if let Some(symbol_id) =
-                    self.ctx.scoping().get_reference(ident.reference_id()).symbol_id()
-                {
-                    self.bindings.insert(symbol_id);
-                }
-            }
+        if is_jsx_call
+            && let Some(Argument::Identifier(ident)) = it.arguments.first()
+            && let Some(symbol_id) =
+                self.ctx.scoping().get_reference(ident.reference_id()).symbol_id()
+        {
+            self.bindings.insert(symbol_id);
         }
     }
 
     fn visit_jsx_opening_element(&mut self, it: &JSXOpeningElement<'_>) {
-        if let Some(ident) = it.name.get_identifier() {
-            if let Some(symbol_id) =
+        if let Some(ident) = it.name.get_identifier()
+            && let Some(symbol_id) =
                 self.ctx.scoping().get_reference(ident.reference_id()).symbol_id()
-            {
-                self.bindings.insert(symbol_id);
-            }
+        {
+            self.bindings.insert(symbol_id);
         }
     }
 

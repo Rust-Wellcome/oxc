@@ -39,7 +39,7 @@ if (__nodeFs.existsSync(__wasmDebugFilePath)) {
   __wasmFilePath = __wasmDebugFilePath
 } else if (!__nodeFs.existsSync(__wasmFilePath)) {
   try {
-    __wasmFilePath = __nodePath.resolve('@oxc-playground/binding-wasm32-wasi')
+    __wasmFilePath = require.resolve('@oxc-playground/binding-wasm32-wasi/playground.wasm32-wasi.wasm')
   } catch {
     throw new Error('Cannot find playground.wasm32-wasi.wasm file, and @oxc-playground/binding-wasm32-wasi package is not installed.')
   }
@@ -64,6 +64,29 @@ const { instance: __napiInstance, module: __wasiModule, napiModule: __napiModule
     })
     worker.onmessage = ({ data }) => {
       __wasmCreateOnMessageForFsProxy(__nodeFs)(data)
+    }
+
+    // The main thread of Node.js waits for all the active handles before exiting.
+    // But Rust threads are never waited without `thread::join`.
+    // So here we hack the code of Node.js to prevent the workers from being referenced (active).
+    // According to https://github.com/nodejs/node/blob/19e0d472728c79d418b74bddff588bea70a403d0/lib/internal/worker.js#L415,
+    // a worker is consist of two handles: kPublicPort and kHandle.
+    {
+      const kPublicPort = Object.getOwnPropertySymbols(worker).find(s =>
+        s.toString().includes("kPublicPort")
+      );
+      if (kPublicPort) {
+        worker[kPublicPort].ref = () => {};
+      }
+
+      const kHandle = Object.getOwnPropertySymbols(worker).find(s =>
+        s.toString().includes("kHandle")
+      );
+      if (kHandle) {
+        worker[kHandle].ref = () => {};
+      }
+
+      worker.unref();
     }
     return worker
   },

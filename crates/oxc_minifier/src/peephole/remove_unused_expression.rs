@@ -1,105 +1,87 @@
 use std::iter;
 
+use crate::{CompressOptionsUnused, ctx::Ctx};
 use oxc_allocator::{TakeIn, Vec};
 use oxc_ast::ast::*;
+use oxc_compat::ESFeature;
 use oxc_ecmascript::{
     ToPrimitive,
     side_effects::{MayHaveSideEffects, MayHaveSideEffectsContext},
 };
 use oxc_span::GetSpan;
-use oxc_syntax::es_target::ESTarget;
 
-use crate::ctx::Ctx;
-
-use super::{PeepholeOptimizations, State};
+use super::PeepholeOptimizations;
 
 impl<'a> PeepholeOptimizations {
     /// `SimplifyUnusedExpr`: <https://github.com/evanw/esbuild/blob/v0.24.2/internal/js_ast/js_ast_helpers.go#L534>
-    pub fn remove_unused_expression(
-        &self,
-        e: &mut Expression<'a>,
-        state: &mut State,
-        ctx: &mut Ctx<'a, '_>,
-    ) -> bool {
+    pub fn remove_unused_expression(e: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) -> bool {
         match e {
-            Expression::ArrayExpression(_) => self.fold_array_expression(e, state, ctx),
-            Expression::UnaryExpression(_) => self.fold_unary_expression(e, state, ctx),
-            Expression::NewExpression(_) => self.fold_new_constructor(e, state, ctx),
-            Expression::LogicalExpression(_) => self.fold_logical_expression(e, state, ctx),
-            Expression::SequenceExpression(_) => self.fold_sequence_expression(e, state, ctx),
-            Expression::TemplateLiteral(_) => self.fold_template_literal(e, state, ctx),
-            Expression::ObjectExpression(_) => self.fold_object_expression(e, state, ctx),
-            Expression::ConditionalExpression(_) => self.fold_conditional_expression(e, state, ctx),
-            Expression::BinaryExpression(_) => self.fold_binary_expression(e, state, ctx),
-            Expression::CallExpression(_) => self.fold_call_expression(e, state, ctx),
+            Expression::ArrayExpression(_) => Self::remove_unused_array_expr(e, ctx),
+            Expression::AssignmentExpression(_) => Self::remove_unused_assignment_expr(e, ctx),
+            Expression::BinaryExpression(_) => Self::remove_unused_binary_expr(e, ctx),
+            Expression::CallExpression(_) => Self::remove_unused_call_expr(e, ctx),
+            Expression::ClassExpression(_) => Self::remove_unused_class_expr(e, ctx),
+            Expression::ConditionalExpression(_) => Self::remove_unused_conditional_expr(e, ctx),
+            Expression::LogicalExpression(_) => Self::remove_unused_logical_expr(e, ctx),
+            Expression::NewExpression(_) => Self::remove_unused_new_expr(e, ctx),
+            Expression::ObjectExpression(_) => Self::remove_unused_object_expr(e, ctx),
+            Expression::SequenceExpression(_) => Self::remove_unused_sequence_expr(e, ctx),
+            Expression::TemplateLiteral(_) => Self::remove_unused_template_literal(e, ctx),
+            Expression::UnaryExpression(_) => Self::remove_unused_unary_expr(e, ctx),
             _ => !e.may_have_side_effects(ctx),
         }
     }
 
-    fn fold_unary_expression(
-        &self,
-        e: &mut Expression<'a>,
-        state: &mut State,
-        ctx: &mut Ctx<'a, '_>,
-    ) -> bool {
+    fn remove_unused_unary_expr(e: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) -> bool {
         let Expression::UnaryExpression(unary_expr) = e else { return false };
         match unary_expr.operator {
             UnaryOperator::Void | UnaryOperator::LogicalNot => {
                 *e = unary_expr.argument.take_in(ctx.ast);
-                state.changed = true;
-                self.remove_unused_expression(e, state, ctx)
+                ctx.state.changed = true;
+                Self::remove_unused_expression(e, ctx)
             }
             UnaryOperator::Typeof => {
                 if unary_expr.argument.is_identifier_reference() {
                     true
                 } else {
                     *e = unary_expr.argument.take_in(ctx.ast);
-                    state.changed = true;
-                    self.remove_unused_expression(e, state, ctx)
+                    ctx.state.changed = true;
+                    Self::remove_unused_expression(e, ctx)
                 }
             }
-            _ => false,
+            _ => !e.may_have_side_effects(ctx),
         }
     }
 
-    fn fold_sequence_expression(
-        &self,
-        e: &mut Expression<'a>,
-        state: &mut State,
-        ctx: &mut Ctx<'a, '_>,
-    ) -> bool {
+    fn remove_unused_sequence_expr(e: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) -> bool {
         let Expression::SequenceExpression(sequence_expr) = e else { return false };
-
         let old_len = sequence_expr.expressions.len();
-        sequence_expr.expressions.retain_mut(|e| !self.remove_unused_expression(e, state, ctx));
+        sequence_expr.expressions.retain_mut(|e| !Self::remove_unused_expression(e, ctx));
         if sequence_expr.expressions.len() != old_len {
-            state.changed = true;
+            ctx.state.changed = true;
         }
-
         sequence_expr.expressions.is_empty()
     }
 
-    fn fold_logical_expression(
-        &self,
-        e: &mut Expression<'a>,
-        state: &mut State,
-        ctx: &mut Ctx<'a, '_>,
-    ) -> bool {
-        let Expression::LogicalExpression(logical_expr) = e else { return false };
-        if !logical_expr.operator.is_coalesce()
-            && self.try_fold_expr_in_boolean_context(&mut logical_expr.left, ctx)
-        {
-            state.changed = true;
+    fn remove_unused_logical_expr(e: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) -> bool {
+        if !e.may_have_side_effects(ctx) {
+            return true;
         }
-        if self.remove_unused_expression(&mut logical_expr.right, state, ctx) {
-            self.remove_unused_expression(&mut logical_expr.left, state, ctx);
+        let Expression::LogicalExpression(logical_expr) = e else { return false };
+        if !logical_expr.operator.is_coalesce() {
+            Self::minimize_expression_in_boolean_context(&mut logical_expr.left, ctx);
+        }
+        if Self::remove_unused_expression(&mut logical_expr.right, ctx) {
+            Self::remove_unused_expression(&mut logical_expr.left, ctx);
             *e = logical_expr.left.take_in(ctx.ast);
-            state.changed = true;
+            ctx.state.changed = true;
             return false;
         }
 
         // try optional chaining and nullish coalescing
-        if self.target >= ESTarget::ES2020 {
+        if ctx.supports_feature(ESFeature::ES2020OptionalChaining)
+            || ctx.supports_feature(ESFeature::ES2020NullishCoalescingOperator)
+        {
             let LogicalExpression {
                 span: logical_span,
                 left: logical_left,
@@ -112,24 +94,27 @@ impl<'a> PeepholeOptimizations {
                     // "a == null || a.b()" => "a?.b()"
                     (LogicalOperator::And, BinaryOperator::Inequality)
                     | (LogicalOperator::Or, BinaryOperator::Equality) => {
-                        let name_and_id = if let Expression::Identifier(id) = &binary_expr.left {
-                            (!ctx.is_global_reference(id) && binary_expr.right.is_null())
-                                .then_some((id.name, &mut binary_expr.left))
-                        } else if let Expression::Identifier(id) = &binary_expr.right {
-                            (!ctx.is_global_reference(id) && binary_expr.left.is_null())
-                                .then_some((id.name, &mut binary_expr.right))
-                        } else {
-                            None
-                        };
-                        if let Some((name, id)) = name_and_id {
-                            if Self::inject_optional_chaining_if_matched(
-                                &name,
-                                id,
-                                logical_right,
-                                ctx,
-                            ) {
+                        if ctx.supports_feature(ESFeature::ES2020OptionalChaining) {
+                            let name_and_id = if let Expression::Identifier(id) = &binary_expr.left
+                            {
+                                (!ctx.is_global_reference(id) && binary_expr.right.is_null())
+                                    .then_some((id.name, &mut binary_expr.left))
+                            } else if let Expression::Identifier(id) = &binary_expr.right {
+                                (!ctx.is_global_reference(id) && binary_expr.left.is_null())
+                                    .then_some((id.name, &mut binary_expr.right))
+                            } else {
+                                None
+                            };
+                            if let Some((name, id)) = name_and_id
+                                && Self::inject_optional_chaining_if_matched(
+                                    &name,
+                                    id,
+                                    logical_right,
+                                    ctx,
+                                )
+                            {
                                 *e = logical_right.take_in(ctx.ast);
-                                state.changed = true;
+                                ctx.state.changed = true;
                                 return false;
                             }
                         }
@@ -140,39 +125,45 @@ impl<'a> PeepholeOptimizations {
                     // "a != null || (a = b)" => "a ??= b"
                     (LogicalOperator::And, BinaryOperator::Equality)
                     | (LogicalOperator::Or, BinaryOperator::Inequality) => {
-                        let new_left_hand_expr = if binary_expr.right.is_null() {
-                            Some(&mut binary_expr.left)
-                        } else if binary_expr.left.is_null() {
-                            Some(&mut binary_expr.right)
-                        } else {
-                            None
-                        };
-                        if let Some(new_left_hand_expr) = new_left_hand_expr {
-                            if let Expression::AssignmentExpression(assignment_expr) = logical_right
-                            {
-                                if assignment_expr.operator == AssignmentOperator::Assign
+                        if ctx.supports_feature(ESFeature::ES2020NullishCoalescingOperator) {
+                            let new_left_hand_expr = if binary_expr.right.is_null() {
+                                Some(&mut binary_expr.left)
+                            } else if binary_expr.left.is_null() {
+                                Some(&mut binary_expr.right)
+                            } else {
+                                None
+                            };
+                            if let Some(new_left_hand_expr) = new_left_hand_expr {
+                                if ctx.supports_feature(ESFeature::ES2021LogicalAssignmentOperators)
+                                    && let Expression::AssignmentExpression(assignment_expr) =
+                                        logical_right
+                                    && assignment_expr.operator == AssignmentOperator::Assign
                                     && Self::has_no_side_effect_for_evaluation_same_target(
                                         &assignment_expr.left,
                                         new_left_hand_expr,
                                         ctx,
                                     )
+                                    // Don't transform `x.y != null || (x = {}, x.y = 3)` to `x.y ??= (x = {}, 3)` because
+                                    // `??=` evaluates `x.y` (capturing `x`) before the RHS reassigns `x`.
+                                    // https://github.com/oxc-project/oxc/pull/16802#discussion_r2619369597
+                                    && !Self::member_object_may_be_mutated(&assignment_expr.left, ctx)
                                 {
                                     assignment_expr.span = *logical_span;
                                     assignment_expr.operator = AssignmentOperator::LogicalNullish;
                                     *e = logical_right.take_in(ctx.ast);
-                                    state.changed = true;
+                                    ctx.state.changed = true;
                                     return false;
                                 }
-                            }
 
-                            *e = ctx.ast.expression_logical(
-                                *logical_span,
-                                new_left_hand_expr.take_in(ctx.ast),
-                                LogicalOperator::Coalesce,
-                                logical_right.take_in(ctx.ast),
-                            );
-                            state.changed = true;
-                            return false;
+                                *e = ctx.ast.expression_logical(
+                                    *logical_span,
+                                    new_left_hand_expr.take_in(ctx.ast),
+                                    LogicalOperator::Coalesce,
+                                    logical_right.take_in(ctx.ast),
+                                );
+                                ctx.state.changed = true;
+                                return false;
+                            }
                         }
                     }
                     _ => {}
@@ -184,12 +175,7 @@ impl<'a> PeepholeOptimizations {
     }
 
     // `([1,2,3, foo()])` -> `foo()`
-    fn fold_array_expression(
-        &self,
-        e: &mut Expression<'a>,
-        state: &mut State,
-        ctx: &mut Ctx<'a, '_>,
-    ) -> bool {
+    fn remove_unused_array_expr(e: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) -> bool {
         let Expression::ArrayExpression(array_expr) = e else {
             return false;
         };
@@ -203,11 +189,11 @@ impl<'a> PeepholeOptimizations {
             ArrayExpressionElement::Elision(_) => false,
             match_expression!(ArrayExpressionElement) => {
                 let el_expr = el.to_expression_mut();
-                !self.remove_unused_expression(el_expr, state, ctx)
+                !Self::remove_unused_expression(el_expr, ctx)
             }
         });
         if array_expr.elements.len() != old_len {
-            state.changed = true;
+            ctx.state.changed = true;
         }
 
         if array_expr.elements.is_empty() {
@@ -239,37 +225,27 @@ impl<'a> PeepholeOptimizations {
         false
     }
 
-    fn fold_new_constructor(
-        &self,
-        e: &mut Expression<'a>,
-        state: &mut State,
-        ctx: &mut Ctx<'a, '_>,
-    ) -> bool {
+    fn remove_unused_new_expr(e: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) -> bool {
         let Expression::NewExpression(new_expr) = e else { return false };
-        if new_expr.pure && ctx.annotations() {
+        if (new_expr.pure && ctx.annotations()) || ctx.manual_pure_functions(&new_expr.callee) {
             let mut exprs =
-                self.fold_arguments_into_needed_expressions(&mut new_expr.arguments, state, ctx);
+                Self::fold_arguments_into_needed_expressions(&mut new_expr.arguments, ctx);
             if exprs.is_empty() {
                 return true;
             } else if exprs.len() == 1 {
                 *e = exprs.pop().unwrap();
-                state.changed = true;
+                ctx.state.changed = true;
                 return false;
             }
             *e = ctx.ast.expression_sequence(new_expr.span, exprs);
-            state.changed = true;
+            ctx.state.changed = true;
             return false;
         }
         false
     }
 
     // "`${1}2${foo()}3`" -> "`${foo()}`"
-    fn fold_template_literal(
-        &self,
-        e: &mut Expression<'a>,
-        state: &mut State,
-        ctx: &mut Ctx<'a, '_>,
-    ) -> bool {
+    fn remove_unused_template_literal(e: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) -> bool {
         let Expression::TemplateLiteral(temp_lit) = e else { return false };
         if temp_lit.expressions.is_empty() {
             return true;
@@ -286,7 +262,7 @@ impl<'a> PeepholeOptimizations {
         for mut e in temp_lit.expressions.drain(..) {
             if e.to_primitive(ctx).is_symbol() != Some(false) {
                 pending_to_string_required_exprs.push(e);
-            } else if !self.remove_unused_expression(&mut e, state, ctx) {
+            } else if !Self::remove_unused_expression(&mut e, ctx) {
                 if !pending_to_string_required_exprs.is_empty() {
                     // flush pending to string required expressions
                     let expressions =
@@ -296,6 +272,7 @@ impl<'a> PeepholeOptimizations {
                             ctx.ast.template_element(
                                 e.span(),
                                 TemplateElementValue { raw: "".into(), cooked: Some("".into()) },
+                                false,
                                 false,
                             )
                         })
@@ -323,6 +300,7 @@ impl<'a> PeepholeOptimizations {
                         temp_lit.span,
                         TemplateElementValue { raw: "".into(), cooked: Some("".into()) },
                         false,
+                        false,
                     )
                 })
                 .take(expressions.len() + 1),
@@ -339,22 +317,17 @@ impl<'a> PeepholeOptimizations {
             return true;
         } else if transformed_elements.len() == 1 {
             *e = transformed_elements.pop().unwrap();
-            state.changed = true;
+            ctx.state.changed = true;
             return false;
         }
 
         *e = ctx.ast.expression_sequence(temp_lit.span, transformed_elements);
-        state.changed = true;
+        ctx.state.changed = true;
         false
     }
 
     // `({ 1: 1, [foo()]: bar() })` -> `foo(), bar()`
-    fn fold_object_expression(
-        &self,
-        e: &mut Expression<'a>,
-        state: &mut State,
-        ctx: &mut Ctx<'a, '_>,
-    ) -> bool {
+    fn remove_unused_object_expr(e: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) -> bool {
         let Expression::ObjectExpression(object_expr) = e else {
             return false;
         };
@@ -388,13 +361,13 @@ impl<'a> PeepholeOptimizations {
                         PropertyKey::StaticIdentifier(_) | PropertyKey::PrivateIdentifier(_) => {}
                         match_expression!(PropertyKey) => {
                             let mut prop_key = key.into_expression();
-                            if !self.remove_unused_expression(&mut prop_key, state, ctx) {
+                            if !Self::remove_unused_expression(&mut prop_key, ctx) {
                                 transformed_elements.push(prop_key);
                             }
                         }
                     }
 
-                    if !self.remove_unused_expression(&mut value, state, ctx) {
+                    if !Self::remove_unused_expression(&mut value, ctx) {
                         transformed_elements.push(value);
                     }
                 }
@@ -410,75 +383,67 @@ impl<'a> PeepholeOptimizations {
             return true;
         } else if transformed_elements.len() == 1 {
             *e = transformed_elements.pop().unwrap();
-            state.changed = true;
+            ctx.state.changed = true;
             return false;
         }
 
         *e = ctx.ast.expression_sequence(object_expr.span, transformed_elements);
-        state.changed = true;
+        ctx.state.changed = true;
         false
     }
 
-    fn fold_conditional_expression(
-        &self,
-        e: &mut Expression<'a>,
-        state: &mut State,
-        ctx: &mut Ctx<'a, '_>,
-    ) -> bool {
+    fn remove_unused_conditional_expr(e: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) -> bool {
+        if !e.may_have_side_effects(ctx) {
+            return true;
+        }
         let Expression::ConditionalExpression(conditional_expr) = e else {
             return false;
         };
 
-        let consequent =
-            self.remove_unused_expression(&mut conditional_expr.consequent, state, ctx);
-        let alternate = self.remove_unused_expression(&mut conditional_expr.alternate, state, ctx);
+        let consequent = Self::remove_unused_expression(&mut conditional_expr.consequent, ctx);
+        let alternate = Self::remove_unused_expression(&mut conditional_expr.alternate, ctx);
 
         // "foo() ? 1 : 2" => "foo()"
         if consequent && alternate {
-            let test = self.remove_unused_expression(&mut conditional_expr.test, state, ctx);
+            let test = Self::remove_unused_expression(&mut conditional_expr.test, ctx);
             if test {
                 return true;
             }
             *e = conditional_expr.test.take_in(ctx.ast);
-            state.changed = true;
+            ctx.state.changed = true;
             return false;
         }
 
         // "foo() ? 1 : bar()" => "foo() || bar()"
         if consequent {
-            *e = self.join_with_left_associative_op(
+            *e = Self::join_with_left_associative_op(
                 conditional_expr.span,
                 LogicalOperator::Or,
                 conditional_expr.test.take_in(ctx.ast),
                 conditional_expr.alternate.take_in(ctx.ast),
                 ctx,
             );
-            state.changed = true;
+            ctx.state.changed = true;
             return false;
         }
 
         // "foo() ? bar() : 2" => "foo() && bar()"
         if alternate {
-            *e = self.join_with_left_associative_op(
+            *e = Self::join_with_left_associative_op(
                 conditional_expr.span,
                 LogicalOperator::And,
                 conditional_expr.test.take_in(ctx.ast),
                 conditional_expr.consequent.take_in(ctx.ast),
                 ctx,
             );
-            state.changed = true;
+            ctx.state.changed = true;
             return false;
         }
 
         false
     }
 
-    fn fold_binary_expression(
-        &self,
-        e: &mut Expression<'a>,
-        state: &mut State,
-        ctx: &mut Ctx<'a, '_>,
-    ) -> bool {
+    fn remove_unused_binary_expr(e: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) -> bool {
         let Expression::BinaryExpression(binary_expr) = e else {
             return false;
         };
@@ -492,18 +457,18 @@ impl<'a> PeepholeOptimizations {
             | BinaryOperator::LessEqualThan
             | BinaryOperator::GreaterThan
             | BinaryOperator::GreaterEqualThan => {
-                let left = self.remove_unused_expression(&mut binary_expr.left, state, ctx);
-                let right = self.remove_unused_expression(&mut binary_expr.right, state, ctx);
+                let left = Self::remove_unused_expression(&mut binary_expr.left, ctx);
+                let right = Self::remove_unused_expression(&mut binary_expr.right, ctx);
                 match (left, right) {
                     (true, true) => true,
                     (true, false) => {
                         *e = binary_expr.right.take_in(ctx.ast);
-                        state.changed = true;
+                        ctx.state.changed = true;
                         false
                     }
                     (false, true) => {
                         *e = binary_expr.left.take_in(ctx.ast);
-                        state.changed = true;
+                        ctx.state.changed = true;
                         false
                     }
                     (false, false) => {
@@ -514,13 +479,13 @@ impl<'a> PeepholeOptimizations {
                                 binary_expr.right.take_in(ctx.ast),
                             ]),
                         );
-                        state.changed = true;
+                        ctx.state.changed = true;
                         false
                     }
                 }
             }
             BinaryOperator::Addition => {
-                Self::fold_string_addition_chain(e, state, ctx);
+                Self::fold_string_addition_chain(e, ctx);
                 matches!(e, Expression::StringLiteral(_))
             }
             _ => !e.may_have_side_effects(ctx),
@@ -528,11 +493,7 @@ impl<'a> PeepholeOptimizations {
     }
 
     /// returns whether the passed expression is a string
-    fn fold_string_addition_chain(
-        e: &mut Expression<'a>,
-        state: &mut State,
-        ctx: &mut Ctx<'a, '_>,
-    ) -> bool {
+    fn fold_string_addition_chain(e: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) -> bool {
         let Expression::BinaryExpression(binary_expr) = e else {
             return e.to_primitive(ctx).is_string() == Some(true);
         };
@@ -540,14 +501,14 @@ impl<'a> PeepholeOptimizations {
             return e.to_primitive(ctx).is_string() == Some(true);
         }
 
-        let left_is_string = Self::fold_string_addition_chain(&mut binary_expr.left, state, ctx);
+        let left_is_string = Self::fold_string_addition_chain(&mut binary_expr.left, ctx);
         if left_is_string {
             if !binary_expr.left.may_have_side_effects(ctx)
                 && !binary_expr.left.is_specific_string_literal("")
             {
                 binary_expr.left =
                     ctx.ast.expression_string_literal(binary_expr.left.span(), "", None);
-                state.changed = true;
+                ctx.state.changed = true;
             }
 
             let right_as_primitive = binary_expr.right.to_primitive(ctx);
@@ -555,7 +516,7 @@ impl<'a> PeepholeOptimizations {
                 && !binary_expr.right.may_have_side_effects(ctx)
             {
                 *e = binary_expr.left.take_in(ctx.ast);
-                state.changed = true;
+                ctx.state.changed = true;
                 return true;
             }
             return true;
@@ -568,84 +529,49 @@ impl<'a> PeepholeOptimizations {
             {
                 binary_expr.right =
                     ctx.ast.expression_string_literal(binary_expr.right.span(), "", None);
-                state.changed = true;
+                ctx.state.changed = true;
             }
             return true;
         }
         false
     }
 
-    fn fold_call_expression(
-        &self,
-        e: &mut Expression<'a>,
-        state: &mut State,
-        ctx: &mut Ctx<'a, '_>,
-    ) -> bool {
+    fn remove_unused_call_expr(e: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) -> bool {
         let Expression::CallExpression(call_expr) = e else { return false };
 
-        if call_expr.pure && ctx.annotations() {
+        let is_pure = {
+            (call_expr.pure && ctx.annotations())
+                || ctx.manual_pure_functions(&call_expr.callee)
+                || (if let Expression::Identifier(id) = &call_expr.callee
+                    && let Some(symbol_id) =
+                        ctx.scoping().get_reference(id.reference_id()).symbol_id()
+                {
+                    ctx.state.pure_functions.contains_key(&symbol_id)
+                } else {
+                    false
+                })
+        };
+
+        if is_pure {
             let mut exprs =
-                self.fold_arguments_into_needed_expressions(&mut call_expr.arguments, state, ctx);
+                Self::fold_arguments_into_needed_expressions(&mut call_expr.arguments, ctx);
             if exprs.is_empty() {
                 return true;
             } else if exprs.len() == 1 {
                 *e = exprs.pop().unwrap();
-                state.changed = true;
+                ctx.state.changed = true;
                 return false;
             }
             *e = ctx.ast.expression_sequence(call_expr.span, exprs);
-            state.changed = true;
+            ctx.state.changed = true;
             return false;
         }
 
-        if call_expr.arguments.is_empty() {
-            let is_empty_iife = match &call_expr.callee {
-                Expression::FunctionExpression(f) => {
-                    f.params.is_empty() && f.body.as_ref().is_some_and(|body| body.is_empty())
-                }
-                Expression::ArrowFunctionExpression(f) => f.params.is_empty() && f.body.is_empty(),
-                _ => false,
-            };
-            if is_empty_iife {
-                return true;
-            }
-
-            if let Expression::ArrowFunctionExpression(f) = &mut call_expr.callee {
-                if !f.r#async && f.params.parameters_count() == 0 && f.body.statements.len() == 1 {
-                    if f.expression {
-                        // Replace "(() => foo())()" with "foo()"
-                        let expr = f.get_expression_mut().unwrap();
-                        *e = expr.take_in(ctx.ast);
-                        return self.remove_unused_expression(e, state, ctx);
-                    }
-                    match &mut f.body.statements[0] {
-                        Statement::ExpressionStatement(expr_stmt) => {
-                            // Replace "(() => { foo() })" with "foo()"
-                            *e = expr_stmt.expression.take_in(ctx.ast);
-                            return self.remove_unused_expression(e, state, ctx);
-                        }
-                        Statement::ReturnStatement(ret_stmt) => {
-                            if let Some(argument) = &mut ret_stmt.argument {
-                                // Replace "(() => { return foo() })" with "foo()"
-                                *e = argument.take_in(ctx.ast);
-                                return self.remove_unused_expression(e, state, ctx);
-                            }
-                            // Replace "(() => { return })" with ""
-                            return true;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-
-        false
+        !e.may_have_side_effects(ctx)
     }
 
-    fn fold_arguments_into_needed_expressions(
-        &self,
+    pub fn fold_arguments_into_needed_expressions(
         args: &mut Vec<'a, Argument<'a>>,
-        state: &mut State,
         ctx: &mut Ctx<'a, '_>,
     ) -> Vec<'a, Expression<'a>> {
         ctx.ast.vec_from_iter(args.drain(..).filter_map(|arg| {
@@ -656,310 +582,138 @@ impl<'a> PeepholeOptimizations {
                 ),
                 match_expression!(Argument) => arg.into_expression(),
             };
-            (!self.remove_unused_expression(&mut expr, state, ctx)).then_some(expr)
+            (!Self::remove_unused_expression(&mut expr, ctx)).then_some(expr)
         }))
     }
-}
 
-#[cfg(test)]
-mod test {
-    use crate::{
-        CompressOptions, TreeShakeOptions,
-        tester::{test, test_options, test_same, test_same_options},
-    };
-
-    #[test]
-    fn test_remove_unused_expression() {
-        test("null", "");
-        test("true", "");
-        test("false", "");
-        test("1", "");
-        test("1n", "");
-        test(";'s'", "");
-        test("this", "");
-        test("/asdf/", "");
-        test("(function () {})", "");
-        test("(() => {})", "");
-        test("import.meta", "");
-        test("var x; x", "var x");
-        test("x", "x");
-        test("void 0", "");
-        test("void x", "x");
-    }
-
-    #[test]
-    fn test_new_constructor_side_effect() {
-        test("new WeakSet()", "");
-        test("new WeakSet(null)", "");
-        test("new WeakSet(void 0)", "");
-        test("new WeakSet([])", "");
-        test_same("new WeakSet([x])");
-        test_same("new WeakSet(x)");
-        test_same("throw new WeakSet()");
-        test("new WeakMap()", "");
-        test("new WeakMap(null)", "");
-        test("new WeakMap(void 0)", "");
-        test("new WeakMap([])", "");
-        test_same("new WeakMap([x])");
-        test_same("new WeakMap(x)");
-        test("new Date()", "");
-        test("new Date('')", "");
-        test("new Date(0)", "");
-        test("new Date(null)", "");
-        test("new Date(true)", "");
-        test("new Date(false)", "");
-        test("new Date(undefined)", "");
-        test_same("new Date(x)");
-        test("new Set()", "");
-        // test("new Set([a, b, c])", "");
-        test("new Set(null)", "");
-        test("new Set(undefined)", "");
-        test("new Set(void 0)", "");
-        test_same("new Set(x)");
-        test("new Map()", "");
-        test("new Map(null)", "");
-        test("new Map(undefined)", "");
-        test("new Map(void 0)", "");
-        // test_same("new Map([x])");
-        test_same("new Map(x)");
-        // test("new Map([[a, b], [c, d]])", "");
-    }
-
-    #[test]
-    fn test_array_literal() {
-        test("([])", "");
-        test("([1])", "");
-        test("([a])", "a");
-        test("var a; ([a])", "var a;");
-        test("([foo()])", "foo()");
-        test("[[foo()]]", "foo()");
-        test_same("baz.map((v) => [v])");
-    }
-
-    #[test]
-    fn test_array_literal_containing_spread() {
-        test_same("([...c])");
-        test("([4, ...c, a])", "[...c, a]");
-        test("var a; ([4, ...c, a])", "var a; [...c]");
-        test_same("([foo(), ...c, bar()])");
-        test_same("([...a, b, ...c])");
-        test("var b; ([...a, b, ...c])", "var b; [...a, ...c]");
-        test_same("([...b, ...c])"); // It would also be fine if the spreads were split apart.
-    }
-
-    #[test]
-    fn test_fold_unary_expression_statement() {
-        test("typeof x", "");
-        test("typeof x?.y", "x?.y");
-        test("typeof x.y", "x.y");
-        test("typeof x.y.z()", "x.y.z()");
-        test("void x", "x");
-        test("void x?.y", "x?.y");
-        test("void x.y", "x.y");
-        test("void x.y.z()", "x.y.z()");
-
-        test("!x", "x");
-        test("!x?.y", "x?.y");
-        test("!x.y", "x.y");
-        test("!x.y.z()", "x.y.z()");
-        test_same("-x.y.z()");
-
-        test_same("delete x");
-        test_same("delete x.y");
-        test_same("delete x.y.z()");
-        test_same("+0n"); // Uncaught TypeError: Cannot convert a BigInt value to a number
-    }
-
-    #[test]
-    fn test_fold_sequence_expr() {
-        test("('foo', 'bar', 'baz')", "");
-        test("('foo', 'bar', baz())", "baz()");
-        test("('foo', bar(), baz())", "bar(), baz()");
-        test("(() => {}, bar(), baz())", "bar(), baz()");
-        test("(function k() {}, k(), baz())", "k(), baz()");
-        test_same("(0, o.f)();");
-        test("var obj = Object((null, 2, 3), 1, 2);", "var obj = Object(3, 1, 2);");
-        test_same("(0 instanceof 0, foo)");
-        test_same("(0 in 0, foo)");
-        test_same(
-            "React.useEffect(() => (isMountRef.current = !1, () => { isMountRef.current = !0; }), [])",
-        );
-    }
-
-    #[test]
-    fn test_logical_expression() {
-        test("var a; a != null && a.b()", "var a; a?.b()");
-        test("var a; a == null || a.b()", "var a; a?.b()");
-        test_same("a != null && a.b()"); // a may have a getter
-        test_same("a == null || a.b()"); // a may have a getter
-        test("var a; null != a && a.b()", "var a; a?.b()");
-        test("var a; null == a || a.b()", "var a; a?.b()");
-
-        test("x == null && y", "x ?? y");
-        test("x != null || y", "x ?? y");
-        test_same("v = x == null && y");
-        test_same("v = x != null || y");
-        test("a == null && (a = b)", "a ??= b");
-        test("a != null || (a = b)", "a ??= b");
-        test_same("v = a == null && (a = b)");
-        test_same("v = a != null || (a = b)");
-        test("void (x == null && y)", "x ?? y");
-    }
-
-    #[test]
-    fn test_object_literal() {
-        test("({})", "");
-        test("({a:1})", "");
-        test("({a:foo()})", "foo()");
-        test("({'a':foo()})", "foo()");
-        // Object-spread may trigger getters.
-        test_same("({...a})");
-        test_same("({...foo()})");
-        test("({ [{ foo: foo() }]: 0 })", "foo()");
-        test("({ foo: { foo: foo() } })", "foo()");
-
-        test("({ [bar()]: foo() })", "bar(), foo()");
-        test("({ ...baz, [bar()]: foo() })", "({ ...baz }), bar(), foo()");
-    }
-
-    #[test]
-    fn test_fold_template_literal() {
-        test("`a${b}c${d}e`", "`${b}${d}`");
-        test("`stuff ${x} ${1}`", "`${x}`");
-        test("`stuff ${1} ${y}`", "`${y}`");
-        test("`stuff ${x} ${y}`", "`${x}${y}`");
-        test("`stuff ${x ? 1 : 2} ${y}`", "x, `${y}`");
-        test("`stuff ${x} ${y ? 1 : 2}`", "`${x}`, y");
-        test("`stuff ${x} ${y ? 1 : 2} ${z}`", "`${x}`, y, `${z}`");
-
-        test("`4${c}${+a}`", "`${c}`, +a");
-        test("`${+foo}${c}${+bar}`", "+foo, `${c}`, +bar");
-        test("`${a}${+b}${c}`", "`${a}`, +b, `${c}`");
-    }
-
-    #[test]
-    fn test_fold_conditional_expression() {
-        test("(1, foo()) ? 1 : 2", "foo()");
-        test("foo() ? 1 : 2", "foo()");
-        test("foo() ? 1 : bar()", "foo() || bar()");
-        test("foo() ? bar() : 2", "foo() && bar()");
-        test_same("foo() ? bar() : baz()");
-    }
-
-    #[test]
-    fn test_fold_binary_expression() {
-        test("var a, b; a === b", "var a, b;");
-        test("var a, b; a() === b", "var a, b; a()");
-        test("var a, b; a === b()", "var a, b; b()");
-        test("var a, b; a() === b()", "var a, b; a(), b()");
-
-        test("var a, b; a !== b", "var a, b;");
-        test("var a, b; a == b", "var a, b;");
-        test("var a, b; a != b", "var a, b;");
-        test("var a, b; a < b", "var a, b;");
-        test("var a, b; a > b", "var a, b;");
-        test("var a, b; a <= b", "var a, b;");
-        test("var a, b; a >= b", "var a, b;");
-
-        test_same("var a, b; a + b");
-        test("var a, b; 'a' + b", "var a, b; '' + b");
-        test_same("var a, b; a + '' + b");
-        test("var a, b, c; 'a' + (b === c)", "var a, b, c;");
-        test("var a, b; 'a' + +b", "var a, b; '' + +b"); // can be improved to "var a, b; +b"
-        test_same("var a, b; a + ('' + b)");
-        test("var a, b, c; a + ('' + (b === c))", "var a, b, c; a + ''");
-    }
-
-    #[test]
-    fn test_fold_call_expression() {
-        test_same("foo()");
-        test("/* @__PURE__ */ foo()", "");
-        test("/* @__PURE__ */ foo(a)", "a");
-        test("/* @__PURE__ */ foo(a, b)", "a, b");
-        test("/* @__PURE__ */ foo(...a)", "[...a]");
-        test("/* @__PURE__ */ foo(...'a')", "");
-        test("/* @__PURE__ */ new Foo()", "");
-        test("/* @__PURE__ */ new Foo(a)", "a");
-        test("true && /* @__PURE__ */ noEffect()", "");
-        test("false || /* @__PURE__ */ noEffect()", "");
-    }
-
-    #[test]
-    fn test_fold_iife() {
-        test_same("var k = () => {}");
-        test_same("var k = function () {}");
-        // test("var a = (() => {})()", "var a = /* @__PURE__ */ (() => {})();");
-        test("(() => {})()", "");
-        test("(() => a())()", "a();");
-        test("(() => { a() })()", "a();");
-        test("(() => { return a() })()", "a();");
-        test_same("(a => {})()");
-        test_same("((a = foo()) => {})()");
-        test_same("(a => { a() })()");
-        test("((...a) => {})()", "");
-        test_same("((...a) => { a() })()");
-        // test("(() => { let b = a; b() })()", "a();");
-        // test("(() => { let b = a; return b() })()", "a();");
-        test("(async () => {})()", "");
-        test_same("(async () => { a() })()");
-        // test("(async () => { let b = a; b() })()", "(async () => a())();");
-        // test("var a = (function() {})()", "var a = /* @__PURE__ */ function() {}();");
-        test("(function() {})()", "");
-        test("(function*() {})()", "");
-        test("(async function() {})()", "");
-        test_same("(function() { a() })()");
-        test_same("(function*() { a() })()");
-        test_same("(async function() { a() })()");
-        test("(() => x)()", "x;");
-        test("/* @__PURE__ */ (() => x)()", "");
-        test("/* @__PURE__ */ (() => x)(y, z)", "y, z;");
-    }
-
-    #[test]
-    fn no_side_effects() {
-        fn check(source_text: &str) {
-            let input = format!("{source_text}; f()");
-            test(&input, source_text);
-
-            let input = format!("{source_text}; new f()");
-            test(&input, source_text);
-
-            // TODO https://github.com/evanw/esbuild/issues/3511
-            // let input = format!("{source_text}; html``");
-            // test(&input, source_text);
+    pub fn remove_unused_assignment_expr(e: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) -> bool {
+        let Expression::AssignmentExpression(assign_expr) = e else { return false };
+        if matches!(
+            ctx.state.options.unused,
+            CompressOptionsUnused::Keep | CompressOptionsUnused::KeepAssign
+        ) {
+            return false;
         }
-        check("/* @__NO_SIDE_EFFECTS__ */ function f() {}");
-        check("/* @__NO_SIDE_EFFECTS__ */ export function f() {}");
-        check("/* @__NO_SIDE_EFFECTS__ */ export default function f() {}");
-        check("export default /* @__NO_SIDE_EFFECTS__ */ function f() {}");
-        check("const f = /* @__NO_SIDE_EFFECTS__ */ function() {}");
-        check("export const f = /* @__NO_SIDE_EFFECTS__ */ function() {}");
-        check("/* @__NO_SIDE_EFFECTS__ */ const f = function() {}");
-        check("/* @__NO_SIDE_EFFECTS__ */ export const f = function() {}");
-        check("const f = /* @__NO_SIDE_EFFECTS__ */ () => {}");
-        check("export const f = /* @__NO_SIDE_EFFECTS__ */ () => {}");
-        check("/* @__NO_SIDE_EFFECTS__ */ const f = () => {}");
-        check("/* @__NO_SIDE_EFFECTS__ */ export const f = () => {}");
+        let Some(SimpleAssignmentTarget::AssignmentTargetIdentifier(ident)) =
+            assign_expr.left.as_simple_assignment_target()
+        else {
+            return false;
+        };
+        if Self::keep_top_level_var_in_script_mode(ctx)
+            || ctx.current_scope_flags().contains_direct_eval()
+        {
+            return false;
+        }
+        let reference_id = ident.reference_id();
+        let Some(symbol_id) = ctx.scoping().get_reference(reference_id).symbol_id() else {
+            return false;
+        };
+        // Keep error for assigning to `const foo = 1; foo = 2`.
+        if ctx.scoping().symbol_flags(symbol_id).is_const_variable() {
+            return false;
+        }
+        let Some(symbol_value) = ctx.state.symbol_values.get_symbol_value(symbol_id) else {
+            return false;
+        };
+        // Cannot remove assignment to live bindings: `export let foo; foo = 1;`.
+        if symbol_value.exported {
+            return false;
+        }
+        if symbol_value.read_references_count > 0 {
+            return false;
+        }
+        *e = assign_expr.right.take_in(ctx.ast);
+        ctx.state.changed = true;
+        false
     }
 
-    #[test]
-    fn treeshake_options_annotations_false() {
-        let options = CompressOptions {
-            treeshake: TreeShakeOptions { annotations: false, ..TreeShakeOptions::default() },
-            ..CompressOptions::smallest()
-        };
-        test_same_options("function test() {} /* @__PURE__ */ test()", &options);
-        test_same_options("function test() {} /* @__PURE__ */ new test()", &options);
+    fn remove_unused_class_expr(e: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) -> bool {
+        let Expression::ClassExpression(c) = e else { return false };
+        if let Some(exprs) = Self::remove_unused_class(c, ctx) {
+            if exprs.is_empty() {
+                return true;
+            }
+            *e = ctx.ast.expression_sequence(c.span, exprs);
+        }
+        false
+    }
 
-        let options = CompressOptions {
-            treeshake: TreeShakeOptions { annotations: true, ..TreeShakeOptions::default() },
-            ..CompressOptions::smallest()
-        };
-        test_options("function test() {} /* @__PURE__ */ test()", "function test() {}", &options);
-        test_options(
-            "function test() {} /* @__PURE__ */ new test()",
-            "function test() {}",
-            &options,
-        );
+    pub fn remove_unused_class(
+        c: &mut Class<'a>,
+        ctx: &mut Ctx<'a, '_>,
+    ) -> Option<Vec<'a, Expression<'a>>> {
+        // TypeError `class C extends (() => {}) {}`
+        if c.super_class
+            .as_ref()
+            .is_some_and(|e| matches!(e, Expression::ArrowFunctionExpression(_)))
+        {
+            return None;
+        }
+        // Don't remove classes with decorators - they may have side effects
+        if !c.decorators.is_empty() {
+            return None;
+        }
+        // Keep the entire class if there are class level side effects.
+        for e in &c.body.body {
+            match e {
+                e if e.has_decorator() => return None,
+                ClassElement::TSIndexSignature(_) => return None,
+                ClassElement::StaticBlock(block) if !block.body.is_empty() => return None,
+                ClassElement::PropertyDefinition(prop)
+                    if prop.r#static
+                        && prop.value.as_ref().is_some_and(|v| v.may_have_side_effects(ctx)) =>
+                {
+                    return None;
+                }
+                ClassElement::AccessorProperty(prop)
+                    if prop.r#static
+                        && prop.value.as_ref().is_some_and(|v| v.may_have_side_effects(ctx)) =>
+                {
+                    return None;
+                }
+                _ => {}
+            }
+        }
+
+        // Otherwise extract the expressions.
+        let mut exprs = ctx.ast.vec();
+
+        if let Some(e) = &mut c.super_class
+            && e.may_have_side_effects(ctx)
+        {
+            exprs.push(c.super_class.take().unwrap());
+        }
+
+        for e in &mut c.body.body {
+            // Save computed key.
+            if e.computed()
+                && let Some(key) = match e {
+                    ClassElement::TSIndexSignature(_) | ClassElement::StaticBlock(_) => None,
+                    ClassElement::MethodDefinition(def) => Some(&mut def.key),
+                    ClassElement::PropertyDefinition(def) => Some(&mut def.key),
+                    ClassElement::AccessorProperty(def) => Some(&mut def.key),
+                }
+                && let Some(expr) = key.as_expression_mut()
+                && expr.may_have_side_effects(ctx)
+            {
+                exprs.push(expr.take_in(ctx.ast));
+            }
+            // Save static initializer.
+            if e.r#static()
+                && let Some(init) = match e {
+                    ClassElement::TSIndexSignature(_)
+                    | ClassElement::StaticBlock(_)
+                    | ClassElement::MethodDefinition(_) => None,
+                    ClassElement::PropertyDefinition(def) => def.value.take(),
+                    ClassElement::AccessorProperty(def) => def.value.take(),
+                }
+            {
+                // Already checked side effects above.
+                exprs.push(init);
+            }
+        }
+
+        ctx.state.changed = true;
+        Some(exprs)
     }
 }

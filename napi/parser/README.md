@@ -1,5 +1,7 @@
 # Oxc Parser
 
+See [usage instructions](https://oxc.rs/docs/guide/usage/parser).
+
 ## Features
 
 ### Supports WASM
@@ -34,12 +36,18 @@ Any deviation would be considered a bug.
 [@oxc-project/types](https://www.npmjs.com/package/@oxc-project/types) can be used. For example:
 
 ```typescript
-import { Statement } from '@oxc-project/types';
+import { Statement } from "@oxc-project/types";
 ```
 
 ### Visitor
 
-[oxc-walker](https://www.npmjs.com/package/oxc-walker) or [estree-walker](https://www.npmjs.com/package/estree-walker) can be used.
+An AST visitor is provided. See example below.
+
+This package also exports visitor keys which can be used with any other ESTree walker.
+
+```js
+import { visitorKeys } from "oxc-parser";
+```
 
 ### Fast Mode
 
@@ -79,29 +87,43 @@ export interface EcmaScriptModule {
    * Dynamic imports `import('foo')` are ignored since they can be used in non-ESM files.
    */
   hasModuleSyntax: boolean;
-  /** Import statements. */
+  /** Import statements */
   staticImports: Array<StaticImport>;
-  /** Export statements. */
+  /** Export statements */
   staticExports: Array<StaticExport>;
-  /** Dynamic import expressions. */
+  /** Dynamic import expressions */
   dynamicImports: Array<DynamicImport>;
-  /** Span positions` of `import.meta` */
+  /** Span positions of `import.meta` */
   importMetas: Array<Span>;
 }
 ```
 
 ## API
 
-```javascript
-import oxc from 'oxc-parser';
+### Functions
 
-const code = 'const url: String = /* 🤨 */ import.meta.url;';
+```typescript
+// Synchronous parsing
+parseSync(filename: string, sourceText: string, options?: ParserOptions): ParseResult
+
+// Asynchronous parsing
+parse(filename: string, sourceText: string, options?: ParserOptions): Promise<ParseResult>
+```
+
+Use `parseSync` for synchronous parsing. Use `parse` for asynchronous parsing, which can be beneficial in I/O-bound or concurrent scenarios, though it adds async overhead.
+
+### Example
+
+```javascript
+import { parseSync, Visitor } from "oxc-parser";
+
+const code = "const url: String = /* 🤨 */ import.meta.url;";
 
 // File extension is used to determine which dialect to parse source as.
-const filename = 'test.tsx';
+const filename = "test.tsx";
 
-const result = oxc.parseSync(filename, code);
-// or `await oxc.parseAsync(filename, code)`
+const result = parseSync(filename, code);
+// Or use async version: const result = await parse(filename, code);
 
 // An array of errors, if any.
 console.log(result.errors);
@@ -111,4 +133,35 @@ console.log(result.program, result.comments);
 
 // ESM information - imports, exports, `import.meta`s.
 console.log(result.module);
+
+// Visit the AST
+const visitations = [];
+
+const visitor = new Visitor({
+  VariableDeclaration(decl) {
+    visitations.push(`enter ${decl.kind}`);
+  },
+  "VariableDeclaration:exit"(decl) {
+    visitations.push(`exit ${decl.kind}`);
+  },
+  Identifier(ident) {
+    visitations.push(ident.name);
+  },
+});
+
+visitor.visit(result.program);
+
+// Logs: [ 'enter const', 'url', 'String', 'import', 'meta', 'url', 'exit const' ]
+console.log(visitations);
 ```
+
+### Options
+
+All options are optional.
+
+- `lang`: `'js'` | `'jsx'` | `'ts'` | `'tsx'`. Set language of source. If omitted, language is deduced from file extension.
+- `sourceType`: `'script'` | `'module'` | `'unambiguous'`. Set source type. Defaults to `'module'`.
+- `astType`: `'js'` | `'ts'`. Set to `'ts'` if you want ASTs of plain JS/JSX files to contain TypeScript-specific properties.
+- `range`: `true` | `false`. If `true`, AST nodes contain a `range` field. Defaults to `false`.
+- `preserveParens`: `true` | `false`. If `true`, parenthesized expressions are represented by (non-standard) `ParenthesizedExpression` and `TSParenthesizedType` AST nodes. Defaults to `true`.
+- `showSemanticErrors`: `true` | `false`. If `true`, check file for semantic errors which parser does not otherwise emit e.g. `let x; let x;`. Has a small performance cost. Defaults to `false`.

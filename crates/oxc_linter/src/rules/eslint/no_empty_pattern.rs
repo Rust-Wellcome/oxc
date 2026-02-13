@@ -5,8 +5,14 @@ use oxc_span::Span;
 
 use crate::{AstNode, context::LintContext, rule::Rule};
 
-fn no_empty_pattern_diagnostic(pattern_type: &str, span: Span) -> OxcDiagnostic {
-    OxcDiagnostic::warn(format!("Empty {pattern_type} binding pattern"))
+fn no_empty_array_pattern_diagnostic(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::warn("Empty array binding pattern")
+        .with_help("Passing non-iterable values (null, undefined, numbers, booleans, etc.) will result in a runtime error because these values are not iterable.")
+        .with_label(span)
+}
+
+fn no_empty_object_pattern_diagnostic(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::warn("Empty object binding pattern")
         .with_help("Passing `null` or `undefined` will result in runtime error because `null` and `undefined` cannot be destructured.")
         .with_label(span)
 }
@@ -17,7 +23,7 @@ pub struct NoEmptyPattern;
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// Disallow empty destructuring patterns
+    /// Disallow empty destructuring patterns.
     ///
     /// ### Why is this bad?
     ///
@@ -48,7 +54,7 @@ declare_oxc_lint!(
     /// The difference between these two patterns is subtle,
     /// especially because the problematic empty pattern looks just like an object literal.
     ///
-    /// ### Examples of incorrect code for this rule:
+    /// ### Examples of **incorrect** code for this rule:
     ///
     /// ```JavaScript
     /// var {} = foo;
@@ -61,7 +67,7 @@ declare_oxc_lint!(
     /// function foo({a: []}) {}
     /// ```
     ///
-    /// ### Examples of correct code for this rule:
+    /// ### Examples of **correct** code for this rule:
     ///
     /// ```JavaScript
     /// var {a = {}} = foo;
@@ -76,12 +82,19 @@ declare_oxc_lint!(
 
 impl Rule for NoEmptyPattern {
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
-        let (pattern_type, span) = match node.kind() {
-            AstKind::ArrayPattern(array) if array.is_empty() => ("array", array.span),
-            AstKind::ObjectPattern(object) if object.is_empty() => ("object", object.span),
-            _ => return,
-        };
-        ctx.diagnostic(no_empty_pattern_diagnostic(pattern_type, span));
+        match node.kind() {
+            AstKind::ArrayPattern(array) => {
+                if array.is_empty() {
+                    ctx.diagnostic(no_empty_array_pattern_diagnostic(array.span));
+                }
+            }
+            AstKind::ObjectPattern(object) => {
+                if object.is_empty() {
+                    ctx.diagnostic(no_empty_object_pattern_diagnostic(object.span));
+                }
+            }
+            _ => {}
+        }
     }
 }
 

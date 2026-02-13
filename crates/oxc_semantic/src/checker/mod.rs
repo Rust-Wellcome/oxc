@@ -1,39 +1,44 @@
-use oxc_ast::{
-    AstKind,
-    ast::{DoWhileStatement, ForStatement, WhileStatement},
-};
-use oxc_diagnostics::OxcDiagnostic;
-use oxc_span::Span;
-
-mod javascript;
-mod typescript;
-
-use javascript as js;
-use typescript as ts;
+use oxc_ast::{AstKind, ast::*, match_module_declaration};
 
 use crate::builder::SemanticBuilder;
 
+mod javascript;
+mod typescript;
+use javascript as js;
+use typescript as ts;
+
+pub use javascript::is_function_decl_part_of_if_statement;
+
+/// Perform syntax error checking for the given AST node.
+///
+/// Must be inlined along with `SemanticBuilder::leave_node` so the compiler can see the
+/// concrete `AstKind` variant at each call site and eliminate non-matching arms.
+#[expect(clippy::inline_always, reason = "enables compile-time match elimination, see doc comment")]
+#[inline(always)]
 pub fn check<'a>(kind: AstKind<'a>, ctx: &SemanticBuilder<'a>) {
     match kind {
-        AstKind::Program(_) => {
+        AstKind::Program(program) => {
             js::check_duplicate_class_elements(ctx);
+            js::check_unresolved_exports(program, ctx);
+            ts::check_ts_export_assignment_in_program(program, ctx);
         }
         AstKind::BindingIdentifier(ident) => {
-            js::check_identifier(&ident.name, ident.span, ctx);
+            js::check_identifier(&ident.name, ident.span, ident.symbol_id.get(), ctx);
             js::check_binding_identifier(ident, ctx);
         }
         AstKind::IdentifierReference(ident) => {
-            js::check_identifier(&ident.name, ident.span, ctx);
+            js::check_identifier(&ident.name, ident.span, None, ctx);
             js::check_identifier_reference(ident, ctx);
         }
-        AstKind::LabelIdentifier(ident) => js::check_identifier(&ident.name, ident.span, ctx),
+        AstKind::LabelIdentifier(ident) => js::check_identifier(&ident.name, ident.span, None, ctx),
         AstKind::PrivateIdentifier(ident) => js::check_private_identifier_outside_class(ident, ctx),
         AstKind::NumericLiteral(lit) => js::check_number_literal(lit, ctx),
         AstKind::StringLiteral(lit) => js::check_string_literal(lit, ctx),
 
         AstKind::Directive(dir) => js::check_directive(dir, ctx),
-        AstKind::ModuleDeclaration(decl) => {
-            js::check_module_declaration(decl, ctx);
+        match_module_declaration!(AstKind) => {
+            let mod_decl_kind = kind.as_module_declaration_kind().unwrap();
+            js::check_module_declaration(&mod_decl_kind, ctx);
         }
         AstKind::MetaProperty(prop) => js::check_meta_property(prop, ctx),
 
@@ -82,7 +87,9 @@ pub fn check<'a>(kind: AstKind<'a>, ctx: &SemanticBuilder<'a>) {
         AstKind::MethodDefinition(method) => {
             ts::check_method_definition(method, ctx);
         }
-        AstKind::PropertyDefinition(prop) => ts::check_property_definition(prop, ctx),
+        AstKind::PropertyDefinition(prop) => {
+            ts::check_property_definition(prop, ctx);
+        }
         AstKind::ObjectProperty(prop) => {
             ts::check_object_property(prop, ctx);
         }
@@ -91,9 +98,6 @@ pub fn check<'a>(kind: AstKind<'a>, ctx: &SemanticBuilder<'a>) {
         AstKind::FormalParameters(params) => {
             ts::check_formal_parameters(params, ctx);
         }
-        AstKind::ArrayPattern(pat) => {
-            ts::check_array_pattern(pat, ctx);
-        }
 
         AstKind::AssignmentExpression(expr) => js::check_assignment_expression(expr, ctx),
         AstKind::AwaitExpression(expr) => js::check_await_expression(expr, ctx),
@@ -101,6 +105,9 @@ pub fn check<'a>(kind: AstKind<'a>, ctx: &SemanticBuilder<'a>) {
         AstKind::ObjectExpression(expr) => js::check_object_expression(expr, ctx),
         AstKind::UnaryExpression(expr) => js::check_unary_expression(expr, ctx),
         AstKind::YieldExpression(expr) => js::check_yield_expression(expr, ctx),
+        AstKind::VariableDeclaration(decl) => {
+            js::check_variable_declaration(decl, ctx);
+        }
         AstKind::VariableDeclarator(decl) => {
             if !ctx.source_type.is_typescript() {
                 js::check_variable_declarator_redeclaration(decl, ctx);
@@ -110,6 +117,7 @@ pub fn check<'a>(kind: AstKind<'a>, ctx: &SemanticBuilder<'a>) {
         AstKind::TSInterfaceDeclaration(decl) => ts::check_ts_interface_declaration(decl, ctx),
         AstKind::TSTypeParameter(param) => ts::check_ts_type_parameter(param, ctx),
         AstKind::TSModuleDeclaration(decl) => ts::check_ts_module_declaration(decl, ctx),
+        AstKind::TSGlobalDeclaration(decl) => ts::check_ts_global_declaration(decl, ctx),
         AstKind::TSEnumDeclaration(decl) => ts::check_ts_enum_declaration(decl, ctx),
         AstKind::TSTypeAliasDeclaration(decl) => ts::check_ts_type_alias_declaration(decl, ctx),
         AstKind::TSImportEqualsDeclaration(decl) => {
@@ -119,26 +127,5 @@ pub fn check<'a>(kind: AstKind<'a>, ctx: &SemanticBuilder<'a>) {
             ts::check_jsx_expression_container(container, ctx);
         }
         _ => {}
-    }
-}
-
-#[cold]
-fn undefined_export(x0: &str, span1: Span) -> OxcDiagnostic {
-    OxcDiagnostic::error(format!("Export '{x0}' is not defined")).with_label(span1)
-}
-
-/// It is a Syntax Error if any element of the ExportedBindings of ModuleItemList
-/// does not also occur in either the VarDeclaredNames of ModuleItemList, or the LexicallyDeclaredNames of ModuleItemList.
-pub fn check_unresolved_exports(ctx: &SemanticBuilder<'_>) {
-    for reference_ids in ctx.unresolved_references.root().values() {
-        for reference_id in reference_ids {
-            let reference = ctx.scoping.get_reference(*reference_id);
-            let node = ctx.nodes.get_node(reference.node_id());
-            if node.flags().has_export_specifier() {
-                if let AstKind::IdentifierReference(ident) = node.kind() {
-                    ctx.errors.borrow_mut().push(undefined_export(&ident.name, ident.span));
-                }
-            }
-        }
     }
 }

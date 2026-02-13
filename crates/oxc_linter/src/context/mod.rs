@@ -1,6 +1,6 @@
 #![expect(rustdoc::private_intra_doc_links)] // useful for intellisense
 
-use std::{ops::Deref, path::Path, rc::Rc};
+use std::{ffi::OsStr, ops::Deref, path::Path, rc::Rc};
 
 use javascript_globals::GLOBALS;
 
@@ -8,19 +8,21 @@ use oxc_ast::ast::IdentifierReference;
 use oxc_cfg::ControlFlowGraph;
 use oxc_diagnostics::{OxcDiagnostic, Severity};
 use oxc_semantic::Semantic;
-use oxc_span::{GetSpan, Span};
+use oxc_span::Span;
 
 #[cfg(debug_assertions)]
 use crate::rule::RuleFixMeta;
 use crate::{
     AllowWarnDeny, FrameworkFlags, ModuleRecord, OxlintEnv, OxlintGlobals, OxlintSettings,
+    WEBSITE_BASE_RULES_URL,
     config::GlobalValue,
     disable_directives::DisableDirectives,
     fixer::{Fix, FixKind, Message, PossibleFixes, RuleFix, RuleFixer},
+    frameworks::FrameworkOptions,
 };
 
 mod host;
-pub use host::ContextHost;
+pub use host::{ContextHost, ContextSubHost};
 
 /// Contains all of the state and context specific to this lint rule.
 ///
@@ -69,9 +71,6 @@ impl<'a> Deref for LintContext<'a> {
 }
 
 impl<'a> LintContext<'a> {
-    /// Base URL for the documentation, used to generate rule documentation URLs when a diagnostic is reported.
-    const WEBSITE_BASE_URL: &'static str = "https://oxc.rs/docs/guide/usage/linter/rules";
-
     /// Set the plugin name for the current rule.
     pub fn with_plugin_name(mut self, plugin: &'static str) -> Self {
         self.current_plugin_name = plugin;
@@ -105,8 +104,8 @@ impl<'a> LintContext<'a> {
     ///
     /// Refer to [`Semantic`]'s documentation for more information.
     #[inline]
-    pub fn semantic(&self) -> &Rc<Semantic<'a>> {
-        &self.parent.semantic
+    pub fn semantic(&self) -> &Semantic<'a> {
+        self.parent.semantic()
     }
 
     #[inline]
@@ -119,25 +118,86 @@ impl<'a> LintContext<'a> {
     pub fn cfg(&self) -> &ControlFlowGraph {
         // SAFETY: `LintContext::new` is the only way to construct a `LintContext` and we always
         // assert the existence of control flow so it should always be `Some`.
-        unsafe { self.parent.semantic.cfg().unwrap_unchecked() }
+        unsafe { self.parent.semantic().cfg().unwrap_unchecked() }
     }
 
     /// List of all disable directives in the file being linted.
     #[inline]
-    pub fn disable_directives(&self) -> &DisableDirectives<'a> {
-        &self.parent.disable_directives
+    pub fn disable_directives(&self) -> &DisableDirectives {
+        self.parent.disable_directives()
     }
 
     /// Get a snippet of source text covered by the given [`Span`]. For details,
     /// see [`Span::source_text`].
     pub fn source_range(&self, span: Span) -> &'a str {
-        span.source_text(self.parent.semantic.source_text())
+        span.source_text(self.parent.semantic().source_text())
+    }
+
+    /// Finds the next occurrence of the given token in the source code,
+    /// starting from the specified position, skipping over comments.
+    #[expect(clippy::cast_possible_truncation)]
+    pub fn find_next_token_from(&self, start: u32, token: &str) -> Option<u32> {
+        let source =
+            self.source_range(Span::new(start, self.parent.semantic().source_text().len() as u32));
+
+        source
+            .match_indices(token)
+            .find(|(a, _)| !self.is_inside_comment(start + *a as u32))
+            .map(|(a, _)| a as u32)
+    }
+
+    /// Finds the previous occurrence of the given token in the source code,
+    /// starting from the specified position, skipping over comments.
+    #[expect(clippy::cast_possible_truncation)]
+    pub fn find_prev_token_from(&self, start: u32, token: &str) -> Option<u32> {
+        let source = self.source_range(Span::from(0..start));
+
+        source
+            .rmatch_indices(token)
+            .find(|(a, _)| !self.is_inside_comment(*a as u32))
+            .map(|(a, _)| a as u32)
+    }
+
+    /// Finds the next occurrence of the given token within a bounded span,
+    /// starting from the specified position, skipping over comments.
+    ///
+    /// Returns the offset from `start` if the token is found before `end`,
+    /// otherwise returns `None`.
+    #[expect(clippy::cast_possible_truncation)]
+    pub fn find_next_token_within(&self, start: u32, end: u32, token: &str) -> Option<u32> {
+        let source = self.source_range(Span::new(start, end));
+
+        source
+            .match_indices(token)
+            .find(|(a, _)| !self.is_inside_comment(start + *a as u32))
+            .map(|(a, _)| a as u32)
+    }
+
+    /// Finds the previous occurrence of the given token within a bounded span,
+    /// starting from the specified position, skipping over comments.
+    ///
+    /// Returns the offset from `start` if the token is found before `end`,
+    /// otherwise returns `None`.
+    #[expect(clippy::cast_possible_truncation)]
+    pub fn find_prev_token_within(&self, start: u32, end: u32, token: &str) -> Option<u32> {
+        let source = self.source_range(Span::new(start, end));
+
+        source
+            .rmatch_indices(token)
+            .find(|(a, _)| !self.is_inside_comment(start + *a as u32))
+            .map(|(a, _)| a as u32)
     }
 
     /// Path to the file currently being linted.
     #[inline]
     pub fn file_path(&self) -> &Path {
         &self.parent.file_path
+    }
+
+    /// Extension of the file currently being linted, without the leading dot.
+    #[inline]
+    pub fn file_extension(&self) -> Option<&OsStr> {
+        self.parent.file_extension()
     }
 
     /// Plugin settings
@@ -187,10 +247,10 @@ impl<'a> LintContext<'a> {
         }
 
         for env in self.env().iter() {
-            if let Some(env) = GLOBALS.get(env) {
-                if let Some(value) = env.get(var) {
-                    return Some(GlobalValue::from(*value));
-                }
+            if let Some(env) = GLOBALS.get(env)
+                && let Some(value) = env.get(var)
+            {
+                return Some(GlobalValue::from(*value));
             }
         }
 
@@ -208,10 +268,10 @@ impl<'a> LintContext<'a> {
             return true;
         }
         for env in self.env().iter() {
-            if let Some(env) = GLOBALS.get(env) {
-                if env.contains_key(var) {
-                    return true;
-                }
+            if let Some(env) = GLOBALS.get(env)
+                && env.contains_key(var)
+            {
+                return true;
             }
         }
         false
@@ -221,8 +281,8 @@ impl<'a> LintContext<'a> {
 
     /// Add a diagnostic message to the list of diagnostics. Outputs a diagnostic with the current rule
     /// name, severity, and a link to the rule's documentation URL.
-    fn add_diagnostic(&self, mut message: Message<'a>) {
-        if self.parent.disable_directives.contains(self.current_rule_name, message.span()) {
+    fn add_diagnostic(&self, mut message: Message) {
+        if self.parent.disable_directives().contains(self.current_rule_name, message.span) {
             return;
         }
         message.error = message
@@ -230,9 +290,7 @@ impl<'a> LintContext<'a> {
             .with_error_code(self.current_plugin_prefix, self.current_rule_name)
             .with_url(format!(
                 "{}/{}/{}.html",
-                Self::WEBSITE_BASE_URL,
-                self.current_plugin_name,
-                self.current_rule_name
+                WEBSITE_BASE_RULES_URL, self.current_plugin_name, self.current_rule_name
             ));
         if message.error.severity != self.severity {
             message.error = message.error.with_severity(self.severity);
@@ -246,7 +304,10 @@ impl<'a> LintContext<'a> {
     /// Use [`LintContext::diagnostic_with_fix`] to provide an automatic fix.
     #[inline]
     pub fn diagnostic(&self, diagnostic: OxcDiagnostic) {
-        self.add_diagnostic(Message::new(diagnostic, PossibleFixes::None));
+        self.add_diagnostic(
+            Message::new(diagnostic, PossibleFixes::None)
+                .with_section_offset(self.parent.current_sub_host().source_text_offset),
+        );
     }
 
     /// Report a lint rule violation and provide an automatic fix.
@@ -264,7 +325,7 @@ impl<'a> LintContext<'a> {
     #[inline]
     pub fn diagnostic_with_fix<C, F>(&self, diagnostic: OxcDiagnostic, fix: F)
     where
-        C: Into<RuleFix<'a>>,
+        C: Into<RuleFix>,
         F: FnOnce(RuleFixer<'_, 'a>) -> C,
     {
         self.diagnostic_with_fix_of_kind(diagnostic, FixKind::SafeFix, fix);
@@ -285,10 +346,31 @@ impl<'a> LintContext<'a> {
     #[inline]
     pub fn diagnostic_with_suggestion<C, F>(&self, diagnostic: OxcDiagnostic, fix: F)
     where
-        C: Into<RuleFix<'a>>,
+        C: Into<RuleFix>,
         F: FnOnce(RuleFixer<'_, 'a>) -> C,
     {
         self.diagnostic_with_fix_of_kind(diagnostic, FixKind::Suggestion, fix);
+    }
+
+    /// Report a lint rule violation and provide a suggestion for fixing it.
+    ///
+    /// The second argument is a [closure] that takes a [`RuleFixer`] and
+    /// returns something that can turn into a `CompositeFix`.
+    ///
+    /// Fixes created this way should not create parse errors, but have the
+    /// potential to change the code's semantics. If your fix is completely safe
+    /// and definitely does not change semantics, use [`LintContext::diagnostic_with_fix`].
+    /// If your fix has the potential to create parse errors, use
+    /// [`LintContext::diagnostic_with_dangerous_fix`].
+    ///
+    /// [closure]: <https://doc.rust-lang.org/book/ch13-01-closures.html>
+    #[inline]
+    pub fn diagnostic_with_dangerous_suggestion<C, F>(&self, diagnostic: OxcDiagnostic, fix: F)
+    where
+        C: Into<RuleFix>,
+        F: FnOnce(RuleFixer<'_, 'a>) -> C,
+    {
+        self.diagnostic_with_fix_of_kind(diagnostic, FixKind::DangerousSuggestion, fix);
     }
 
     /// Report a lint rule violation and provide a potentially dangerous
@@ -313,7 +395,7 @@ impl<'a> LintContext<'a> {
     #[inline]
     pub fn diagnostic_with_dangerous_fix<C, F>(&self, diagnostic: OxcDiagnostic, fix: F)
     where
-        C: Into<RuleFix<'a>>,
+        C: Into<RuleFix>,
         F: FnOnce(RuleFixer<'_, 'a>) -> C,
     {
         self.diagnostic_with_fix_of_kind(diagnostic, FixKind::DangerousFix, fix);
@@ -331,12 +413,15 @@ impl<'a> LintContext<'a> {
         fix_kind: FixKind,
         fix: F,
     ) where
-        C: Into<RuleFix<'a>>,
+        C: Into<RuleFix>,
         F: FnOnce(RuleFixer<'_, 'a>) -> C,
     {
         let (diagnostic, fix) = self.create_fix(fix_kind, fix, diagnostic);
         if let Some(fix) = fix {
-            self.add_diagnostic(Message::new(diagnostic, PossibleFixes::Single(fix)));
+            self.add_diagnostic(
+                Message::new(diagnostic, PossibleFixes::Single(fix))
+                    .with_section_offset(self.parent.current_sub_host().source_text_offset),
+            );
         } else {
             self.diagnostic(diagnostic);
         }
@@ -350,11 +435,11 @@ impl<'a> LintContext<'a> {
         fix_one: (FixKind, F1),
         fix_two: (FixKind, F2),
     ) where
-        C: Into<RuleFix<'a>>,
+        C: Into<RuleFix>,
         F1: FnOnce(RuleFixer<'_, 'a>) -> C,
         F2: FnOnce(RuleFixer<'_, 'a>) -> C,
     {
-        let fixes_result: Vec<Fix<'a>> = vec![
+        let fixes_result: Vec<Fix> = vec![
             self.create_fix(fix_one.0, fix_one.1, diagnostic.clone()).1,
             self.create_fix(fix_two.0, fix_two.1, diagnostic.clone()).1,
         ]
@@ -365,7 +450,51 @@ impl<'a> LintContext<'a> {
         if fixes_result.is_empty() {
             self.diagnostic(diagnostic);
         } else {
-            self.add_diagnostic(Message::new(diagnostic, PossibleFixes::Multiple(fixes_result)));
+            self.add_diagnostic(
+                Message::new(diagnostic, PossibleFixes::Multiple(fixes_result))
+                    .with_section_offset(self.parent.current_sub_host().source_text_offset),
+            );
+        }
+    }
+
+    /// Report a lint rule violation and provide multiple suggestions for fixing it.
+    ///
+    /// The second argument is an iterator of [`RuleFix`] values representing
+    /// the available suggestions.
+    ///
+    /// Use this when a rule violation can be fixed in multiple ways and the user
+    /// should choose which fix to apply.
+    pub fn diagnostic_with_suggestions<I>(&self, diagnostic: OxcDiagnostic, suggestions: I)
+    where
+        I: IntoIterator<Item = RuleFix>,
+    {
+        let fixes_result: Vec<Fix> = suggestions
+            .into_iter()
+            .filter_map(|rule_fix| {
+                #[cfg(debug_assertions)]
+                debug_assert!(
+                    self.current_rule_fix_capabilities.supports_fix(rule_fix.kind()),
+                    "Rule `{}` does not support this fix kind. Did you forget to update fix capabilities in declare_oxc_lint?.\n\tSupported fix kinds: {:?}\n\tAttempted fix kind: {:?}",
+                    self.current_rule_name,
+                    FixKind::from(self.current_rule_fix_capabilities),
+                    rule_fix.kind()
+                );
+
+                if self.parent.fix.can_apply(rule_fix.kind()) && !rule_fix.is_empty() {
+                    Some(rule_fix.into_fix(self.source_text()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if fixes_result.is_empty() {
+            self.diagnostic(diagnostic);
+        } else {
+            self.add_diagnostic(
+                Message::new(diagnostic, PossibleFixes::Multiple(fixes_result))
+                    .with_section_offset(self.parent.current_sub_host().source_text_offset),
+            );
         }
     }
 
@@ -374,13 +503,13 @@ impl<'a> LintContext<'a> {
         fix_kind: FixKind,
         fix: F,
         diagnostic: OxcDiagnostic,
-    ) -> (OxcDiagnostic, Option<Fix<'a>>)
+    ) -> (OxcDiagnostic, Option<Fix>)
     where
-        C: Into<RuleFix<'a>>,
+        C: Into<RuleFix>,
         F: FnOnce(RuleFixer<'_, 'a>) -> C,
     {
         let fixer = RuleFixer::new(fix_kind, self);
-        let rule_fix: RuleFix<'a> = fix(fixer).into();
+        let rule_fix: RuleFix = fix(fixer).into();
         #[cfg(debug_assertions)]
         debug_assert!(
             self.current_rule_fix_capabilities.supports_fix(fix_kind),
@@ -421,6 +550,16 @@ impl<'a> LintContext<'a> {
     pub fn frameworks(&self) -> FrameworkFlags {
         self.parent.frameworks
     }
+
+    /// Returns the framework options for the current script block.
+    /// For Vue files, this can be `FrameworkOptions::VueSetup` if we're in a `<script setup>` block.
+    pub fn frameworks_options(&self) -> FrameworkOptions {
+        self.parent.frameworks_options()
+    }
+
+    pub fn other_file_hosts(&self) -> Vec<&ContextSubHost<'a>> {
+        self.parent.other_file_hosts()
+    }
 }
 
 /// Gets the prefixed plugin name, given the short plugin name.
@@ -432,21 +571,20 @@ impl<'a> LintContext<'a> {
 /// ```
 #[inline]
 fn plugin_name_to_prefix(plugin_name: &'static str) -> &'static str {
-    PLUGIN_PREFIXES.get(plugin_name).copied().unwrap_or(plugin_name)
+    match plugin_name {
+        "import" => "eslint-plugin-import",
+        "jest" => "eslint-plugin-jest",
+        "jsdoc" => "eslint-plugin-jsdoc",
+        "jsx_a11y" => "eslint-plugin-jsx-a11y",
+        "nextjs" => "eslint-plugin-next",
+        "promise" => "eslint-plugin-promise",
+        "react_perf" => "eslint-plugin-react-perf",
+        "react" => "eslint-plugin-react",
+        "typescript" => "typescript-eslint",
+        "unicorn" => "eslint-plugin-unicorn",
+        "vitest" => "eslint-plugin-vitest",
+        "node" => "eslint-plugin-node",
+        "vue" => "eslint-plugin-vue",
+        _ => plugin_name,
+    }
 }
-
-/// Map of plugin names to their prefixed versions.
-const PLUGIN_PREFIXES: phf::Map<&'static str, &'static str> = phf::phf_map! {
-    "import" => "eslint-plugin-import",
-    "jest" => "eslint-plugin-jest",
-    "jsdoc" => "eslint-plugin-jsdoc",
-    "jsx_a11y" => "eslint-plugin-jsx-a11y",
-    "nextjs" => "eslint-plugin-next",
-    "promise" => "eslint-plugin-promise",
-    "react_perf" => "eslint-plugin-react-perf",
-    "react" => "eslint-plugin-react",
-    "typescript" => "typescript-eslint",
-    "unicorn" => "eslint-plugin-unicorn",
-    "vitest" => "eslint-plugin-vitest",
-    "node" => "eslint-plugin-node",
-};

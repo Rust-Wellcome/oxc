@@ -20,7 +20,7 @@ pub struct ESTreeStruct {
     /// Contains field indices. Entries are:
     /// * Actual struct field: index of the field.
     /// * Added field: `struct_def.fields.len() + added_field_index`.
-    /// Does not include `type` field, if it's automatically added.
+    ///   Does not include `type` field, if it's automatically added.
     pub field_indices: Vec<u8>,
     /// TS alias.
     /// e.g. `#[estree(ts_alias = "null")]` means this type won't have a type def generated,
@@ -31,6 +31,8 @@ pub struct ESTreeStruct {
     /// Additional custom TS type definition to add along with the generated one.
     /// Does not include `export`.
     pub add_ts_def: Option<String>,
+    /// If `true`
+    pub no_parent: bool,
 }
 
 /// Configuration for ESTree generator on an enum.

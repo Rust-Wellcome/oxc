@@ -4,6 +4,77 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.109.0] - 2026-01-19
+
+### 🚀 Features
+
+- 6e8fa80 napi/parser, napi/transform: Accept `sourceType: "commonjs"` (#18197) (overlookmotel)
+- 66b8c02 parser: Implement unambiguous module parsing for JS/TS files (#18124) (Boshen)
+
+## [0.103.0] - 2025-12-15
+
+### 💥 BREAKING CHANGES
+
+- 320c09f ast, parser, linter, codegen, formatter: [**BREAKING**] Rename `CommentKind::Block` to `CommentKind::SinglelineBlock` (#16501) (Dunqing)
+
+### 🚀 Features
+
+- 30a9076 ast, parser, codegen: Add `CommentKind::MultilineBlock` (#16479) (Dunqing)
+
+## [0.102.0] - 2025-12-08
+
+### 💥 BREAKING CHANGES
+
+- 083fea9 napi/parser: [**BREAKING**] Represent empty optional fields on JS side as `null` (#16411) (overlookmotel)
+
+
+
+
+
+
+## [0.91.0] - 2025-09-22
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## [0.80.0] - 2025-08-03
+
+### 📚 Documentation
+
+- de1de35 rust: Add comprehensive README.md documentation for all Rust crates (#12706) (Copilot)
+
+
+
+
+
+
+
+
+## [0.77.0] - 2025-07-12
+
+### 🚀 Features
+
+- 407429a napi/parser,napi/transform: Accept `lang=dts` (#12154) (Boshen)
+
+
+
+
 
 
 

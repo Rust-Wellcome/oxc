@@ -14,8 +14,8 @@ use std::ops::Deref;
 use options::{IgnorePattern, NoUnusedVarsOptions};
 use oxc_ast::AstKind;
 use oxc_macros::declare_oxc_lint;
-use oxc_semantic::{AstNode, ScopeFlags, SymbolFlags, SymbolId};
-use oxc_span::GetSpan;
+use oxc_semantic::{AstNode, ScopeFlags, SymbolFlags};
+use oxc_span::{GetSpan, Span};
 use symbol::Symbol;
 
 use crate::{
@@ -78,17 +78,17 @@ declare_oxc_lint!(
     /// functions, etc.
     ///
     /// #### Ignored Files
-    /// This rule ignores `.d.ts` files and `.vue` files entirely. Variables,
+    /// This rule ignores `.d.ts`, `.astro`, `.svelte` and `.vue` files entirely. Variables,
     /// classes, interfaces, and types declared in `.d.ts` files are generally
     /// used by other files, which are not checked by Oxlint. Since Oxlint does
-    /// not support parsing Vue templates, this rule cannot tell if a variable
-    /// is used or unused in a Vue file.
+    /// not support parsing template syntax, this rule cannot tell if a variable
+    /// is used or unused in a Vue / Svelte / Astro file.
     ///
     /// #### Exported
     ///
     /// The original ESLint rule recognizes `/* exported variableName */`
     /// comments as a way to indicate that a variable is used in another script
-    /// and should not be considered unused. Since ES6 modules are now a TC39
+    /// and should not be considered unused. Since ES modules are now a TC39
     /// standard, Oxlint does not support this feature.
     ///
     /// ### Examples
@@ -96,8 +96,8 @@ declare_oxc_lint!(
     /// Examples of **incorrect** code for this rule:
     ///
     /// ```javascript
-    /// /*eslint no-unused-vars: "error"*/
-    /// /*global some_unused_var*/
+    /// /* no-unused-vars: "error" */
+    /// /* if you have `some_unused_var` defined as a global in .oxlintrc.json */
     ///
     /// // It checks variables you have defined as global
     /// some_unused_var = 42;
@@ -142,7 +142,7 @@ declare_oxc_lint!(
     ///
     /// Examples of **correct** code for this rule:
     /// ```js
-    /// /*eslint no-unused-vars: "error"*/
+    /// /* no-unused-vars: "error" */
     ///
     /// var x = 10;
     /// alert(x);
@@ -183,13 +183,14 @@ declare_oxc_lint!(
     /// ```js
     /// /* exported global_var */
     ///
-    /// // Not respected, use ES6 modules instead.
+    /// // Not respected, use ES modules instead.
     /// var global_var = 42;
     /// ```
     NoUnusedVars,
     eslint,
     correctness,
-    dangerous_suggestion
+    dangerous_suggestion,
+    config = NoUnusedVarsOptions
 );
 
 impl Deref for NoUnusedVars {
@@ -201,17 +202,19 @@ impl Deref for NoUnusedVars {
 }
 
 impl Rule for NoUnusedVars {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        Self(Box::new(NoUnusedVarsOptions::try_from(value).unwrap()))
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        Ok(Self(Box::new(NoUnusedVarsOptions::try_from(value).unwrap_or_default())))
     }
 
-    fn run_on_symbol(&self, symbol_id: SymbolId, ctx: &LintContext<'_>) {
-        let symbol = Symbol::new(ctx, ctx.module_record(), symbol_id);
-        if Self::should_skip_symbol(&symbol) {
-            return;
-        }
+    fn run_once(&self, ctx: &LintContext) {
+        for symbol in ctx.scoping().symbol_ids() {
+            let symbol = Symbol::new(ctx, ctx.module_record(), symbol);
+            if Self::should_skip_symbol(&symbol) {
+                continue;
+            }
 
-        self.run_on_symbol_internal(&symbol, ctx);
+            self.run_on_symbol_internal(&symbol, ctx);
+        }
     }
 
     fn should_run(&self, ctx: &ContextHost) -> bool {
@@ -221,8 +224,7 @@ impl Rule for NoUnusedVars {
         //    we can't detect
         !ctx.source_type().is_typescript_definition()
             && !ctx
-                .file_path()
-                .extension()
+                .file_extension()
                 .is_some_and(|ext| ext == "vue" || ext == "svelte" || ext == "astro")
     }
 }
@@ -301,15 +303,16 @@ impl NoUnusedVars {
                 });
             }
             AstKind::FormalParameter(param) => {
-                if self.is_allowed_argument(
-                    ctx.semantic().as_ref(),
-                    ctx.module_record(),
-                    symbol,
-                    param,
-                ) {
+                if self.is_allowed_argument(ctx.semantic(), ctx.module_record(), symbol, param) {
                     return;
                 }
                 ctx.diagnostic(diagnostic::param(symbol, &self.args_ignore_pattern));
+            }
+            AstKind::FormalParameterRest(_) => {
+                if NoUnusedVars::is_allowed_binding_rest_element(symbol) {
+                    return;
+                }
+                ctx.diagnostic(diagnostic::param(symbol, &self.vars_ignore_pattern));
             }
             AstKind::BindingRestElement(_) => {
                 if NoUnusedVars::is_allowed_binding_rest_element(symbol) {
@@ -323,7 +326,7 @@ impl NoUnusedVars {
                 }
                 ctx.diagnostic(diagnostic::declared(symbol, &IgnorePattern::<&str>::None, false));
             }
-            AstKind::TSInterfaceDeclaration(_) => {
+            AstKind::TSInterfaceDeclaration(_) | AstKind::TSTypeAliasDeclaration(_) => {
                 if symbol.is_in_declared_module() {
                     return;
                 }
@@ -335,12 +338,28 @@ impl NoUnusedVars {
                 }
                 ctx.diagnostic(diagnostic::declared(symbol, &self.vars_ignore_pattern, false));
             }
-            AstKind::CatchParameter(_) => {
-                ctx.diagnostic(diagnostic::declared(
-                    symbol,
-                    &self.caught_errors_ignore_pattern,
-                    false,
-                ));
+            // Mapped type keys are always used within the type definition
+            AstKind::TSMappedType(_) => {}
+            AstKind::CatchParameter(catch) => {
+                // NOTE: these are safe suggestions as deleting unused catch
+                // bindings wont have any side effects.
+                ctx.diagnostic_with_suggestion(
+                    diagnostic::declared(symbol, &self.caught_errors_ignore_pattern, false),
+                    |fixer| {
+                        let Span { start, end, .. } = catch.span();
+
+                        let (Some(paren_start), Some(paren_end_offset)) = (
+                            ctx.find_prev_token_from(start, "("),
+                            ctx.find_next_token_from(end, ")"),
+                        ) else {
+                            return fixer.noop();
+                        };
+
+                        let paren_end = end + paren_end_offset;
+                        let delete_span = Span::new(paren_start, paren_end + 1);
+                        fixer.delete_range(delete_span)
+                    },
+                );
             }
             _ => ctx.diagnostic(diagnostic::declared(symbol, &IgnorePattern::<&str>::None, false)),
         }
@@ -356,6 +375,15 @@ impl NoUnusedVars {
             // ambient namespaces
             || flags == AMBIENT_NAMESPACE_FLAGS
             || (symbol.is_in_ts() && symbol.is_in_declare_global())
+        {
+            return true;
+        }
+
+        let node_id = symbol.declaration().id();
+        if flags.intersects(SymbolFlags::FunctionScopedVariable)
+            && let AstKind::FormalParameters(formal_parameters) =
+                symbol.nodes().parent_node(node_id).kind()
+            && formal_parameters.kind.is_signature()
         {
             return true;
         }
@@ -390,15 +418,12 @@ impl Symbol<'_, '_> {
                 flags.contains(ScopeFlags::TsModuleBlock)
             })
             .any(|ambient_module_scope_id| {
-                let AstKind::TSModuleDeclaration(module) = self
-                    .nodes()
-                    .get_node(self.scoping().get_node_id(ambient_module_scope_id))
-                    .kind()
-                else {
-                    return false;
-                };
-
-                module.kind.is_global()
+                matches!(
+                    self.nodes()
+                        .get_node(self.scoping().get_node_id(ambient_module_scope_id))
+                        .kind(),
+                    AstKind::TSGlobalDeclaration(_)
+                )
             })
     }
 }

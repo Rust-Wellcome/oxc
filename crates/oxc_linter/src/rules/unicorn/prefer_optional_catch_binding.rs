@@ -1,7 +1,4 @@
-use oxc_ast::{
-    AstKind,
-    ast::{BindingPattern, BindingPatternKind},
-};
+use oxc_ast::{AstKind, ast::BindingPattern};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, Span};
@@ -55,10 +52,7 @@ impl Rule for PreferOptionalCatchBinding {
         if references_count != 0 {
             return;
         }
-        let Some(parent_node) = ctx.nodes().parent_node(node.id()) else {
-            return;
-        };
-        let AstKind::CatchClause(catch_clause) = parent_node.kind() else {
+        let AstKind::CatchClause(catch_clause) = ctx.nodes().parent_kind(node.id()) else {
             return;
         };
         ctx.diagnostic_with_fix(
@@ -84,11 +78,11 @@ impl Rule for PreferOptionalCatchBinding {
 }
 
 fn get_param_references_count(binding_pat: &BindingPattern, ctx: &LintContext) -> usize {
-    match &binding_pat.kind {
-        BindingPatternKind::BindingIdentifier(binding_ident) => {
+    match &binding_pat {
+        BindingPattern::BindingIdentifier(binding_ident) => {
             ctx.semantic().symbol_references(binding_ident.symbol_id()).count()
         }
-        BindingPatternKind::ObjectPattern(object_pat) => {
+        BindingPattern::ObjectPattern(object_pat) => {
             let mut count = 0;
 
             for prop in &object_pat.properties {
@@ -101,8 +95,8 @@ fn get_param_references_count(binding_pat: &BindingPattern, ctx: &LintContext) -
 
             count
         }
-        BindingPatternKind::AssignmentPattern(_) => 1,
-        BindingPatternKind::ArrayPattern(array_pat) => {
+        BindingPattern::AssignmentPattern(_) => 1,
+        BindingPattern::ArrayPattern(array_pat) => {
             let mut count = 0;
 
             for element in (&array_pat.elements).into_iter().flatten() {

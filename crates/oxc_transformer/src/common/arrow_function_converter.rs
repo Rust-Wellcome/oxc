@@ -96,7 +96,7 @@ use oxc_ast::{NONE, ast::*};
 use oxc_ast_visit::{VisitMut, walk_mut::walk_expression};
 use oxc_data_structures::stack::{NonEmptyStack, SparseStack};
 use oxc_semantic::{ReferenceFlags, SymbolId};
-use oxc_span::{GetSpan, SPAN};
+use oxc_span::{GetSpan, Ident, SPAN};
 use oxc_syntax::{
     scope::{ScopeFlags, ScopeId},
     symbol::SymbolFlags,
@@ -195,18 +195,18 @@ impl<'a> Traverse<'a, TransformState<'a>> for ArrowFunctionConverter<'a> {
             ctx,
         );
 
-        debug_assert!(self.this_var_stack.len() == 1);
+        debug_assert!(self.this_var_stack.is_exhausted());
         debug_assert!(self.this_var_stack.first().is_none());
-        debug_assert!(self.arguments_var_stack.len() == 1);
+        debug_assert!(self.arguments_var_stack.is_exhausted());
         debug_assert!(self.arguments_var_stack.first().is_none());
-        debug_assert!(self.constructor_super_stack.len() == 1);
+        debug_assert!(self.constructor_super_stack.is_exhausted());
         // TODO: This assertion currently failing because we don't handle `super` in arrow functions
         // in class static properties correctly.
         // e.g. `class C { static f = () => super.prop; }`
         // debug_assert!(self.constructor_super_stack.first() == &false);
-        debug_assert!(self.super_methods_stack.len() == 1);
+        debug_assert!(self.super_methods_stack.is_exhausted());
         debug_assert!(self.super_methods_stack.first().is_empty());
-        debug_assert!(self.super_needs_transform_stack.len() == 1);
+        debug_assert!(self.super_needs_transform_stack.is_exhausted());
         debug_assert!(self.super_needs_transform_stack.first() == &false);
     }
 
@@ -358,10 +358,10 @@ impl<'a> Traverse<'a, TransformState<'a>> for ArrowFunctionConverter<'a> {
             return;
         }
 
-        if let JSXElementName::ThisExpression(this) = element_name {
-            if let Some(ident) = self.get_this_identifier(this.span, ctx) {
-                *element_name = JSXElementName::IdentifierReference(ident);
-            }
+        if let JSXElementName::ThisExpression(this) = element_name
+            && let Some(ident) = self.get_this_identifier(this.span, ctx)
+        {
+            *element_name = JSXElementName::IdentifierReference(ident);
         }
     }
 
@@ -374,10 +374,10 @@ impl<'a> Traverse<'a, TransformState<'a>> for ArrowFunctionConverter<'a> {
             return;
         }
 
-        if let JSXMemberExpressionObject::ThisExpression(this) = object {
-            if let Some(ident) = self.get_this_identifier(this.span, ctx) {
-                *object = JSXMemberExpressionObject::IdentifierReference(ident);
-            }
+        if let JSXMemberExpressionObject::ThisExpression(this) = object
+            && let Some(ident) = self.get_this_identifier(this.span, ctx)
+        {
+            *object = JSXMemberExpressionObject::IdentifierReference(ident);
         }
     }
 
@@ -649,7 +649,7 @@ impl<'a> ArrowFunctionConverter<'a> {
             body.statements.push(return_statement);
         }
 
-        ctx.ast.expression_function_with_scope_id_and_pure(
+        ctx.ast.expression_function_with_scope_id_and_pure_and_pife(
             arrow_function_expr.span,
             FunctionType::FunctionExpression,
             None,
@@ -662,6 +662,7 @@ impl<'a> ArrowFunctionConverter<'a> {
             arrow_function_expr.return_type,
             Some(body),
             scope_id,
+            false,
             false,
         )
     }
@@ -878,7 +879,11 @@ impl<'a> ArrowFunctionConverter<'a> {
         let original_scope_id = ctx.scoping().symbol_scope_id(binding.symbol_id);
         if target_scope_id != original_scope_id {
             ctx.scoping_mut().set_symbol_scope_id(binding.symbol_id, target_scope_id);
-            ctx.scoping_mut().move_binding(original_scope_id, target_scope_id, &binding.name);
+            ctx.scoping_mut().move_binding(
+                original_scope_id,
+                target_scope_id,
+                Ident::from(binding.name),
+            );
         }
     }
 
@@ -908,6 +913,9 @@ impl<'a> ArrowFunctionConverter<'a> {
                 SPAN,
                 ctx.ast.vec(),
                 param_binding.create_binding_pattern(ctx),
+                NONE,
+                NONE,
+                false,
                 None,
                 false,
                 false,
@@ -933,6 +941,9 @@ impl<'a> ArrowFunctionConverter<'a> {
                 SPAN,
                 ctx.ast.vec(),
                 param_binding.create_binding_pattern(ctx),
+                NONE,
+                NONE,
+                false,
                 None,
                 false,
                 false,
@@ -954,13 +965,14 @@ impl<'a> ArrowFunctionConverter<'a> {
         );
         let statements = ctx.ast.vec1(ctx.ast.statement_expression(SPAN, init));
         let body = ctx.ast.function_body(SPAN, ctx.ast.vec(), statements);
-        let init = ctx.ast.expression_arrow_function_with_scope_id_and_pure(
-            SPAN, true, false, NONE, params, NONE, body, scope_id, false,
+        let init = ctx.ast.expression_arrow_function_with_scope_id_and_pure_and_pife(
+            SPAN, true, false, NONE, params, NONE, body, scope_id, false, false,
         );
         ctx.ast.variable_declarator(
             SPAN,
             VariableDeclarationKind::Var,
             binding.create_binding_pattern(ctx),
+            NONE,
             Some(init),
             false,
         )
@@ -1015,7 +1027,7 @@ impl<'a> ArrowFunctionConverter<'a> {
     /// Rename the `arguments` symbol to a new name.
     fn rename_arguments_symbol(symbol_id: SymbolId, name: Atom<'a>, ctx: &mut TraverseCtx<'a>) {
         let scope_id = ctx.scoping().symbol_scope_id(symbol_id);
-        ctx.scoping_mut().rename_symbol(symbol_id, scope_id, name.as_str());
+        ctx.scoping_mut().rename_symbol(symbol_id, scope_id, Ident::from(name));
     }
 
     /// Transform the identifier reference for `arguments` if it's affected after transformation.
@@ -1054,11 +1066,11 @@ impl<'a> ArrowFunctionConverter<'a> {
         if symbol_id.is_none() {
             let reference = ctx.scoping_mut().get_reference_mut(reference_id);
             reference.set_symbol_id(binding.symbol_id);
-            ctx.scoping_mut().delete_root_unresolved_reference(&ident.name, reference_id);
+            ctx.scoping_mut().delete_root_unresolved_reference(ident.name, reference_id);
             ctx.scoping_mut().add_resolved_reference(binding.symbol_id, reference_id);
         }
 
-        ident.name = binding.name;
+        ident.name = binding.name.into();
     }
 
     /// Transform the binding identifier for `arguments` if it's affected after transformation.
@@ -1077,12 +1089,12 @@ impl<'a> ArrowFunctionConverter<'a> {
 
         self.arguments_var_stack.last_or_init(|| {
             let arguments_name = ctx.generate_uid_name("arguments");
-            ident.name = arguments_name;
+            ident.name = arguments_name.into();
             let symbol_id = ident.symbol_id();
             Self::rename_arguments_symbol(symbol_id, arguments_name, ctx);
             // Record the symbol ID as a renamed `arguments` variable.
             self.renamed_arguments_symbol_ids.insert(symbol_id);
-            BoundIdentifier::new(ident.name, symbol_id)
+            BoundIdentifier::new(arguments_name, symbol_id)
         });
     }
 
@@ -1125,6 +1137,7 @@ impl<'a> ArrowFunctionConverter<'a> {
             SPAN,
             VariableDeclarationKind::Var,
             arguments_var.create_binding_pattern(ctx),
+            NONE,
             Some(init),
             false,
         ))
@@ -1184,6 +1197,7 @@ impl<'a> ArrowFunctionConverter<'a> {
                 SPAN,
                 VariableDeclarationKind::Var,
                 this_var.create_binding_pattern(ctx),
+                NONE,
                 init,
                 false,
             );
@@ -1272,27 +1286,26 @@ impl<'a> VisitMut<'a> for ConstructorBodyThisAfterSuperInserter<'a, '_> {
     /// `super();` -> `super(); _this = this;`
     fn visit_statements(&mut self, statements: &mut ArenaVec<'a, Statement<'a>>) {
         for (index, stmt) in statements.iter_mut().enumerate() {
-            if let Statement::ExpressionStatement(expr_stmt) = stmt {
-                if let Expression::CallExpression(call_expr) = &mut expr_stmt.expression {
-                    if matches!(&call_expr.callee, Expression::Super(_)) {
-                        // Visit arguments in `super(x, y, z)` call.
-                        // Required to handle edge case `super(super(), f = () => this)`.
-                        self.visit_arguments(&mut call_expr.arguments);
+            if let Statement::ExpressionStatement(expr_stmt) = stmt
+                && let Expression::CallExpression(call_expr) = &mut expr_stmt.expression
+                && matches!(&call_expr.callee, Expression::Super(_))
+            {
+                // Visit arguments in `super(x, y, z)` call.
+                // Required to handle edge case `super(super(), f = () => this)`.
+                self.visit_arguments(&mut call_expr.arguments);
 
-                        // Insert `_this = this;` after `super();`
-                        let assignment = self.create_assignment_to_this_temp_var();
-                        let assignment = self.ctx.ast.statement_expression(SPAN, assignment);
-                        statements.insert(index + 1, assignment);
+                // Insert `_this = this;` after `super();`
+                let assignment = self.create_assignment_to_this_temp_var();
+                let assignment = self.ctx.ast.statement_expression(SPAN, assignment);
+                statements.insert(index + 1, assignment);
 
-                        // `super();` found as top-level statement in this block of statements.
-                        // No need to continue visiting later statements, because `_this` is definitely
-                        // assigned to at this point - no need to assign to it again.
-                        // This means we don't visit the whole constructor in the common case where
-                        // `super();` appears as a top-level statement early in class constructor
-                        // `constructor() { super(); blah; blah; blah; }`.
-                        break;
-                    }
-                }
+                // `super();` found as top-level statement in this block of statements.
+                // No need to continue visiting later statements, because `_this` is definitely
+                // assigned to at this point - no need to assign to it again.
+                // This means we don't visit the whole constructor in the common case where
+                // `super();` appears as a top-level statement early in class constructor
+                // `constructor() { super(); blah; blah; blah; }`.
+                break;
             }
 
             self.visit_statement(stmt);

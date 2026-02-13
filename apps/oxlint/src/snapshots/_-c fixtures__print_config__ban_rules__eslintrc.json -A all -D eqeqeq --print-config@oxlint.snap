@@ -23,14 +23,17 @@ working directory:
   "settings": {
     "jsx-a11y": {
       "polymorphicPropName": null,
-      "components": {}
+      "components": {},
+      "attributes": {}
     },
     "next": {
       "rootDir": []
     },
     "react": {
       "formComponents": [],
-      "linkComponents": []
+      "linkComponents": [],
+      "version": null,
+      "componentWrapperFunctions": []
     },
     "jsdoc": {
       "ignorePrivate": false,
@@ -41,6 +44,9 @@ working directory:
       "implementsReplacesDocs": false,
       "exemptDestructuredRootsFromChecks": false,
       "tagNamePreference": {}
+    },
+    "vitest": {
+      "typecheck": false
     }
   },
   "env": {

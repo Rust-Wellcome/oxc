@@ -8,8 +8,7 @@ use serde::{Deserialize, Serialize};
 /// See
 /// [eslint-plugin-jsx-a11y](https://github.com/jsx-eslint/eslint-plugin-jsx-a11y#configurations)'s
 /// configuration for a full reference.
-#[derive(Debug, Clone, Deserialize, Default, Serialize, JsonSchema)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[derive(Debug, Clone, Deserialize, Default, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct JSXA11yPluginSettings {
     /// An optional setting that define the prop your code uses to create polymorphic components.
     /// This setting will be used to determine the element type in rules that
@@ -45,4 +44,23 @@ pub struct JSXA11yPluginSettings {
     /// ```
     #[serde(default)]
     pub components: FxHashMap<CompactStr, CompactStr>,
+
+    /// Map of attribute names to their DOM equivalents.
+    /// This is useful for non-React frameworks that use different attribute names.
+    ///
+    /// Example:
+    ///
+    /// ```json
+    /// {
+    ///   "settings": {
+    ///     "jsx-a11y": {
+    ///       "attributes": {
+    ///         "for": ["htmlFor", "for"]
+    ///       }
+    ///     }
+    ///   }
+    /// }
+    /// ```
+    #[serde(default)]
+    pub attributes: FxHashMap<CompactStr, Vec<CompactStr>>,
 }

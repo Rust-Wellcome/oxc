@@ -1,6 +1,10 @@
+use std::ops::Deref;
+
+use oxc_span::{GetSpan, Span};
+
 use crate::{
     formatter::{
-        Format, FormatResult, Formatter,
+        Format, Formatter,
         prelude::{group, if_group_breaks},
     },
     options::TrailingSeparator,
@@ -10,7 +14,8 @@ use super::GroupId;
 
 /// Formats a single element inside a separated list.
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct FormatSeparatedElement<E> {
+pub struct FormatSeparatedElement<E: GetSpan> {
+    // Public this field to make it easier to get the element span from `FormatSeparatedElement`.
     element: E,
     is_last: bool,
     /// The separator to write if the element has no separator yet.
@@ -18,37 +23,51 @@ pub struct FormatSeparatedElement<E> {
     options: FormatSeparatedOptions,
 }
 
-impl<'a, E: Format<'a>> Format<'a> for FormatSeparatedElement<E> {
-    fn fmt(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
+impl<T: GetSpan> Deref for FormatSeparatedElement<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.element
+    }
+}
+
+impl<T: GetSpan> GetSpan for FormatSeparatedElement<T> {
+    fn span(&self) -> Span {
+        self.element.span()
+    }
+}
+
+impl<'a, E: Format<'a> + GetSpan> Format<'a> for FormatSeparatedElement<E> {
+    fn fmt(&self, f: &mut Formatter<'_, 'a>) {
         if self.options.nodes_grouped {
-            group(&self.element).fmt(f)?;
+            group(&self.element).fmt(f);
         } else {
-            self.element.fmt(f)?;
+            self.element.fmt(f);
         }
         if self.is_last {
             match self.options.trailing_separator {
                 TrailingSeparator::Allowed => {
-                    if_group_breaks(&self.separator).with_group_id(self.options.group_id).fmt(f)
+                    if_group_breaks(&self.separator).with_group_id(self.options.group_id).fmt(f);
                 }
                 TrailingSeparator::Mandatory => self.separator.fmt(f),
-                TrailingSeparator::Disallowed | TrailingSeparator::Omit => Ok(()),
+                TrailingSeparator::Disallowed | TrailingSeparator::Omit => (),
             }
         } else {
-            self.separator.fmt(f)
+            self.separator.fmt(f);
         }
     }
 }
 
 /// Iterator for formatting separated elements. Prints the separator between each element and
 /// inserts a trailing separator if necessary
-pub struct FormatSeparatedIter<I, E> {
+pub struct FormatSeparatedIter<I, E: GetSpan> {
     next: Option<E>,
     inner: I,
     separator: &'static str,
     options: FormatSeparatedOptions,
 }
 
-impl<I, E> FormatSeparatedIter<I, E>
+impl<I, E: GetSpan> FormatSeparatedIter<I, E>
 where
     I: Iterator<Item = E>,
 {
@@ -57,6 +76,7 @@ where
     }
 
     /// Wraps every node inside of a group
+    #[expect(unused)]
     pub fn nodes_grouped(mut self) -> Self {
         self.options.nodes_grouped = true;
         self
@@ -73,7 +93,7 @@ where
     }
 }
 
-impl<I, E> Iterator for FormatSeparatedIter<I, E>
+impl<I, E: GetSpan> Iterator for FormatSeparatedIter<I, E>
 where
     I: Iterator<Item = E>,
 {

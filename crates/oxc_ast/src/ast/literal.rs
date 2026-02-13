@@ -1,13 +1,13 @@
 //! Literals
 
 // NB: `#[span]`, `#[scope(...)]`,`#[visit(...)]` and `#[generate_derive(...)]` do NOT do anything to the code.
-// They are purely markers for codegen used in `tasks/ast_tools` and `crates/oxc_traverse/scripts`. See docs in those crates.
+// They are purely markers for codegen used in `tasks/ast_tools`. See docs in that crate.
 // Read [`macro@oxc_ast_macros::ast`] for more information.
 
 use std::hash::Hash;
 
 use bitflags::bitflags;
-use oxc_allocator::{Box, CloneIn, Dummy, TakeIn};
+use oxc_allocator::{Box, CloneIn, Dummy, TakeIn, UnstableAddress};
 use oxc_ast_macros::ast;
 use oxc_estree::ESTree;
 use oxc_regular_expression::ast::Pattern;
@@ -19,7 +19,7 @@ use oxc_syntax::number::{BigintBase, NumberBase};
 /// <https://tc39.es/ecma262/#prod-BooleanLiteral>
 #[ast(visit)]
 #[derive(Debug, Clone)]
-#[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree)]
+#[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree, UnstableAddress)]
 #[estree(rename = "Literal", add_fields(raw = BooleanLiteralRaw))]
 pub struct BooleanLiteral {
     /// Node location in source code
@@ -33,7 +33,7 @@ pub struct BooleanLiteral {
 /// <https://tc39.es/ecma262/#sec-null-literals>
 #[ast(visit)]
 #[derive(Debug, Clone)]
-#[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree)]
+#[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree, UnstableAddress)]
 #[estree(rename = "Literal", add_fields(value = Null, raw = NullLiteralRaw))]
 pub struct NullLiteral {
     /// Node location in source code
@@ -45,7 +45,7 @@ pub struct NullLiteral {
 /// <https://tc39.es/ecma262/#sec-literals-numeric-literals>
 #[ast(visit)]
 #[derive(Debug, Clone)]
-#[generate_derive(CloneIn, Dummy, TakeIn, ContentEq, GetSpan, GetSpanMut, ESTree)]
+#[generate_derive(CloneIn, Dummy, TakeIn, ContentEq, GetSpan, GetSpanMut, ESTree, UnstableAddress)]
 #[estree(rename = "Literal")]
 pub struct NumericLiteral<'a> {
     /// Node location in source code
@@ -69,7 +69,7 @@ pub struct NumericLiteral<'a> {
 /// <https://tc39.es/ecma262/#sec-literals-string-literals>
 #[ast(visit)]
 #[derive(Debug, Clone)]
-#[generate_derive(CloneIn, Dummy, TakeIn, ContentEq, GetSpan, GetSpanMut, ESTree)]
+#[generate_derive(CloneIn, Dummy, TakeIn, ContentEq, GetSpan, GetSpanMut, ESTree, UnstableAddress)]
 #[estree(rename = "Literal")]
 pub struct StringLiteral<'a> {
     /// Node location in source code
@@ -99,12 +99,8 @@ pub struct StringLiteral<'a> {
 /// BigInt literal
 #[ast(visit)]
 #[derive(Debug, Clone)]
-#[generate_derive(CloneIn, Dummy, TakeIn, ContentEq, GetSpan, GetSpanMut, ESTree)]
-#[estree(
-    rename = "Literal",
-    add_fields(bigint = BigIntLiteralBigint),
-    field_order(span, value, raw, bigint),
-)]
+#[generate_derive(CloneIn, Dummy, TakeIn, ContentEq, GetSpan, GetSpanMut, ESTree, UnstableAddress)]
+#[estree(rename = "Literal", add_fields(bigint = BigIntLiteralBigint))]
 pub struct BigIntLiteral<'a> {
     /// Node location in source code
     pub span: Span,
@@ -126,11 +122,11 @@ pub struct BigIntLiteral<'a> {
 /// <https://tc39.es/ecma262/#sec-literals-regular-expression-literals>
 #[ast(visit)]
 #[derive(Debug)]
-#[generate_derive(CloneIn, Dummy, TakeIn, ContentEq, GetSpan, GetSpanMut, ESTree)]
+#[generate_derive(CloneIn, Dummy, TakeIn, ContentEq, GetSpan, GetSpanMut, ESTree, UnstableAddress)]
 #[estree(
     rename = "Literal",
     add_fields(value = RegExpLiteralValue),
-    field_order(span, value, raw, regex),
+    field_order(value, raw, regex, span),
 )]
 pub struct RegExpLiteral<'a> {
     /// Node location in source code
@@ -181,6 +177,9 @@ pub struct RegExpPattern<'a> {
     #[estree(skip)]
     pub pattern: Option<Box<'a, Pattern<'a>>>,
 }
+
+/// The list of valid regular expression flags.
+pub const REGEXP_FLAGS_LIST: &str = "gimsuydv";
 
 bitflags! {
     /// Regular expression flags.

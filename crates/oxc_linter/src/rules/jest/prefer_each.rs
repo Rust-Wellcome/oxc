@@ -63,6 +63,17 @@ declare_oxc_lint!(
     /// 	expect(item).toBe('foo')
     /// })
     /// ```
+    ///
+    /// This rule is compatible with [eslint-plugin-vitest](https://github.com/vitest-dev/eslint-plugin-vitest/blob/main/docs/rules/prefer-each.md),
+    /// to use it, add the following configuration to your `.oxlintrc.json`:
+    ///
+    /// ```json
+    /// {
+    ///   "rules": {
+    ///      "vitest/prefer-each": "error"
+    ///   }
+    /// }
+    /// ```
     PreferEach,
     jest,
     style,
@@ -98,7 +109,7 @@ impl PreferEach {
             return;
         }
 
-        for parent_node in ctx.nodes().ancestors(node.id()).skip(1) {
+        for parent_node in ctx.nodes().ancestors(node.id()) {
             match parent_node.kind() {
                 AstKind::CallExpression(_) => return,
                 AstKind::ForStatement(_)

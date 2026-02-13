@@ -1,17 +1,35 @@
-mod boolean;
 use oxc_ast::{
     AstKind,
     ast::{
-        BindingPatternKind, CallExpression, Expression, FormalParameters, FunctionBody,
-        LogicalExpression, MemberExpression, Statement,
+        BindingPattern, CallExpression, Expression, FormalParameters, FunctionBody,
+        LogicalExpression, MemberExpression, Statement, match_member_expression,
     },
 };
 use oxc_semantic::AstNode;
 use oxc_span::{ContentEq, Span};
-use oxc_syntax::operator::LogicalOperator;
+use oxc_syntax::{
+    operator::LogicalOperator,
+    precedence::{GetPrecedence, Precedence},
+};
 
-pub use self::boolean::*;
 use crate::LintContext;
+
+mod boolean;
+pub use boolean::*;
+
+// Built-in Error constructors
+// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error#Error_types
+pub const BUILT_IN_ERRORS: [&str; 9] = [
+    "Error",
+    "EvalError",
+    "RangeError",
+    "ReferenceError",
+    "SyntaxError",
+    "TypeError",
+    "URIError",
+    "InternalError",
+    "AggregateError",
+];
 
 pub fn is_node_value_not_dom_node(expr: &Expression) -> bool {
     matches!(
@@ -53,16 +71,14 @@ pub fn is_prototype_property(
     }
 
     // `Object.prototype.method` or `Array.prototype.method`
-    if let Some(member_expr_obj) = member_expr.object().as_member_expression() {
-        if let Expression::Identifier(iden) = member_expr_obj.object() {
-            if member_expr_obj.static_property_name().is_some_and(|name| name == "prototype")
-                && object.is_some_and(|val| val == iden.name)
-                && !member_expr.optional()
-                && !member_expr_obj.optional()
-            {
-                return true;
-            }
-        }
+    if let Some(member_expr_obj) = member_expr.object().as_member_expression()
+        && let Expression::Identifier(iden) = member_expr_obj.object()
+        && member_expr_obj.static_property_name().is_some_and(|name| name == "prototype")
+        && object.is_some_and(|val| val == iden.name)
+        && !member_expr.optional()
+        && !member_expr_obj.optional()
+    {
+        return true;
     }
 
     match object {
@@ -110,8 +126,7 @@ pub fn is_logical_expression(node: &AstNode) -> bool {
 // gets the name of the first parameter of a function
 pub fn get_first_parameter_name<'a>(arg: &'a FormalParameters) -> Option<&'a str> {
     let first_func_param = arg.items.first()?;
-    let BindingPatternKind::BindingIdentifier(first_func_param) = &first_func_param.pattern.kind
-    else {
+    let BindingPattern::BindingIdentifier(first_func_param) = &first_func_param.pattern else {
         return None;
     };
     Some(first_func_param.name.as_str())
@@ -150,20 +165,18 @@ pub fn get_return_identifier_name<'a>(body: &'a FunctionBody<'_>) -> Option<&'a 
 
 /// Compares two expressions to see if they are the same.
 pub fn is_same_expression(left: &Expression, right: &Expression, ctx: &LintContext) -> bool {
-    if let Expression::ChainExpression(left_chain_expr) = left {
-        if let Some(right_member_expr) = right.as_member_expression() {
-            if let Some(v) = left_chain_expr.expression.as_member_expression() {
-                return is_same_member_expression(v, right_member_expr, ctx);
-            }
-        }
+    if let Expression::ChainExpression(left_chain_expr) = left
+        && let Some(right_member_expr) = right.as_member_expression()
+        && let Some(v) = left_chain_expr.expression.as_member_expression()
+    {
+        return is_same_member_expression(v, right_member_expr, ctx);
     }
 
-    if let Some(left_chain_expr) = left.as_member_expression() {
-        if let Expression::ChainExpression(right_member_expr) = right {
-            if let Some(v) = right_member_expr.expression.as_member_expression() {
-                return is_same_member_expression(left_chain_expr, v, ctx);
-            }
-        }
+    if let Some(left_chain_expr) = left.as_member_expression()
+        && let Expression::ChainExpression(right_member_expr) = right
+        && let Some(v) = right_member_expr.expression.as_member_expression()
+    {
+        return is_same_member_expression(left_chain_expr, v, ctx);
     }
 
     match (left, right) {
@@ -181,8 +194,7 @@ pub fn is_same_expression(left: &Expression, right: &Expression, ctx: &LintConte
         }
         (Expression::StringLiteral(string_lit), Expression::TemplateLiteral(template_lit))
         | (Expression::TemplateLiteral(template_lit), Expression::StringLiteral(string_lit)) => {
-            return template_lit.is_no_substitution_template()
-                && string_lit.value == template_lit.quasi().unwrap();
+            return template_lit.single_quasi().is_some_and(|val| val.as_str() == string_lit.value);
         }
         (Expression::TemplateLiteral(left_str), Expression::TemplateLiteral(right_str)) => {
             return left_str.quasis.content_eq(&right_str.quasis)
@@ -237,11 +249,10 @@ pub fn is_same_expression(left: &Expression, right: &Expression, ctx: &LintConte
             Expression::ChainExpression(left_chain_expr),
             Expression::ChainExpression(right_chain_expr),
         ) => {
-            if let Some(left_member_expr) = left_chain_expr.expression.as_member_expression() {
-                if let Some(right_member_expr) = right_chain_expr.expression.as_member_expression()
-                {
-                    return is_same_member_expression(left_member_expr, right_member_expr, ctx);
-                }
+            if let Some(left_member_expr) = left_chain_expr.expression.as_member_expression()
+                && let Some(right_member_expr) = right_chain_expr.expression.as_member_expression()
+            {
+                return is_same_member_expression(left_member_expr, right_member_expr, ctx);
             }
         }
         _ => {}
@@ -304,8 +315,9 @@ pub fn is_same_member_expression(
             // ex) x[/regex/] === x[`/regex/`]
             (Expression::TemplateLiteral(template_lit), Expression::RegExpLiteral(regex_lit))
             | (Expression::RegExpLiteral(regex_lit), Expression::TemplateLiteral(template_lit)) => {
-                if !(template_lit.is_no_substitution_template()
-                    && template_lit.quasi().unwrap() == regex_lit.raw.as_ref().unwrap())
+                if !template_lit
+                    .single_quasi()
+                    .is_some_and(|val| val == regex_lit.raw.as_ref().unwrap())
                 {
                     return false;
                 }
@@ -364,4 +376,35 @@ where
     }
 
     false
+}
+
+/// Returns the precedence of an expression if it has one.
+///
+/// Returns `None` for "atomic" expressions (literals, identifiers, etc.) that have
+/// the highest precedence and never need parentheses when used as operands.
+///
+/// This is useful for determining if parentheses are needed when transforming code.
+/// If `get_precedence(expr)` returns `None`, the expression never needs parentheses.
+/// If it returns `Some(p)`, compare `p` against the context's precedence to decide.
+pub fn get_precedence(expr: &Expression) -> Option<Precedence> {
+    match expr {
+        Expression::SequenceExpression(e) => Some(e.precedence()),
+        Expression::AssignmentExpression(e) => Some(e.precedence()),
+        Expression::YieldExpression(e) => Some(e.precedence()),
+        Expression::ConditionalExpression(e) => Some(e.precedence()),
+        Expression::LogicalExpression(e) => Some(e.precedence()),
+        Expression::BinaryExpression(e) => Some(e.precedence()),
+        Expression::UnaryExpression(e) => Some(e.precedence()),
+        Expression::UpdateExpression(e) => Some(e.precedence()),
+        Expression::AwaitExpression(e) => Some(e.precedence()),
+        Expression::NewExpression(e) => Some(e.precedence()),
+        Expression::CallExpression(e) => Some(e.precedence()),
+        match_member_expression!(Expression) => Some(expr.to_member_expression().precedence()),
+        Expression::TSAsExpression(_)
+        | Expression::TSSatisfiesExpression(_)
+        | Expression::TSTypeAssertion(_)
+        | Expression::ArrowFunctionExpression(_) => Some(Precedence::Lowest),
+        // Literals, identifiers, and other atomic expressions have highest precedence
+        _ => None,
+    }
 }

@@ -73,10 +73,7 @@ impl Rule for NoUnnecessaryParameterPropertyAssignment {
             return;
         }
 
-        let Some(parent_node) = ctx.semantic().nodes().parent_node(node.id()) else {
-            return;
-        };
-        let AstKind::ClassBody(class_body) = parent_node.kind() else {
+        let AstKind::ClassBody(class_body) = ctx.semantic().nodes().parent_kind(node.id()) else {
             return;
         };
 
@@ -202,10 +199,10 @@ fn get_assignments_inside_expression<'a>(
 
             if let Some(function_body) = function_body {
                 for statement in &function_body.statements {
-                    if let Statement::ExpressionStatement(expr) = statement {
-                        if let Expression::AssignmentExpression(assignment) = &expr.expression {
-                            assignments.push(assignment);
-                        }
+                    if let Statement::ExpressionStatement(expr) = statement
+                        && let Expression::AssignmentExpression(assignment) = &expr.expression
+                    {
+                        assignments.push(assignment);
                     }
                 }
             }
@@ -235,7 +232,7 @@ fn get_property_name<'a>(assignment_target: &AssignmentTarget<'a>) -> Option<Ato
             if matches!(&expr.object, Expression::ThisExpression(_)) =>
         {
             // this.property
-            Some(expr.property.name)
+            Some(expr.property.name.into())
         }
         AssignmentTarget::ComputedMemberExpression(expr)
             if matches!(&expr.object, Expression::ThisExpression(_)) =>

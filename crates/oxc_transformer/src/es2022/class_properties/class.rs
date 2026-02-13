@@ -2,7 +2,7 @@
 //! Transform of class itself.
 
 use indexmap::map::Entry;
-use oxc_allocator::{Address, GetAddress, TakeIn};
+use oxc_allocator::{Address, GetAddress, TakeIn, UnstableAddress};
 use oxc_ast::{NONE, ast::*};
 use oxc_span::SPAN;
 use oxc_syntax::{
@@ -86,12 +86,18 @@ impl<'a> ClassProperties<'a, '_> {
                 ClassElement::PropertyDefinition(prop) => {
                     // TODO: Throw error if property has decorators
 
+                    // Ignore `declare` properties as they don't have any runtime effect,
+                    // and will be removed in the TypeScript transform later
+                    if prop.declare {
+                        continue;
+                    }
+
                     // Create binding for private property key
                     if let PropertyKey::PrivateIdentifier(ident) = &prop.key {
                         // Note: Current scope is outside class.
                         let binding = ctx.generate_uid_in_current_hoist_scope(&ident.name);
                         private_props.insert(
-                            ident.name,
+                            ident.name.into(),
                             PrivateProp::new(binding, prop.r#static, None, false),
                         );
                     }
@@ -128,7 +134,7 @@ impl<'a> ClassProperties<'a, '_> {
                             SymbolFlags::Function,
                         );
 
-                        match private_props.entry(ident.name) {
+                        match private_props.entry(ident.name.into()) {
                             Entry::Occupied(mut entry) => {
                                 // If there's already a binding for this private property,
                                 // it's a setter or getter, so store the binding in `binding2`.
@@ -151,7 +157,7 @@ impl<'a> ClassProperties<'a, '_> {
                     if let PropertyKey::PrivateIdentifier(ident) = &prop.key {
                         let dummy_binding = BoundIdentifier::new(Atom::empty(), SymbolId::new(0));
                         private_props.insert(
-                            ident.name,
+                            ident.name.into(),
                             PrivateProp::new(dummy_binding, prop.r#static, None, true),
                         );
                     }
@@ -261,7 +267,9 @@ impl<'a> ClassProperties<'a, '_> {
             #[expect(clippy::match_same_arms)]
             match element {
                 ClassElement::PropertyDefinition(prop) => {
-                    if !prop.r#static {
+                    // Ignore `declare` properties as they don't have any runtime effect,
+                    // and will be removed in the TypeScript transform later
+                    if !prop.r#static && !prop.declare {
                         self.convert_instance_property(prop, &mut instance_inits, ctx);
                     }
                 }
@@ -470,7 +478,7 @@ impl<'a> ClassProperties<'a, '_> {
             parent @ (Ancestor::ExportDefaultDeclarationDeclaration(_)
             | Ancestor::ExportNamedDeclarationDeclaration(_)) => parent.address(),
             // `Class` is always stored in a `Box`, so has a stable memory location
-            _ => Address::from_ptr(class),
+            _ => class.unstable_address(),
         };
 
         if !self.insert_before.is_empty() {
@@ -766,6 +774,10 @@ impl<'a> ClassProperties<'a, '_> {
         class.body.body.retain_mut(|element| {
             match element {
                 ClassElement::PropertyDefinition(prop) => {
+                    debug_assert!(
+                        !prop.declare,
+                        "`declare` property should have been removed in the TypeScript plugin's `exit_class`"
+                    );
                     if prop.r#static {
                         self.convert_static_property(prop, ctx);
                     } else if prop.computed {

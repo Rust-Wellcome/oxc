@@ -5,9 +5,14 @@ use oxc_ast::{
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 use crate::{
-    AstNode, ast_util::is_method_call, context::LintContext, rule::Rule,
+    AstNode,
+    ast_util::is_method_call,
+    context::LintContext,
+    rule::{DefaultRuleConfig, Rule},
     utils::is_prototype_property,
 };
 
@@ -19,8 +24,10 @@ fn no_array_reduce_diagnostic(span: Span) -> OxcDiagnostic {
     .with_label(span)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct NoArrayReduce {
+    /// When set to `true`, allows simple operations (like summing numbers) in `reduce` and `reduceRight` calls.
     pub allow_simple_operations: bool,
 }
 
@@ -50,18 +57,13 @@ declare_oxc_lint!(
     /// ```
     NoArrayReduce,
     unicorn,
-    restriction
+    restriction,
+    config = NoArrayReduce,
 );
 
 impl Rule for NoArrayReduce {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let allow_simple_operations = value
-            .as_object()
-            .and_then(|v| v.get("allowSimpleOperations"))
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(true);
-
-        Self { allow_simple_operations }
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -88,17 +90,16 @@ impl Rule for NoArrayReduce {
             ctx.diagnostic(no_array_reduce_diagnostic(span));
         }
 
-        if let Some(member_expr_obj) = member_expr.object().as_member_expression() {
-            if is_method_call(call_expr, None, Some(&["call", "apply"]), None, None)
-                && !member_expr.optional()
-                && !member_expr.is_computed()
-                && !call_expr.optional
-                && !member_expr_obj.is_computed()
-                && (is_prototype_property(member_expr_obj, "reduce", Some("Array"))
-                    || is_prototype_property(member_expr_obj, "reduceRight", Some("Array")))
-            {
-                ctx.diagnostic(no_array_reduce_diagnostic(span));
-            }
+        if let Some(member_expr_obj) = member_expr.object().as_member_expression()
+            && is_method_call(call_expr, None, Some(&["call", "apply"]), None, None)
+            && !member_expr.optional()
+            && !member_expr.is_computed()
+            && !call_expr.optional
+            && !member_expr_obj.is_computed()
+            && (is_prototype_property(member_expr_obj, "reduce", Some("Array"))
+                || is_prototype_property(member_expr_obj, "reduceRight", Some("Array")))
+        {
+            ctx.diagnostic(no_array_reduce_diagnostic(span));
         }
     }
 }
@@ -377,27 +378,27 @@ fn test() {
         // Option: allowSimpleOperations
         (
             r"array.reduce((total, item) => total + item)",
-            Some(json!({ "allowSimpleOperations": false})),
+            Some(json!([{ "allowSimpleOperations": false }])),
         ),
         (
             r"array.reduce((total, item) => { return total - item })",
-            Some(json!({ "allowSimpleOperations": false})),
+            Some(json!([{ "allowSimpleOperations": false }])),
         ),
         (
             r"array.reduce(function (total, item) { return total * item })",
-            Some(json!({ "allowSimpleOperations": false})),
+            Some(json!([{ "allowSimpleOperations": false }])),
         ),
         (
             r"array.reduce((total, item) => total + item, 0)",
-            Some(json!({ "allowSimpleOperations": false})),
+            Some(json!([{ "allowSimpleOperations": false }])),
         ),
         (
             r"array.reduce((total, item) => { return total - item }, 0 )",
-            Some(json!({ "allowSimpleOperations": false})),
+            Some(json!([{ "allowSimpleOperations": false }])),
         ),
         (
             r"array.reduce(function (total, item) { return total * item }, 0)",
-            Some(json!({ "allowSimpleOperations": false})),
+            Some(json!([{ "allowSimpleOperations": false }])),
         ),
         (
             r"
@@ -405,7 +406,7 @@ fn test() {
 					return (total / item) * 100;
 				}, 0);
 		",
-            Some(json!({ "allowSimpleOperations": false})),
+            Some(json!([{ "allowSimpleOperations": false }])),
         ),
         (r#"array.reduceRight((str, item) => str += item, "")"#, None),
         (
@@ -448,27 +449,27 @@ fn test() {
         // Option: allowSimpleOperations
         (
             r"array.reduceRight((total, item) => total + item)",
-            Some(json!({ "allowSimpleOperations": false})),
+            Some(json!([{ "allowSimpleOperations": false }])),
         ),
         (
             r"array.reduceRight((total, item) => { return total - item })",
-            Some(json!({ "allowSimpleOperations": false})),
+            Some(json!([{ "allowSimpleOperations": false }])),
         ),
         (
             r"array.reduceRight(function (total, item) { return total * item })",
-            Some(json!({ "allowSimpleOperations": false})),
+            Some(json!([{ "allowSimpleOperations": false }])),
         ),
         (
             r"array.reduceRight((total, item) => total + item, 0)",
-            Some(json!({ "allowSimpleOperations": false})),
+            Some(json!([{ "allowSimpleOperations": false }])),
         ),
         (
             r"array.reduceRight((total, item) => { return total - item }, 0 )",
-            Some(json!({ "allowSimpleOperations": false})),
+            Some(json!([{ "allowSimpleOperations": false }])),
         ),
         (
             r"array.reduceRight(function (total, item) { return total * item }, 0)",
-            Some(json!({ "allowSimpleOperations": false})),
+            Some(json!([{ "allowSimpleOperations": false }])),
         ),
         (
             r"
@@ -476,7 +477,7 @@ fn test() {
 					return (total / item) * 100;
 				}, 0);
 		",
-            Some(json!({ "allowSimpleOperations": false})),
+            Some(json!([{ "allowSimpleOperations": false }])),
         ),
     ];
     Tester::new(NoArrayReduce::NAME, NoArrayReduce::PLUGIN, pass, fail).test_and_snapshot();

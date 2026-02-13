@@ -5,13 +5,20 @@ use oxc_ast::{
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{CompactStr, GetSpan};
+use schemars::JsonSchema;
+use serde::Deserialize;
 
-use crate::{AstNode, context::LintContext, rule::Rule};
+use crate::{
+    AstNode,
+    context::LintContext,
+    rule::{DefaultRuleConfig, Rule},
+};
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct NoExtendNative(Box<NoExtendNativeConfig>);
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct NoExtendNativeConfig {
     /// A list of objects which are allowed to be exceptions to the rule.
     exceptions: Vec<CompactStr>,
@@ -68,22 +75,12 @@ declare_oxc_lint!(
     NoExtendNative,
     eslint,
     suspicious,
+    config = NoExtendNativeConfig,
 );
 
 impl Rule for NoExtendNative {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let obj = value.get(0);
-
-        Self(Box::new(NoExtendNativeConfig {
-            exceptions: obj
-                .and_then(|v| v.get("exceptions"))
-                .and_then(serde_json::Value::as_array)
-                .unwrap_or(&vec![])
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .map(CompactStr::from)
-                .collect(),
-        }))
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run_once(&self, ctx: &LintContext) {
@@ -143,9 +140,13 @@ fn get_define_property_call<'a>(
     ctx: &'a LintContext,
     node: &AstNode<'a>,
 ) -> Option<&'a AstNode<'a>> {
-    for parent in ctx.nodes().ancestors(node.id()).skip(1) {
-        if let AstKind::CallExpression(call_expr) = parent.kind() {
-            if is_define_property_call(call_expr) {
+    for parent in ctx.nodes().ancestors(node.id()) {
+        if let AstKind::CallExpression(call_expr) = parent.kind()
+            && is_define_property_call(call_expr)
+            && let Some(first_arg) = call_expr.arguments.first()
+        {
+            let arg_span = first_arg.span();
+            if arg_span.contains_inclusive(node.span()) {
                 return Some(parent);
             }
         }
@@ -180,7 +181,7 @@ fn get_property_assignment<'a>(
     ctx: &'a LintContext,
     node: &AstNode<'a>,
 ) -> Option<&'a AstNode<'a>> {
-    for parent in ctx.nodes().ancestors(node.id()).skip(1) {
+    for parent in ctx.nodes().ancestors(node.id()) {
         match parent.kind() {
             AstKind::AssignmentExpression(assignment_expr)
                 if assignment_expr.left.span().contains_inclusive(node.span()) =>
@@ -196,9 +197,7 @@ fn get_property_assignment<'a>(
             }
             AstKind::ComputedMemberExpression(computed_expr)
                 if computed_expr.object.span().contains_inclusive(node.span()) => {}
-            AstKind::StaticMemberExpression(_)
-            | AstKind::SimpleAssignmentTarget(_)
-            | AstKind::AssignmentTarget(_) => {}
+            AstKind::StaticMemberExpression(_) | AstKind::PrivateFieldExpression(_) => {}
             _ => return None,
         }
     }
@@ -214,8 +213,7 @@ fn get_prototype_property_accessed<'a>(
     let AstKind::IdentifierReference(_) = node.kind() else {
         return None;
     };
-    let parent = ctx.nodes().parent_node(node.id())?;
-    let mut prototype_node = Some(parent);
+    let parent = ctx.nodes().parent_node(node.id());
     match parent.kind() {
         prop_access_expr if prop_access_expr.is_member_expression_kind() => {
             let prop_name = prop_access_expr
@@ -224,16 +222,23 @@ fn get_prototype_property_accessed<'a>(
             if prop_name != "prototype" {
                 return None;
             }
-            let grandparent_node = ctx.nodes().parent_node(parent.id())?;
+            // Check if this member expression is wrapped in a ChainExpression
+            let grandparent_node = ctx.nodes().parent_node(parent.id());
+            let result_node = if let AstKind::ChainExpression(_) = grandparent_node.kind() {
+                // Return the ChainExpression
+                grandparent_node
+            } else {
+                // Return the MemberExpression
+                parent
+            };
 
-            if let AstKind::ChainExpression(_) = grandparent_node.kind() {
-                prototype_node = Some(grandparent_node);
-                if let Some(grandparent_parent) = ctx.nodes().parent_node(grandparent_node.id()) {
-                    prototype_node = Some(grandparent_parent);
-                }
+            // Check if the result is wrapped in parentheses
+            let great_grandparent_node = ctx.nodes().parent_node(result_node.id());
+            if let AstKind::ParenthesizedExpression(_) = great_grandparent_node.kind() {
+                Some(great_grandparent_node)
+            } else {
+                Some(result_node)
             }
-
-            prototype_node
         }
         _ => None,
     }

@@ -1,5 +1,11 @@
-use oxc_ast::ast::{BlockStatement, FunctionBody, Statement, SwitchCase};
-use oxc_ecmascript::{ToBoolean, is_global_reference::WithoutGlobalReferenceInformation};
+use oxc_ast::ast::{
+    ArrowFunctionExpression, BlockStatement, Function, FunctionBody, ReturnStatement, Statement,
+    SwitchCase,
+};
+use oxc_ast_visit::Visit;
+use oxc_ecmascript::{ToBoolean, WithoutGlobalReferenceInformation};
+use oxc_semantic::ScopeFlags;
+use oxc_span::{GetSpan, Span};
 
 /// `StatementReturnStatus` describes whether the CFG corresponding to
 /// the statement is termitated by return statement in all/some/nome of
@@ -116,6 +122,33 @@ pub fn check_function_body(function: &FunctionBody) -> StatementReturnStatus {
     status
 }
 
+/// Collect spans of **explicit** return values (`return <expr>`) in the given function body.
+///
+/// This is used by `array-callback-return` when `checkForEach` is enabled to highlight the
+/// returned value(s) which are ignored by `forEach`.
+pub fn get_explicit_return_spans(function: &FunctionBody) -> Vec<Span> {
+    let mut finder = ReturnStatementFinder::default();
+    finder.visit_function_body(function);
+    finder.spans
+}
+
+#[derive(Default)]
+struct ReturnStatementFinder {
+    spans: Vec<Span>,
+}
+
+impl Visit<'_> for ReturnStatementFinder {
+    fn visit_return_statement(&mut self, return_statement: &ReturnStatement) {
+        if let Some(argument) = &return_statement.argument {
+            self.spans.push(argument.span());
+        }
+    }
+
+    fn visit_function(&mut self, _func: &Function<'_>, _flags: ScopeFlags) {}
+
+    fn visit_arrow_function_expression(&mut self, _it: &ArrowFunctionExpression<'_>) {}
+}
+
 /// Return checkers runs a Control Flow-like Analysis on a statement to see if it
 /// always returns on all paths of execution.
 pub fn check_statement(statement: &Statement) -> StatementReturnStatus {
@@ -156,17 +189,25 @@ pub fn check_statement(statement: &Statement) -> StatementReturnStatus {
         // 2. There is a default case that returns
         Statement::SwitchStatement(stmt) => {
             let mut case_statuses = vec![];
+            // The default case maybe is not the last case and fallthrough
+            let mut default_case_fallthrough_continue = false;
             let mut default_case_status = StatementReturnStatus::NotReturn;
 
             let mut current_case_status = StatementReturnStatus::NotReturn;
             for case in &stmt.cases {
                 let branch_terminated = check_switch_case(case, &mut current_case_status);
-
                 if case.is_default_case() {
-                    default_case_status = current_case_status;
-                    // Cases below the default case are not considered.
-                    break;
+                    if branch_terminated {
+                        default_case_status = current_case_status;
+                        // Cases below the default case are not considered.
+                        break;
+                    }
+                    default_case_fallthrough_continue = true;
                 } else if branch_terminated {
+                    if default_case_fallthrough_continue {
+                        default_case_status = current_case_status;
+                        break;
+                    }
                     case_statuses.push(current_case_status);
                     current_case_status = StatementReturnStatus::NotReturn;
                 } // Falls through to next case, accumulating lattice
@@ -191,6 +232,8 @@ pub fn check_statement(statement: &Statement) -> StatementReturnStatus {
             }
             status
         }
+
+        Statement::ThrowStatement(_) => StatementReturnStatus::AlwaysExplicit,
 
         _ => StatementReturnStatus::NotReturn,
     }
@@ -439,5 +482,31 @@ mod tests {
         }
       ";
         parse_statement_and_test(source, StatementReturnStatus::AlwaysImplicit);
+    }
+
+    #[test]
+    fn test_throw_statement() {
+        let source = "
+        function foo() {
+          throw new Error('test');
+        }
+      ";
+        parse_statement_and_test(source, StatementReturnStatus::AlwaysExplicit);
+    }
+
+    #[test]
+    fn test_if_with_throw() {
+        let source = "
+        function foo() {
+          if (a) {
+            return 1;
+          } else if (b) {
+            return 2;
+          } else {
+            throw new Error('test');
+          }
+        }
+      ";
+        parse_statement_and_test(source, StatementReturnStatus::AlwaysExplicit);
     }
 }

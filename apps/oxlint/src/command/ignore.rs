@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use bpaf::{Bpaf, doc::Style};
 
 pub const NO_IGNORE_HELP: &[(&str, Style)] = &[
-    ("Disables excluding of files from .eslintignore files, ", Style::Text),
+    ("Disable excluding files from `.eslintignore` files, ", Style::Text),
     ("--ignore-path", Style::Literal),
     (" flags and ", Style::Text),
     ("--ignore-pattern", Style::Literal),
@@ -13,23 +13,19 @@ pub const NO_IGNORE_HELP: &[(&str, Style)] = &[
 /// Ignore Files
 #[derive(Debug, Clone, Bpaf)]
 pub struct IgnoreOptions {
-    /// Specify the file to use as your .eslintignore
+    /// Specify the file to use as your `.eslintignore`
     #[bpaf(argument("PATH"), fallback(".eslintignore".into()), hide_usage)]
     pub ignore_path: OsString,
 
-    /// Specify patterns of files to ignore (in addition to those in .eslintignore)
+    /// Specify patterns of files to ignore (in addition to those in `.eslintignore`)
     ///
-    /// The supported syntax is the same as for .eslintignore and .gitignore files
-    /// You should quote your patterns in order to avoid shell interpretation of glob patterns
+    /// The supported syntax is the same as for `.eslintignore` and `.gitignore` files.
+    /// You should quote your patterns in order to avoid shell interpretation of glob patterns.
     #[bpaf(argument("PAT"), many, hide_usage)]
     pub ignore_pattern: Vec<String>,
 
     #[bpaf(switch, hide_usage, help(NO_IGNORE_HELP))]
     pub no_ignore: bool,
-
-    /// Follow symbolic links. Oxlint ignores symbolic links by default.
-    #[bpaf(switch, hide_usage)]
-    pub symlinks: bool,
 }
 
 #[cfg(test)]

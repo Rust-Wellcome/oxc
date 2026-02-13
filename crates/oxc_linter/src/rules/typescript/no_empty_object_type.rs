@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 
+use lazy_regex::Regex;
 use oxc_ast::{
     AstKind,
     ast::{TSInterfaceDeclaration, TSTypeLiteral},
@@ -8,6 +9,8 @@ use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_semantic::NodeId;
 use oxc_span::Span;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::{AstNode, context::LintContext, rule::Rule};
 
@@ -24,14 +27,82 @@ fn no_empty_object_type_diagnostic<S: Into<Cow<'static, str>>>(
 pub struct NoEmptyObjectType(Box<NoEmptyObjectTypeConfig>);
 
 #[expect(clippy::struct_field_names)]
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
 pub struct NoEmptyObjectTypeConfig {
-    /** Whether to allow empty interfaces. */
+    /// Whether to allow empty interfaces.
+    ///
+    /// Allowed values are:
+    /// - `'always'`: to always allow interfaces with no fields
+    /// - `'never'` _(default)_: to never allow interfaces with no fields
+    /// - `'with-single-extends'`: to allow empty interfaces that `extend` from a single base interface
+    ///
+    /// Examples of **correct** code for this rule with `{ allowInterfaces: 'with-single-extends' }`:
+    /// ```ts
+    /// interface Base {
+    ///   value: boolean;
+    /// }
+    /// interface Derived extends Base {}
+    /// ```
     allow_interfaces: AllowInterfaces,
-    /** Whether to allow empty object type literals. */
+    /// Whether to allow empty object type literals.
+    ///
+    /// Allowed values are:
+    /// - `'always'`: to always allow object type literals with no fields
+    /// - `'never'` _(default)_: to never allow object type literals with no fields
     allow_object_types: AllowObjectTypes,
-    /** allow interfaces and object type aliases with the configured name */
-    allow_with_name: String,
+    /// A stringified regular expression to allow interfaces and object type aliases with the configured name.
+    ///
+    /// This can be useful if your existing code style includes a pattern of declaring empty types with `{}` instead of `object`.
+    ///
+    /// Example of **incorrect** code for this rule with `{ allowWithName: 'Props$' }`:
+    /// ```ts
+    /// interface InterfaceValue {}
+    /// type TypeValue = {};
+    /// ```
+    ///
+    /// Example of **correct** code for this rule with `{ allowWithName: 'Props$' }`:
+    /// ```ts
+    /// interface InterfaceProps {}
+    /// type TypeProps = {};
+    /// ```
+    allow_with_name: Option<Regex>,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+enum AllowInterfaces {
+    #[default]
+    Never,
+    Always,
+    WithSingleExtends,
+}
+
+impl From<&str> for AllowInterfaces {
+    fn from(raw: &str) -> Self {
+        match raw {
+            "always" => Self::Always,
+            "with-single-extends" => Self::WithSingleExtends,
+            _ => Self::Never,
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+enum AllowObjectTypes {
+    #[default]
+    Never,
+    Always,
+}
+
+impl From<&str> for AllowObjectTypes {
+    fn from(raw: &str) -> Self {
+        match raw {
+            "always" => Self::Always,
+            _ => Self::Never,
+        }
+    }
 }
 
 impl std::ops::Deref for NoEmptyObjectType {
@@ -88,12 +159,13 @@ declare_oxc_lint!(
     NoEmptyObjectType,
     typescript,
     restriction,
+    config = NoEmptyObjectTypeConfig,
 );
 
 impl Rule for NoEmptyObjectType {
-    fn from_configuration(value: serde_json::Value) -> Self {
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
         let (allow_interfaces, allow_object_types, allow_with_name) = value.get(0).map_or(
-            (AllowInterfaces::Never, AllowObjectTypes::Never, String::default()),
+            (AllowInterfaces::Never, AllowObjectTypes::Never, None),
             |config| {
                 (
                     config
@@ -109,16 +181,15 @@ impl Rule for NoEmptyObjectType {
                     config
                         .get("allowWithName")
                         .and_then(serde_json::Value::as_str)
-                        .map(String::from)
-                        .unwrap_or_default(),
+                        .and_then(|pattern| Regex::new(pattern).ok()),
                 )
             },
         );
-        Self(Box::new(NoEmptyObjectTypeConfig {
+        Ok(Self(Box::new(NoEmptyObjectTypeConfig {
             allow_interfaces,
             allow_object_types,
             allow_with_name,
-        }))
+        })))
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -128,7 +199,7 @@ impl Rule for NoEmptyObjectType {
                     ctx,
                     interface,
                     self.allow_interfaces,
-                    &self.allow_with_name,
+                    self.allow_with_name.as_ref(),
                 );
             }
             AstKind::TSTypeLiteral(typeliteral) if typeliteral.members.is_empty() => {
@@ -137,7 +208,7 @@ impl Rule for NoEmptyObjectType {
                     typeliteral,
                     node.id(),
                     self.allow_object_types,
-                    &self.allow_with_name,
+                    self.allow_with_name.as_ref(),
                 );
             }
             _ => {}
@@ -153,12 +224,14 @@ fn check_interface_declaration(
     ctx: &LintContext,
     interface: &TSInterfaceDeclaration,
     allow_interfaces: AllowInterfaces,
-    allow_with_name: &str,
+    allow_with_name: Option<&Regex>,
 ) {
     if allow_interfaces == AllowInterfaces::Always {
         return;
     }
-    if interface.id.name.as_str() == allow_with_name {
+    if let Some(pattern) = allow_with_name
+        && pattern.is_match(interface.id.name.as_str())
+    {
         return;
     }
     if interface.extends.is_empty()
@@ -176,18 +249,17 @@ fn check_type_literal(
     type_literal: &TSTypeLiteral,
     node_id: NodeId,
     allow_object_types: AllowObjectTypes,
-    allow_with_name: &str,
+    allow_with_name: Option<&Regex>,
 ) {
     if matches!(allow_object_types, AllowObjectTypes::Always) {
         return;
     }
-    let Some(parent_node) = ctx.nodes().parent_node(node_id) else {
-        return;
-    };
-    match parent_node.kind() {
+    match ctx.nodes().parent_kind(node_id) {
         AstKind::TSIntersectionType(_) => return,
         AstKind::TSTypeAliasDeclaration(alias) => {
-            if alias.id.name.as_str() == allow_with_name {
+            if let Some(pattern) = allow_with_name
+                && pattern.is_match(alias.id.name.as_str())
+            {
                 return;
             }
         }
@@ -197,40 +269,6 @@ fn check_type_literal(
         type_literal.span,
         "Do not use the empty object type literal.",
     ));
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-enum AllowInterfaces {
-    #[default]
-    Never,
-    Always,
-    WithSingleExtends,
-}
-
-impl From<&str> for AllowInterfaces {
-    fn from(raw: &str) -> Self {
-        match raw {
-            "always" => Self::Always,
-            "with-single-extends" => Self::WithSingleExtends,
-            _ => Self::Never,
-        }
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy)]
-enum AllowObjectTypes {
-    #[default]
-    Never,
-    Always,
-}
-
-impl From<&str> for AllowObjectTypes {
-    fn from(raw: &str) -> Self {
-        match raw {
-            "always" => Self::Always,
-            _ => Self::Never,
-        }
-    }
 }
 
 #[test]
@@ -291,8 +329,10 @@ fn test() {
         ("type Base = {};", Some(serde_json::json!([{ "allowObjectTypes": "always" }]))),
         ("type Base = {};", Some(serde_json::json!([{ "allowWithName": "Base" }]))),
         ("type BaseProps = {};", Some(serde_json::json!([{ "allowWithName": "BaseProps" }]))),
+        ("type BaseProps = {};", Some(serde_json::json!([{ "allowWithName": "Props$" }]))),
         ("interface Base {}", Some(serde_json::json!([{ "allowWithName": "Base" }]))),
         ("interface BaseProps {}", Some(serde_json::json!([{ "allowWithName": "BaseProps" }]))),
+        ("interface BaseProps {}", Some(serde_json::json!([{ "allowWithName": "Props$" }]))),
     ];
 
     let fail = vec![

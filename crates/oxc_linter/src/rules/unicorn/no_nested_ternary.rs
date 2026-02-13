@@ -70,7 +70,8 @@ impl Rule for NoNestedTernary {
 
         let mut nested_level = 0;
         let mut current_node = node;
-        while let Some(parent_node) = ctx.nodes().parent_node(current_node.id()) {
+        loop {
+            let parent_node = ctx.nodes().parent_node(current_node.id());
             match parent_node.kind() {
                 AstKind::ConditionalExpression(_) => {
                     nested_level += 1;
@@ -87,8 +88,7 @@ impl Rule for NoNestedTernary {
         match nested_level {
             0 => {}
             1 => {
-                let Some(parent_node) = ctx.nodes().parent_node(node.id()) else { unreachable!() };
-                if let AstKind::ParenthesizedExpression(_) = parent_node.kind() {
+                if let AstKind::ParenthesizedExpression(_) = ctx.nodes().parent_kind(node.id()) {
                     return;
                 }
                 ctx.diagnostic_with_fix(unparenthesized_nested_ternary(cond_expr.span), |fixer| {
@@ -108,73 +108,59 @@ fn test() {
     use crate::tester::Tester;
 
     let pass = vec![
-        r"const foo = i > 5 ? true : false;",
-        r"const foo = i > 5 ? true : (i < 100 ? true : false);",
-        r"const foo = i > 5 ? (i < 100 ? true : false) : true;",
-        r"const foo = i > 5 ? (i < 100 ? true : false) : (i < 100 ? true : false);",
-        r"const foo = i > 5 ? true : (i < 100 ? FOO(i > 50 ? false : true) : false);",
-        r"foo ? doBar() : doBaz();",
-        r"var foo = bar === baz ? qux : quxx;",
-        r"
-            const pluginName = isAbsolute ?
+        "const foo = i > 5 ? true : false;",
+        "const foo = i > 5 ? true : (i < 100 ? true : false);",
+        "const foo = i > 5 ? (i < 100 ? true : false) : true;",
+        "const foo = i > 5 ? (i < 100 ? true : false) : (i < 100 ? true : false);",
+        "const foo = i > 5 ? true : (i < 100 ? FOO(i > 50 ? false : true) : false);",
+        "foo ? doBar() : doBaz();",
+        "var foo = bar === baz ? qux : quxx;",
+        "const pluginName = isAbsolute ?
                 pluginPath.slice(pluginPath.lastIndexOf('/') + 1) :
                 (
                     isNamespaced ?
                     pluginPath.split('@')[1].split('/')[1] :
                     pluginPath
-                );
-        ",
+                );",
     ];
 
     let fail = vec![
-        r"const foo = i > 5 ? true : (i < 100 ? true : (i < 1000 ? true : false));",
-        r"const foo = i > 5 ? true : (i < 100 ? (i > 50 ? false : true) : false);",
-        r"const foo = i > 5 ? i < 100 ? true : false : true;",
-        r"const foo = i > 5 ? i < 100 ? true : false : i < 100 ? true : false;",
-        r"const foo = i > 5 ? true : i < 100 ? true : false;",
-        r"foo ? bar : baz === qux ? quxx : foobar;",
-        r"foo ? baz === qux ? quxx : foobar : bar;",
-        r"
-        const foo = a ?
-            b :
-            (
-                c ?
-                    d :
-                    (
-                        e ?
-                            f :
-                            (g ? h : i)
-                    )
-            )
-        ",
+        "const foo = i > 5 ? true : (i < 100 ? true : (i < 1000 ? true : false));",
+        "const foo = i > 5 ? true : (i < 100 ? (i > 50 ? false : true) : false);",
+        "const foo = i > 5 ? i < 100 ? true : false : true;",
+        "const foo = i > 5 ? i < 100 ? true : false : i < 100 ? true : false;",
+        "const foo = i > 5 ? true : i < 100 ? true : false;",
+        "foo ? bar : baz === qux ? quxx : foobar;",
+        "foo ? baz === qux ? quxx : foobar : bar;",
+        "const foo = i > 5 ? true : (i < 100 ? true : (i < 1000 ? true : false));",
+        "const foo = a ?
+                b :
+                (
+                    c ?
+                        d :
+                        (
+                            e ?
+                                f :
+                                (g ? h : i)
+                        )
+                )",
     ];
 
     let fix = vec![
         (
             "const foo = i > 5 ? i < 100 ? true : false : true;",
             "const foo = i > 5 ? (i < 100 ? true : false) : true;",
-            None,
         ),
         (
             "const foo = i > 5 ? i < 100 ? true : false : i < 100 ? true : false;",
             "const foo = i > 5 ? (i < 100 ? true : false) : (i < 100 ? true : false);",
-            None,
         ),
         (
             "const foo = i > 5 ? true : i < 100 ? true : false;",
             "const foo = i > 5 ? true : (i < 100 ? true : false);",
-            None,
         ),
-        (
-            "foo ? bar : baz === qux ? quxx : foobar;",
-            "foo ? bar : (baz === qux ? quxx : foobar);",
-            None,
-        ),
-        (
-            "foo ? baz === qux ? quxx : foobar : bar;",
-            "foo ? (baz === qux ? quxx : foobar) : bar;",
-            None,
-        ),
+        ("foo ? bar : baz === qux ? quxx : foobar;", "foo ? bar : (baz === qux ? quxx : foobar);"),
+        ("foo ? baz === qux ? quxx : foobar : bar;", "foo ? (baz === qux ? quxx : foobar) : bar;"),
     ];
 
     Tester::new(NoNestedTernary::NAME, NoNestedTernary::PLUGIN, pass, fail)

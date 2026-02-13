@@ -3,11 +3,13 @@ use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
 use oxc_syntax::operator::{BinaryOperator, UnaryOperator};
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 use crate::{
     AstNode,
     context::{ContextHost, LintContext},
-    rule::Rule,
+    rule::{DefaultRuleConfig, Rule},
 };
 
 fn prefer_literal_enum_member_diagnostic(span: Span) -> OxcDiagnostic {
@@ -18,8 +20,11 @@ fn prefer_literal_enum_member_diagnostic(span: Span) -> OxcDiagnostic {
     .with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct PreferLiteralEnumMember {
+    /// When set to `true`, allows bitwise expressions in enum member initializers.
+    /// This includes bitwise NOT (`~`), AND (`&`), OR (`|`), XOR (`^`), and shift operators (`<<`, `>>`, `>>>`).
     allow_bitwise_expressions: bool,
 }
 
@@ -48,19 +53,13 @@ declare_oxc_lint!(
     /// ```
     PreferLiteralEnumMember,
     typescript,
-    restriction
+    restriction,
+    config = PreferLiteralEnumMember
 );
 
 impl Rule for PreferLiteralEnumMember {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let options: Option<&serde_json::Value> = value.get(0);
-
-        Self {
-            allow_bitwise_expressions: options
-                .and_then(|x| x.get("allowBitwiseExpressions"))
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false),
-        }
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -74,45 +73,44 @@ impl Rule for PreferLiteralEnumMember {
             return;
         }
 
-        if let Expression::TemplateLiteral(template) = initializer {
-            if template.expressions.is_empty() {
+        if let Expression::TemplateLiteral(template) = initializer
+            && template.expressions.is_empty()
+        {
+            return;
+        }
+
+        if let Expression::UnaryExpression(unary_expr) = initializer
+            && unary_expr.argument.is_literal()
+        {
+            if matches!(
+                unary_expr.operator,
+                UnaryOperator::UnaryPlus | UnaryOperator::UnaryNegation,
+            ) {
+                return;
+            }
+
+            if self.allow_bitwise_expressions
+                && matches!(unary_expr.operator, UnaryOperator::BitwiseNot)
+            {
                 return;
             }
         }
 
-        if let Expression::UnaryExpression(unary_expr) = initializer {
-            if unary_expr.argument.is_literal() {
-                if matches!(
-                    unary_expr.operator,
-                    UnaryOperator::UnaryPlus | UnaryOperator::UnaryNegation,
-                ) {
-                    return;
-                }
-
-                if self.allow_bitwise_expressions
-                    && matches!(unary_expr.operator, UnaryOperator::BitwiseNot)
-                {
-                    return;
-                }
-            }
-        }
-
-        if self.allow_bitwise_expressions {
-            if let Expression::BinaryExpression(binary_expr) = initializer {
-                if matches!(
-                    binary_expr.operator,
-                    BinaryOperator::BitwiseOR
-                        | BinaryOperator::BitwiseAnd
-                        | BinaryOperator::BitwiseXOR
-                        | BinaryOperator::ShiftLeft
-                        | BinaryOperator::ShiftRight
-                        | BinaryOperator::ShiftRightZeroFill
-                ) && binary_expr.left.is_literal()
-                    && binary_expr.right.is_literal()
-                {
-                    return;
-                }
-            }
+        if self.allow_bitwise_expressions
+            && let Expression::BinaryExpression(binary_expr) = initializer
+            && matches!(
+                binary_expr.operator,
+                BinaryOperator::BitwiseOR
+                    | BinaryOperator::BitwiseAnd
+                    | BinaryOperator::BitwiseXOR
+                    | BinaryOperator::ShiftLeft
+                    | BinaryOperator::ShiftRight
+                    | BinaryOperator::ShiftRightZeroFill
+            )
+            && binary_expr.left.is_literal()
+            && binary_expr.right.is_literal()
+        {
+            return;
         }
 
         ctx.diagnostic(prefer_literal_enum_member_diagnostic(decl.span));

@@ -1,16 +1,21 @@
+use std::sync::Arc;
+
+use itertools::Itertools;
+
+use oxc_allocator::Allocator;
+#[cfg(feature = "cfg")]
+use oxc_cfg::DisplayDot;
+use oxc_diagnostics::{Error, NamedSource, OxcDiagnostic};
+#[cfg(feature = "cfg")]
+use oxc_semantic::dot::DebugDot;
+use oxc_semantic::{Semantic, SemanticBuilder, SemanticBuilderReturn};
+use oxc_span::SourceType;
+
 mod class_tester;
 mod expect;
 mod symbol_tester;
-use std::sync::Arc;
-
 pub use class_tester::ClassTester;
 pub use expect::Expect;
-use itertools::Itertools;
-use oxc_allocator::Allocator;
-use oxc_cfg::DisplayDot;
-use oxc_diagnostics::{Error, NamedSource, OxcDiagnostic};
-use oxc_semantic::{Semantic, SemanticBuilder, SemanticBuilderReturn, dot::DebugDot};
-use oxc_span::SourceType;
 pub use symbol_tester::SymbolTester;
 
 #[must_use]
@@ -87,6 +92,12 @@ impl<'a> SemanticTester<'a> {
     /// Mark the [`SourceType`] as an ESM module.
     pub fn with_module(mut self, yes: bool) -> Self {
         self.source_type = self.source_type.with_module(yes);
+        self
+    }
+
+    /// Mark the [`SourceType`] as a script.
+    pub fn with_script(mut self, yes: bool) -> Self {
+        self.source_type = self.source_type.with_script(yes);
         self
     }
 
@@ -170,15 +181,21 @@ impl<'a> SemanticTester<'a> {
         SemanticBuilder::new()
             .with_check_syntax_error(true)
             .with_cfg(self.cfg)
-            .with_scope_tree_child_ids(self.scope_tree_child_ids)
             .build(self.allocator.alloc(parse.program))
     }
 
+    #[cfg(feature = "cfg")]
     pub fn basic_blocks_count(&self) -> usize {
         let built = self.build();
         built.cfg().map_or(0, |cfg| cfg.basic_blocks.len())
     }
 
+    #[cfg(not(feature = "cfg"))]
+    pub fn basic_blocks_count(&self) -> usize {
+        0
+    }
+
+    #[cfg(feature = "cfg")]
     pub fn basic_blocks_printed(&self) -> String {
         let built = self.build();
         built.cfg().map_or_else(String::default, |cfg| {
@@ -196,9 +213,20 @@ impl<'a> SemanticTester<'a> {
         })
     }
 
+    #[cfg(not(feature = "cfg"))]
+    pub fn basic_blocks_printed(&self) -> String {
+        String::default()
+    }
+
+    #[cfg(feature = "cfg")]
     pub fn cfg_dot_diagram(&self) -> String {
         let semantic = self.build();
         semantic.cfg().map_or_else(String::default, |cfg| cfg.debug_dot(semantic.nodes().into()))
+    }
+
+    #[cfg(not(feature = "cfg"))]
+    pub fn cfg_dot_diagram(&self) -> String {
+        String::default()
     }
 
     /// Tests that a symbol with the given name exists at the top-level scope and provides a
@@ -206,7 +234,7 @@ impl<'a> SemanticTester<'a> {
     ///
     /// ## Fails
     /// If no symbol with the given name exists at the top-level scope.
-    pub fn has_root_symbol(&self, name: &str) -> SymbolTester {
+    pub fn has_root_symbol(&self, name: &str) -> SymbolTester<'_> {
         SymbolTester::new_at_root(self, self.build(), name)
     }
 
@@ -214,7 +242,7 @@ impl<'a> SemanticTester<'a> {
     ///
     /// ## Fails
     /// 1. No symbol with the given name exists,
-    pub fn has_symbol(&self, name: &str) -> SymbolTester {
+    pub fn has_symbol(&self, name: &str) -> SymbolTester<'_> {
         SymbolTester::new_first_binding(self, self.build(), name)
     }
 
@@ -222,7 +250,7 @@ impl<'a> SemanticTester<'a> {
     ///
     /// ## Fails
     /// If no class with the given name exists.
-    pub fn has_class(&self, name: &str) -> ClassTester {
+    pub fn has_class(&self, name: &str) -> ClassTester<'_> {
         ClassTester::has_class(self.build(), name)
     }
 
@@ -261,7 +289,7 @@ impl<'a> SemanticTester<'a> {
     /// 1. No symbol with the given name exists,
     /// 2. More than one symbol with the given name exists, so a symbol cannot
     ///    be uniquely obtained.
-    pub fn has_some_symbol(&self, name: &str) -> SymbolTester {
+    pub fn has_some_symbol(&self, name: &str) -> SymbolTester<'_> {
         SymbolTester::new_unique(self, self.build(), name)
     }
 

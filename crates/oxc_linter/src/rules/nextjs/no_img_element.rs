@@ -10,7 +10,8 @@ use crate::{AstNode, context::LintContext, rule::Rule};
 
 fn no_img_element_diagnostic(span: Span, src_span: Option<Span>) -> OxcDiagnostic {
     let mut diagnostic = OxcDiagnostic::warn("Using `<img>` could result in slower LCP and higher bandwidth.")
-		.with_help("Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images.\nSee https://nextjs.org/docs/messages/no-img-element")
+        .with_help("Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images.")
+        .with_note("See https://nextjs.org/docs/messages/no-img-element")
         .with_label(span.label("Use `<Image />` from `next/image` instead."));
     if let Some(src_span) = src_span {
         diagnostic = diagnostic.and_label(src_span.label("Use a static image import instead."));
@@ -79,19 +80,16 @@ impl Rule for NoImgElement {
             return;
         }
 
-        // first two are self, parent. third is grandparent
-        let Some(grandparent) = ctx.nodes().ancestor_kinds(node.id()).nth(2) else {
+        let Some(grandparent) = ctx.nodes().ancestor_kinds(node.id()).nth(1) else {
             return;
         };
 
-        if let AstKind::JSXElement(maybe_picture_jsx_elem) = grandparent {
-            if let JSXElementName::Identifier(jsx_opening_element_name) =
+        if let AstKind::JSXElement(maybe_picture_jsx_elem) = grandparent
+            && let JSXElementName::Identifier(jsx_opening_element_name) =
                 &maybe_picture_jsx_elem.opening_element.name
-            {
-                if jsx_opening_element_name.name.as_str() == "picture" {
-                    return;
-                }
-            }
+            && jsx_opening_element_name.name.as_str() == "picture"
+        {
+            return;
         }
 
         let src_span: Option<Span> = jsx_opening_element
@@ -115,7 +113,7 @@ fn test() {
 
     let pass = vec![
         r#"import { Image } from 'next/image';
-			
+
 			      export class MyComponent {
 			        render() {
 			          return (

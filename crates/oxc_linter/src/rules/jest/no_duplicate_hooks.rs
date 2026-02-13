@@ -31,6 +31,9 @@ declare_oxc_lint!(
     /// ### Why is this bad?
     ///
     /// Having duplicate hooks in a describe block can lead to confusion and unexpected behavior.
+    /// When multiple hooks of the same type exist, they all execute in order, which can make it
+    /// difficult to understand the test setup flow and may result in redundant or conflicting
+    /// operations. This makes tests harder to maintain and debug.
     ///
     /// ### Examples
     ///
@@ -97,6 +100,17 @@ declare_oxc_lint!(
     ///     });
     /// });
     /// ```
+    ///
+    /// This rule is compatible with [eslint-plugin-vitest](https://github.com/vitest-dev/eslint-plugin-vitest/blob/main/docs/rules/no-duplicate-hooks.md),
+    /// to use it, add the following configuration to your `.oxlintrc.json`:
+    ///
+    /// ```json
+    /// {
+    ///   "rules": {
+    ///      "vitest/no-duplicate-hooks": "error"
+    ///   }
+    /// }
+    /// ```
     NoDuplicateHooks,
     jest,
     style,
@@ -104,18 +118,15 @@ declare_oxc_lint!(
 
 impl Rule for NoDuplicateHooks {
     fn run_once(&self, ctx: &LintContext) {
-        let Some(root_node) = ctx.nodes().root_node() else {
-            return;
-        };
         let mut hook_contexts: FxHashMap<NodeId, Vec<FxHashMap<String, i32>>> =
             FxHashMap::default();
-        hook_contexts.insert(root_node.id(), Vec::new());
+        hook_contexts.insert(NodeId::ROOT, Vec::new());
 
         let mut possibles_jest_nodes = collect_possible_jest_call_node(ctx);
-        possibles_jest_nodes.sort_by_key(|n| n.node.id());
+        possibles_jest_nodes.sort_unstable_by_key(|n| n.node.id());
 
         for possible_jest_node in possibles_jest_nodes {
-            Self::run(&possible_jest_node, root_node.id(), &mut hook_contexts, ctx);
+            Self::run(&possible_jest_node, NodeId::ROOT, &mut hook_contexts, ctx);
         }
     }
 }
@@ -146,14 +157,11 @@ impl NoDuplicateHooks {
         }
 
         let hook_name = jest_fn_call.name.to_string();
-        let parent_node_id =
-            match ctx.nodes().ancestor_ids(node.id()).find(|n| hook_contexts.contains_key(n)) {
-                Some(n) => Some(n),
-                _ => Some(root_node_id),
-            };
-        let Some(parent_id) = parent_node_id else {
-            return;
-        };
+        let parent_id = ctx
+            .nodes()
+            .ancestor_ids(node.id())
+            .find(|n| hook_contexts.contains_key(n))
+            .unwrap_or(root_node_id);
 
         let Some(contexts) = hook_contexts.get_mut(&parent_id) else {
             return;
@@ -583,7 +591,7 @@ fn test() {
                     beforeEach(() => {})
                     afterEach(() => {})
                     afterAll(() => {})
-                
+
                     test("bar", () => {
                         someFn();
                     })
@@ -708,7 +716,7 @@ fn test() {
                 describe.each(['hello'])('%s', () => {
                     beforeEach(() => {});
                     beforeEach(() => {});
-                    
+
                     it('is not fine', () => {});
                 });
             ",
@@ -719,14 +727,14 @@ fn test() {
                 describe('something', () => {
                     describe.each(['hello'])('%s', () => {
                         beforeEach(() => {});
-                    
+
                         it('is fine', () => {});
                     });
-			    
+
                     describe.each(['world'])('%s', () => {
                         beforeEach(() => {});
                         beforeEach(() => {});
-                    
+
                         it('is not fine', () => {});
                     });
                 });

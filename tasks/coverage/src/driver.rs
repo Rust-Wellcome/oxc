@@ -6,7 +6,7 @@ use oxc::{
     CompilerInterface,
     allocator::Allocator,
     ast::{
-        AstKind, Comment,
+        Comment,
         ast::{Program, RegExpLiteral},
     },
     ast_visit::{Visit, walk},
@@ -21,7 +21,7 @@ use oxc::{
 };
 use oxc_tasks_transform_checker::{check_semantic_after_transform, check_semantic_ids};
 
-use crate::suite::TestResult;
+use crate::TestResult;
 
 #[expect(clippy::struct_excessive_bools)]
 #[derive(Default)]
@@ -29,7 +29,7 @@ pub struct Driver {
     pub path: PathBuf,
     // options
     pub transform: Option<TransformOptions>,
-    pub compress: bool,
+    pub compress: Option<CompressOptions>,
     pub remove_whitespace: bool,
     pub codegen: bool,
     pub check_semantic: bool,
@@ -38,6 +38,7 @@ pub struct Driver {
     pub panicked: bool,
     pub errors: Vec<OxcDiagnostic>,
     pub printed: String,
+    pub source_type: Option<SourceType>,
 }
 
 impl CompilerInterface for Driver {
@@ -49,16 +50,12 @@ impl CompilerInterface for Driver {
         }
     }
 
-    fn semantic_child_scope_ids(&self) -> bool {
-        true
-    }
-
     fn transform_options(&self) -> Option<&TransformOptions> {
         self.transform.as_ref()
     }
 
     fn compress_options(&self) -> Option<CompressOptions> {
-        self.compress.then(CompressOptions::smallest)
+        self.compress.clone()
     }
 
     fn codegen_options(&self) -> Option<CodegenOptions> {
@@ -78,6 +75,7 @@ impl CompilerInterface for Driver {
     fn after_parse(&mut self, parser_return: &mut ParserReturn) -> ControlFlow<()> {
         let ParserReturn { program, panicked, errors, .. } = parser_return;
         self.panicked = *panicked;
+        self.source_type = Some(program.source_type);
         self.check_ast_nodes(program);
         if self.check_comments(&program.comments) {
             return ControlFlow::Break(());
@@ -92,12 +90,7 @@ impl CompilerInterface for Driver {
 
     fn after_semantic(&mut self, ret: &mut SemanticBuilderReturn) -> ControlFlow<()> {
         if self.check_semantic {
-            let Some(root_node) = ret.semantic.nodes().root_node() else {
-                return ControlFlow::Break(());
-            };
-            let AstKind::Program(program) = root_node.kind() else {
-                return ControlFlow::Break(());
-            };
+            let program = ret.semantic.nodes().program();
             if let Some(errors) = check_semantic_ids(program) {
                 self.errors.extend(errors);
                 return ControlFlow::Break(());
@@ -111,13 +104,12 @@ impl CompilerInterface for Driver {
         program: &mut Program<'_>,
         transformer_return: &mut TransformerReturn,
     ) -> ControlFlow<()> {
-        if self.check_semantic {
-            if let Some(errors) =
+        if self.check_semantic
+            && let Some(errors) =
                 check_semantic_after_transform(&transformer_return.scoping, program)
-            {
-                self.errors.extend(errors);
-                return ControlFlow::Break(());
-            }
+        {
+            self.errors.extend(errors);
+            return ControlFlow::Break(());
         }
         ControlFlow::Continue(())
     }
@@ -139,13 +131,14 @@ impl Driver {
         source_type: SourceType,
     ) -> TestResult {
         self.run(source_text, source_type);
-        let printed1 = self.printed.clone();
+        let printed1 = std::mem::take(&mut self.printed);
+        // Use the resolved source type from the first parse for the second parse
+        let source_type = self.source_type.unwrap_or(source_type);
         self.run(&printed1, source_type);
-        let printed2 = self.printed.clone();
-        if printed1 == printed2 {
+        if printed1 == self.printed {
             TestResult::Passed
         } else {
-            TestResult::Mismatch(case, printed1, printed2)
+            TestResult::Mismatch(case, printed1, std::mem::take(&mut self.printed))
         }
     }
 

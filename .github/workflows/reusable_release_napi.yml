@@ -9,33 +9,22 @@ on:
         required: true
         type: string
         description: "The component name"
-    secrets:
-      NPM_TOKEN:
-        required: true
 
 jobs:
   check:
     name: Check version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     outputs:
-      version_changed: ${{ steps.version.outputs.changed }}
+      version_changed: ${{ steps.check.outputs.version_changed }}
     env:
       name: ${{ inputs.name }}
     steps:
-      - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
-
-      - uses: EndBug/version-check@36ff30f37c7deabe56a30caa043d127be658c425 # v2.1.5
-        id: version
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
+      - uses: ./.github/actions/check-version
+        id: check
         with:
-          static-checking: localIsNew
-          file-url: https://unpkg.com/oxc-${{ inputs.name }}@latest/package.json
           file-name: napi/${{ inputs.name }}/package.json
-
-      - name: Show version
-        if: steps.version.outputs.changed == 'true'
-        env:
-          version: ${{ steps.version.outputs.version }}
-        run: echo "version=${version}"
+          file-url: https://unpkg.com/oxc-${{ inputs.name }}@latest/package.json
 
   build:
     needs: check
@@ -53,58 +42,43 @@ jobs:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            build: |
-              pnpm build --target x86_64-pc-windows-msvc
+            build: pnpm build --target x86_64-pc-windows-msvc
 
           - os: windows-latest
             target: aarch64-pc-windows-msvc
-            build: |
-              pnpm build --target aarch64-pc-windows-msvc
+            build: pnpm build --target aarch64-pc-windows-msvc
 
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            build: |
-              pnpm build --target x86_64-unknown-linux-gnu --use-napi-cross
+            build: pnpm build --target x86_64-unknown-linux-gnu --use-napi-cross
 
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            build: |
-              pnpm build --target x86_64-unknown-linux-musl -x
+            build: pnpm build --target x86_64-unknown-linux-musl -x
 
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            build: |
-              pnpm build --target aarch64-unknown-linux-gnu --use-napi-cross
+            build: pnpm build --target aarch64-unknown-linux-gnu --use-napi-cross
 
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
-            build: |
-              pnpm build --target aarch64-unknown-linux-musl -x
+            build: pnpm build --target aarch64-unknown-linux-musl -x
 
           - os: ubuntu-latest
             target: armv7-unknown-linux-gnueabihf
-            build: |
-              pnpm build --target armv7-unknown-linux-gnueabihf --use-napi-cross
-
-          - os: ubuntu-latest
-            target: armv7-unknown-linux-musleabihf
-            build: |
-              pnpm build --target armv7-unknown-linux-musleabihf -x
+            build: pnpm build --target armv7-unknown-linux-gnueabihf --use-napi-cross
 
           - os: macos-latest
             target: x86_64-apple-darwin
-            build: |
-              pnpm build --target x86_64-apple-darwin
+            build: pnpm build --target x86_64-apple-darwin
 
           - os: macos-latest
             target: aarch64-apple-darwin
-            build: |
-              pnpm build --target aarch64-apple-darwin
+            build: pnpm build --target aarch64-apple-darwin
 
           - os: ubuntu-latest
             target: wasm32-wasip1-threads
-            build: |
-              pnpm build --target wasm32-wasip1-threads
+            build: pnpm build --target wasm32-wasip1-threads
 
           - os: ubuntu-latest
             target: s390x-unknown-linux-gnu
@@ -121,16 +95,49 @@ jobs:
             build: |
               sudo apt-get update
               sudo apt-get install gcc-riscv64-linux-gnu g++-riscv64-linux-gnu -y
-              export CC=riscv64-linux-gnu-gcc
+              export TARGET_CC=riscv64-linux-gnu-gcc
               export CXX=riscv64-linux-gnu-g++
               pnpm build --target riscv64gc-unknown-linux-gnu
 
-    steps:
-      - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-ohos
+            build: pnpm build --target aarch64-unknown-linux-ohos
 
-      - uses: oxc-project/setup-node@f42e3bda950c7454575e78ee4eaac880a077700c # v1.0.0
+          - os: ubuntu-latest
+            target: armv7-linux-androideabi
+            build: pnpm build --target armv7-linux-androideabi
+
+          - os: ubuntu-latest
+            target: armv7-unknown-linux-musleabihf
+            build: pnpm build --target armv7-unknown-linux-musleabihf -x
+
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+            build: pnpm build --target i686-pc-windows-msvc
+
+          - os: ubuntu-latest
+            target: powerpc64le-unknown-linux-gnu
+            build: pnpm build --target powerpc64le-unknown-linux-gnu --use-napi-cross
+
+          - os: ubuntu-latest
+            target: riscv64gc-unknown-linux-musl
+            build: |
+              sudo apt-get update
+              sudo apt-get install gcc-riscv64-linux-gnu g++-riscv64-linux-gnu -y
+              export TARGET_CC=riscv64-linux-gnu-gcc
+              export CXX=riscv64-linux-gnu-g++
+              pnpm build --target riscv64gc-unknown-linux-musl -x
+
+    steps:
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
+
+      - uses: oxc-project/setup-node@8958a8e040102244b619c4a94fccb657a44b1c21 # v1.0.6
 
       - run: rustup target add ${{ matrix.target }}
+
+      - name: Setup OpenHarmony SDK
+        if: ${{ contains(matrix.target, 'ohos') }}
+        uses: Boshen/setup-ohos-sdk@edb865a89a712f1f15dbad932dfa9cfce849d95c # v1.0.0
 
       - uses: goto-bus-stop/setup-zig@abea47f85e598557f500fa1fd2ab7464fcb39406 # v2.2.1
         if: ${{ contains(matrix.target, 'musl') }}
@@ -142,14 +149,16 @@ jobs:
         run: ${{ matrix.build }}
         shell: bash
         env:
-          CC: clang # for mimalloc
+          TARGET_CC: clang # for mimalloc
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
+          if-no-files-found: error
           name: bindings-${{ matrix.target }}
+          # `**/*.node` because in `napi/parser`, binaries are in `src-js` subdirectory
           path: |
-            napi/${{ inputs.name }}/*.node
-            napi/${{ inputs.name }}/*.wasm
+            napi/${{ inputs.name }}/**/*.node
+            napi/${{ inputs.name }}/**/*.wasm
 
   build-freebsd:
     needs: check
@@ -157,10 +166,10 @@ jobs:
     name: Build FreeBSD
     runs-on: ubuntu-latest
     steps:
-      - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
       - name: Build
         id: build
-        uses: cross-platform-actions/action@97419d18f6470332677e345e9df97cdc71244ead # v0.28.0
+        uses: cross-platform-actions/action@492b0c80085400348c599edace11141a4ee73524 # v0.32.0
         env:
           DEBUG: napi:*
           RUSTUP_IO_THREADS: 1
@@ -187,23 +196,24 @@ jobs:
             cd napi/${{ inputs.name }}
             export COREPACK_INTEGRITY_KEYS=0
             sudo corepack enable
-            pnpm install
+            pnpm install --ignore-scripts # postinstall: The current platform (freebsd) and architecture (x64) is not supported.
             pnpm build --target x86_64-unknown-freebsd
             rm -rf node_modules
             rm -rf target
       - name: Upload artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: bindings-freebsd
-          path: napi/${{ inputs.name }}/*.node
           if-no-files-found: error
+          name: bindings-freebsd
+          # `**/*.node` because in `napi/parser`, binary is in `src-js` subdirectory
+          path: napi/${{ inputs.name }}/**/*.node
 
   publish:
     name: Publish NAPI
     needs:
       - build
       - build-freebsd
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     permissions:
       id-token: write # for `pnpm publish --provenance`
     env:
@@ -212,61 +222,35 @@ jobs:
       npm_dir: release-dir
       PUBLISH_FLAGS: "--provenance --access public --no-git-checks"
     steps:
-      - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
 
-      - uses: oxc-project/setup-node@f42e3bda950c7454575e78ee4eaac880a077700c # v1.0.0
+      - uses: oxc-project/setup-node@8958a8e040102244b619c4a94fccb657a44b1c21 # v1.0.6
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           path: artifacts
 
-      - run: mkdir -p release-dir
+      - run: mkdir -p ${npm_dir}
 
       - run: pnpm napi create-npm-dirs --package-json-path ${package_path}/package.json --npm-dir ${npm_dir}
 
+      - run: pnpm napi artifacts --package-json-path ${package_path}/package.json --build-output-dir ${package_path}/src-js --npm-dir ${npm_dir}
+        if: ${{ inputs.name == 'parser' }}
+
       - run: pnpm napi artifacts --package-json-path ${package_path}/package.json --build-output-dir ${package_path} --npm-dir ${npm_dir}
+        if: ${{ inputs.name != 'parser' }}
 
       - run: pnpm -C ${package_path} build-browser-bundle --npmDir ../../${npm_dir}
         if: ${{ inputs.name == 'parser' }}
 
+      - run: npm install -g npm@latest # For trusted publishing support
+
       - name: Check Publish
-        run: |
-          # Check subpackages
-          for package in ${npm_dir}/*
-          do
-            echo $package
-            ls $package
-            cat $package/package.json
-            # Check publish files exist
-            jq -r '.files[]' $package/package.json | while read -r file ; do
-              if ! [ -f $package/$file ] ; then
-                echo "File does not exist." $package/$file
-                exit 1
-              fi
-            done
-            pnpm publish $package/ ${PUBLISH_FLAGS} --dry-run
-            echo ''
-          done
+        run: node .github/scripts/check-npm-packages.js "${npm_dir}/*" "${package_path}"
 
-          # Check root package
-          echo ${package_path}
-          ls ${package_path}
-          cat ${package_path}/package.json
-          # Check publish files exist
-          jq -r '.files[]' ${package_path}/package.json | while read -r file ; do
-            if ! [ -f ${package_path}/$file ]; then
-              echo "File does not exist." ${package_path}/$file
-              exit 1
-            fi
-          done
-          pnpm publish ${package_path}/ ${PUBLISH_FLAGS} --dry-run
-
-      - name: Publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Trusted Publish
         run: |
-          echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
+          # Trusted publishing is configured, publish token is not required.
           # Publish sub-packages and adds `optionalDependencies` to `package_path`.
           pnpm napi pre-publish --no-gh-release -t npm --package-json-path ${package_path}/package.json --npm-dir ${npm_dir}
           pnpm publish ${package_path}/ ${PUBLISH_FLAGS}

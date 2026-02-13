@@ -1,14 +1,11 @@
 #![allow(clippy::module_inception)]
 
-use oxc_allocator::{Address, Allocator};
-use oxc_ast::AstKind;
+use oxc_allocator::{Allocator, Vec as ArenaVec};
 
 use crate::options::FormatOptions;
 
 use super::{
-    Arguments, Buffer, Comments, FormatContext, FormatState, FormatStateSnapshot, GroupId,
-    VecBuffer,
-    buffer::BufferSnapshot,
+    Arguments, Buffer, Comments, FormatContext, FormatState, GroupId, SourceText, VecBuffer,
     builders::{FillBuilder, JoinBuilder, JoinNodesBuilder, Line},
     prelude::*,
 };
@@ -27,7 +24,7 @@ impl<'buf, 'ast> Formatter<'buf, 'ast> {
         Self { buffer }
     }
 
-    pub fn allocator(&self) -> &Allocator {
+    pub fn allocator(&self) -> &'ast Allocator {
         self.context().allocator()
     }
 
@@ -49,15 +46,15 @@ impl<'buf, 'ast> Formatter<'buf, 'ast> {
         self.state_mut().context_mut()
     }
 
-    /// Returns the source text.
+    /// Returns the source text wrapper.
     #[inline]
-    pub fn source_text(&self) -> &'ast str {
+    pub fn source_text(&self) -> SourceText<'ast> {
         self.context().source_text()
     }
 
     /// Returns the comments from the context.
     #[inline]
-    pub fn comments(&self) -> &Comments {
+    pub fn comments(&self) -> &Comments<'_> {
         self.context().comments()
     }
 
@@ -77,14 +74,14 @@ impl<'buf, 'ast> Formatter<'buf, 'ast> {
     /// use biome_formatter::format;
     /// use biome_formatter::prelude::*;
     ///
-    /// # fn main() -> FormatResult<()> {
+    /// # fn main()  {
     /// let formatted = format!(SimpleFormatContext::default(), [format_with(|f| {
     ///     f.join()
-    ///         .entry(&text("a"))
+    ///         .entry(&token("a"))
     ///         .entry(&space())
-    ///         .entry(&text("+"))
+    ///         .entry(&token("+"))
     ///         .entry(&space())
-    ///         .entry(&text("b"))
+    ///         .entry(&token("b"))
     ///         .finish()
     /// })])?;
     ///
@@ -109,13 +106,13 @@ impl<'buf, 'ast> Formatter<'buf, 'ast> {
     /// use biome_formatter::{format, format_args};
     /// use biome_formatter::prelude::*;
     ///
-    /// # fn main() -> FormatResult<()> {
+    /// # fn main()  {
     /// let formatted = format!(SimpleFormatContext::default(), [format_with(|f| {
-    ///     f.join_with(&format_args!(text(","), space()))
-    ///         .entry(&text("1"))
-    ///         .entry(&text("2"))
-    ///         .entry(&text("3"))
-    ///         .entry(&text("4"))
+    ///     f.join_with(&format_args!(token(","), space()))
+    ///         .entry(&token("1"))
+    ///         .entry(&token("2"))
+    ///         .entry(&token("3"))
+    ///         .entry(&token("4"))
     ///         .finish()
     /// })])?;
     ///
@@ -185,13 +182,13 @@ impl<'buf, 'ast> Formatter<'buf, 'ast> {
     /// use biome_formatter::prelude::*;
     /// use biome_formatter::{format, format_args};
     ///
-    /// # fn main() -> FormatResult<()> {
+    /// # fn main()  {
     /// let formatted = format!(SimpleFormatContext::default(), [format_with(|f| {
     ///     f.fill()
-    ///         .entry(&soft_line_break_or_space(), &text("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
-    ///         .entry(&soft_line_break_or_space(), &text("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"))
-    ///         .entry(&soft_line_break_or_space(), &text("cccccccccccccccccccccccccccccc"))
-    ///         .entry(&soft_line_break_or_space(), &text("dddddddddddddddddddddddddddddd"))
+    ///         .entry(&soft_line_break_or_space(), &token("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+    ///         .entry(&soft_line_break_or_space(), &token("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"))
+    ///         .entry(&soft_line_break_or_space(), &token("cccccccccccccccccccccccccccccc"))
+    ///         .entry(&soft_line_break_or_space(), &token("dddddddddddddddddddddddddddddd"))
     ///         .finish()
     /// })])?;
     ///
@@ -207,12 +204,12 @@ impl<'buf, 'ast> Formatter<'buf, 'ast> {
     /// use biome_formatter::prelude::*;
     /// use biome_formatter::{format, format_args};
     ///
-    /// # fn main() -> FormatResult<()> {
+    /// # fn main()  {
     /// let entries = vec![
-    ///     text("<b>Important: </b>"),
-    ///     text("Please do not commit memory bugs such as segfaults, buffer overflows, etc. otherwise you "),
-    ///     text("<em>will</em>"),
-    ///     text(" be reprimanded")
+    ///     token("<b>Important: </b>"),
+    ///     token("Please do not commit memory bugs such as segfaults, buffer overflows, etc. otherwise you "),
+    ///     token("<em>will</em>"),
+    ///     token(" be reprimanded")
     /// ];
     ///
     /// let formatted = format!(SimpleFormatContext::default(), [format_with(|f| {
@@ -231,20 +228,18 @@ impl<'buf, 'ast> Formatter<'buf, 'ast> {
     }
 
     /// Formats `content` into an interned element without writing it to the formatter's buffer.
-    pub fn intern(
-        &mut self,
-        content: &dyn Format<'ast>,
-    ) -> FormatResult<Option<FormatElement<'ast>>> {
+    pub fn intern(&mut self, content: &dyn Format<'ast>) -> Option<FormatElement<'ast>> {
         let mut buffer = VecBuffer::new(self.state_mut());
-        crate::write!(&mut buffer, [content])?;
+        crate::write!(&mut buffer, [content]);
         let elements = buffer.into_vec();
 
-        Ok(self.intern_vec(elements))
+        self.intern_vec(elements)
     }
 
+    #[expect(clippy::unused_self)] // Keep `self` the same as the original source
     pub fn intern_vec(
-        &mut self,
-        mut elements: Vec<FormatElement<'ast>>,
+        &self,
+        mut elements: ArenaVec<'ast, FormatElement<'ast>>,
     ) -> Option<FormatElement<'ast>> {
         match elements.len() {
             0 => None,
@@ -256,25 +251,10 @@ impl<'buf, 'ast> Formatter<'buf, 'ast> {
     }
 }
 
-impl Formatter<'_, '_> {
-    /// Take a snapshot of the state of the formatter
-    #[inline]
-    pub fn state_snapshot(&self) -> FormatterSnapshot {
-        FormatterSnapshot { buffer: self.buffer.snapshot(), state: self.state().snapshot() }
-    }
-
-    #[inline]
-    /// Restore the state of the formatter to a previous snapshot
-    pub fn restore_state_snapshot(&mut self, snapshot: FormatterSnapshot) {
-        self.state_mut().restore_snapshot(snapshot.state);
-        self.buffer.restore_snapshot(snapshot.buffer);
-    }
-}
-
 impl<'ast> Buffer<'ast> for Formatter<'_, 'ast> {
     #[inline(always)]
-    fn write_element(&mut self, element: FormatElement<'ast>) -> FormatResult<()> {
-        self.buffer.write_element(element)
+    fn write_element(&mut self, element: FormatElement<'ast>) {
+        self.buffer.write_element(element);
     }
 
     fn elements(&self) -> &[FormatElement<'ast>] {
@@ -282,11 +262,10 @@ impl<'ast> Buffer<'ast> for Formatter<'_, 'ast> {
     }
 
     #[inline(always)]
-    fn write_fmt(&mut self, arguments: Arguments<'_, 'ast>) -> FormatResult<()> {
+    fn write_fmt(&mut self, arguments: Arguments<'_, 'ast>) {
         for argument in arguments.items() {
-            argument.format(self)?;
+            argument.format(self);
         }
-        Ok(())
     }
 
     fn state(&self) -> &FormatState<'ast> {
@@ -296,23 +275,4 @@ impl<'ast> Buffer<'ast> for Formatter<'_, 'ast> {
     fn state_mut(&mut self) -> &mut FormatState<'ast> {
         self.buffer.state_mut()
     }
-
-    fn snapshot(&self) -> BufferSnapshot {
-        self.buffer.snapshot()
-    }
-
-    fn restore_snapshot(&mut self, snapshot: BufferSnapshot) {
-        self.buffer.restore_snapshot(snapshot);
-    }
-}
-
-/// Snapshot of the formatter state  used to handle backtracking if
-/// errors are encountered in the formatting process and the formatter
-/// has to fallback to printing raw tokens
-///
-/// In practice this only saves the set of printed tokens in debug
-/// mode and compiled to nothing in release mode
-pub struct FormatterSnapshot {
-    buffer: BufferSnapshot,
-    state: FormatStateSnapshot,
 }

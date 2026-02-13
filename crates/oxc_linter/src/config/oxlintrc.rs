@@ -3,17 +3,22 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use oxc_diagnostics::OxcDiagnostic;
 
-use crate::utils::read_to_string;
+use crate::{LintPlugins, utils::read_to_string};
 
 use super::{
-    categories::OxlintCategories, env::OxlintEnv, globals::OxlintGlobals,
-    overrides::OxlintOverrides, plugins::LintPlugins, rules::OxlintRules, settings::OxlintSettings,
+    categories::OxlintCategories,
+    env::OxlintEnv,
+    external_plugins::{ExternalPluginEntry, external_plugins_schema},
+    globals::OxlintGlobals,
+    overrides::OxlintOverrides,
+    rules::OxlintRules,
+    settings::OxlintSettings,
 };
 
 /// Oxlint Configuration File
@@ -43,6 +48,10 @@ use super::{
 ///     "foo": "readonly"
 ///   },
 ///   "settings": {
+///     "react": {
+///       "version": "18.2.0"
+///     },
+///     "custom": { "option": true }
 ///   },
 ///   "rules": {
 ///     "eqeqeq": "warn",
@@ -60,10 +69,58 @@ use super::{
 ///  }
 /// ```
 #[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 #[non_exhaustive]
 pub struct Oxlintrc {
+    /// Schema URI for editor tooling.
+    #[serde(rename = "$schema", default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    /// Enabled built-in plugins for Oxlint.
+    /// You can view the list of available plugins on
+    /// [the website](https://oxc.rs/docs/guide/usage/linter/plugins.html#supported-plugins).
+    ///
+    /// NOTE: Setting the `plugins` field will overwrite the base set of plugins.
+    /// The `plugins` array should reflect all of the plugins you want to use.
     pub plugins: Option<LintPlugins>,
+    /// JS plugins, allows usage of ESLint plugins with Oxlint.
+    ///
+    /// Read more about JS plugins in
+    /// [the docs](https://oxc.rs/docs/guide/usage/linter/js-plugins.html).
+    ///
+    /// Note: JS plugins are experimental and not subject to semver.
+    /// They are not supported in the language server (and thus editor integrations) at present.
+    ///
+    /// Examples:
+    ///
+    /// Basic usage with a local plugin path.
+    ///
+    /// ```json
+    /// {
+    ///   "jsPlugins": ["./custom-plugin.js"],
+    ///   "rules": {
+    ///     "custom/rule-name": "warn"
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Using a built-in Rust plugin alongside a JS plugin with the same name
+    /// by giving the JS plugin an alias.
+    ///
+    /// ```json
+    /// {
+    ///   "plugins": ["import"],
+    ///   "jsPlugins": [
+    ///     { "name": "import-js", "specifier": "eslint-plugin-import" }
+    ///   ],
+    ///   "rules": {
+    ///     "import/no-cycle": "error",
+    ///     "import-js/no-unresolved": "warn"
+    ///   }
+    /// }
+    /// ```
+    #[serde(rename = "jsPlugins", default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "external_plugins_schema")]
+    pub external_plugins: Option<FxHashSet<ExternalPluginEntry>>,
     pub categories: OxlintCategories,
     /// Example
     ///
@@ -83,6 +140,9 @@ pub struct Oxlintrc {
     /// See [Oxlint Rules](https://oxc.rs/docs/guide/usage/linter/rules.html) for the list of
     /// rules.
     pub rules: OxlintRules,
+    /// Plugin-specific configuration for both built-in and custom plugins.
+    /// This includes settings for built-in plugins such as `react` and `jsdoc`
+    /// as well as configuring settings for JS custom plugins loaded via `jsPlugins`.
     pub settings: OxlintSettings,
     /// Environments enable and disable collections of global variables.
     pub env: OxlintEnv,
@@ -103,6 +163,14 @@ pub struct Oxlintrc {
     /// overriding the previous ones.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extends: Vec<PathBuf>,
+    /// Extended configuration objects provided via `oxlint.config.ts`.
+    ///
+    /// This field is not deserialized from JSON config files and is not part of the public
+    /// configuration schema. It is populated by the JS config loader when `extends` contains
+    /// objects (imported configs).
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub extends_configs: Vec<Oxlintrc>,
 }
 
 impl Oxlintrc {
@@ -135,7 +203,7 @@ impl Oxlintrc {
                 }
             };
             OxcDiagnostic::error(format!(
-                "Failed to parse eslint config {}.\n{err}",
+                "Failed to parse oxlint config {}.\n{err}",
                 path.display()
             ))
         })?;
@@ -145,6 +213,11 @@ impl Oxlintrc {
         })?;
 
         config.path = path.to_path_buf();
+
+        #[expect(clippy::missing_panics_doc)]
+        let config_dir =
+            config.path.parent().expect("config path should have a parent directory").to_path_buf();
+        config.set_config_dir(&config_dir);
 
         Ok(config)
     }
@@ -156,18 +229,23 @@ impl Oxlintrc {
         let json = serde_json::from_str::<serde_json::Value>(json_string)
             .unwrap_or(serde_json::Value::Null);
 
-        let config = Self::deserialize(&json).map_err(|err| {
+        Self::deserialize(&json).map_err(|err| {
             OxcDiagnostic::error(format!("Failed to parse config with error {err:?}"))
-        })?;
-
-        Ok(config)
+        })
     }
 
-    /// Merges two [Oxlintrc] files together
-    /// [Self] takes priority over `other`
+    /// Merges two [Oxlintrc] files together.
+    ///
+    /// [Self] takes priority over `other` - if both configs define the same property,
+    /// the value from [Self] wins.
+    ///
+    /// For example, if `self` has `{ "rules": { "no-console": "error" } }` and `other` has
+    /// `{ "rules": { "no-console": "warn", "no-debugger": "error" } }`, the result will be
+    /// `{ "rules": { "no-console": "error", "no-debugger": "error" } }` (self's `"no-console"`
+    /// setting wins).
     #[must_use]
     pub fn merge(&self, other: Oxlintrc) -> Oxlintrc {
-        let mut categories = other.categories.clone();
+        let mut categories = other.categories;
         categories.extend(self.categories.iter());
 
         let rules = self
@@ -190,14 +268,30 @@ impl Oxlintrc {
         let env = self.env.clone();
         let globals = self.globals.clone();
 
-        let mut overrides = self.overrides.clone();
-        overrides.extend(other.overrides);
+        let mut overrides = other.overrides;
+        overrides.extend(self.overrides.clone());
+
+        let plugins = match (self.plugins, other.plugins) {
+            (Some(self_plugins), Some(other_plugins)) => Some(self_plugins | other_plugins),
+            (Some(self_plugins), None) => Some(self_plugins),
+            (None, other_plugins) => other_plugins,
+        };
+
+        let external_plugins = match (&self.external_plugins, &other.external_plugins) {
+            (Some(self_external), Some(other_external)) => {
+                Some(self_external.iter().chain(other_external.iter()).cloned().collect())
+            }
+            (Some(self_external), None) => Some(self_external.clone()),
+            (None, Some(other_external)) => Some(other_external.clone()),
+            (None, None) => None,
+        };
+
+        let schema = self.schema.clone().or(other.schema);
 
         Oxlintrc {
-            plugins: self.plugins.map_or_else(
-                || other.plugins,
-                |p| Some(other.plugins.map_or_else(|| p, |p2| p2.union(p))),
-            ),
+            schema,
+            plugins,
+            external_plugins,
             categories,
             rules: OxlintRules::new(rules),
             settings,
@@ -207,6 +301,39 @@ impl Oxlintrc {
             path: self.path.clone(),
             ignore_patterns: self.ignore_patterns.clone(),
             extends: self.extends.clone(),
+            extends_configs: self.extends_configs.clone(),
+        }
+    }
+
+    /// Update the configuration directory for all external plugin entries in this config
+    /// and in its overrides. The underlying `HashSet` is rebuilt because `config_dir`
+    /// participates in the `Hash`/`Eq` implementation of each entry, so changing it
+    /// requires rehashing the set.
+    pub fn set_config_dir(&mut self, config_dir: &Path) {
+        if let Some(external_plugins) = &mut self.external_plugins {
+            *external_plugins = std::mem::take(external_plugins)
+                .into_iter()
+                .map(|mut entry| {
+                    entry.config_dir = config_dir.to_path_buf();
+                    entry
+                })
+                .collect();
+        }
+
+        for override_config in self.overrides.iter_mut() {
+            if let Some(external_plugins) = &mut override_config.external_plugins {
+                *external_plugins = std::mem::take(external_plugins)
+                    .into_iter()
+                    .map(|mut entry| {
+                        entry.config_dir = config_dir.to_path_buf();
+                        entry
+                    })
+                    .collect();
+            }
+        }
+
+        for config in &mut self.extends_configs {
+            config.set_config_dir(config_dir);
         }
     }
 }
@@ -217,7 +344,10 @@ fn is_json_ext(ext: &str) -> bool {
 
 #[cfg(test)]
 mod test {
+    use rustc_hash::FxHashSet;
     use serde_json::json;
+
+    use crate::config::{external_plugins::ExternalPluginEntry, plugins::LintPlugins};
 
     use super::*;
 
@@ -248,12 +378,13 @@ mod test {
     #[test]
     fn test_oxlintrc_specifying_plugins_will_override() {
         let config: Oxlintrc = serde_json::from_str(r#"{ "plugins": ["react", "oxc"] }"#).unwrap();
-        assert_eq!(config.plugins, Some(LintPlugins::REACT.union(LintPlugins::OXC)));
+
+        assert_eq!(config.plugins, Some(LintPlugins::REACT | LintPlugins::OXC));
         let config: Oxlintrc =
             serde_json::from_str(r#"{ "plugins": ["typescript", "unicorn"] }"#).unwrap();
-        assert_eq!(config.plugins, Some(LintPlugins::TYPESCRIPT.union(LintPlugins::UNICORN)));
+        assert_eq!(config.plugins, Some(LintPlugins::TYPESCRIPT | LintPlugins::UNICORN));
         let config: Oxlintrc =
-            serde_json::from_str(r#"{ "plugins": ["typescript", "unicorn", "react", "oxc", "import", "jsdoc", "jest", "vitest", "jsx-a11y", "nextjs", "react-perf", "promise", "node"] }"#).unwrap();
+            serde_json::from_str(r#"{ "plugins": ["typescript", "unicorn", "react", "oxc", "import", "jsdoc", "jest", "vitest", "jsx-a11y", "nextjs", "react-perf", "promise", "node", "vue"] }"#).unwrap();
         assert_eq!(config.plugins, Some(LintPlugins::all()));
 
         let config: Oxlintrc =
@@ -278,5 +409,153 @@ mod test {
 
         let config: Oxlintrc = serde_json::from_str(r#"{"extends": []}"#).unwrap();
         assert_eq!(0, config.extends.len());
+    }
+
+    #[test]
+    fn test_oxlintrc_js_plugins() {
+        let config: Oxlintrc = serde_json::from_str(
+            r#"{"jsPlugins": ["./plugin.ts", { "name": "custom", "specifier": "./plugin2.ts" }]}"#,
+        )
+        .unwrap();
+        assert_eq!(config.external_plugins.as_ref().unwrap().len(), 2);
+
+        // None
+        let config: Oxlintrc = serde_json::from_str(r"{}").unwrap();
+        assert!(config.external_plugins.is_none());
+
+        // Empty array
+        let config: Oxlintrc = serde_json::from_str(r#"{"jsPlugins": []}"#).unwrap();
+        assert_eq!(config.external_plugins.as_ref().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_oxlintrc_js_plugins_rejects_invalid() {
+        // Extra fields should be rejected
+        assert!(
+            serde_json::from_str::<Oxlintrc>(
+                r#"{"jsPlugins": [{ "name": "x", "specifier": "y", "extra": "z" }]}"#
+            )
+            .is_err()
+        );
+
+        // Missing required fields should be rejected
+        assert!(serde_json::from_str::<Oxlintrc>(r#"{"jsPlugins": [{ "name": "x" }]}"#).is_err());
+
+        // Object with arbitrary field should be rejected
+        assert!(
+            serde_json::from_str::<Oxlintrc>(r#"{"jsPlugins": [{ "myAlias": "my-plugin" }]}"#)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_oxlintrc_js_plugins_roundtrip() {
+        let mut config = Oxlintrc::default();
+        let mut plugins = FxHashSet::default();
+        plugins.insert(ExternalPluginEntry {
+            config_dir: PathBuf::default(),
+            specifier: "./plugin.ts".to_string(),
+            name: None,
+        });
+        plugins.insert(ExternalPluginEntry {
+            config_dir: PathBuf::default(),
+            specifier: "./plugin2.ts".to_string(),
+            name: Some("custom".to_string()),
+        });
+        config.external_plugins = Some(plugins);
+
+        let serialized = serde_json::to_string(&config).unwrap();
+        let deserialized: Oxlintrc = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(config.external_plugins, deserialized.external_plugins);
+    }
+
+    #[test]
+    fn test_oxlintrc_js_plugins_merge() {
+        let config1: Oxlintrc = serde_json::from_str(r#"{"jsPlugins": ["./plugin1.ts"]}"#).unwrap();
+        let config2: Oxlintrc = serde_json::from_str(r#"{"jsPlugins": ["./plugin2.ts"]}"#).unwrap();
+        let merged = config1.merge(config2);
+        assert_eq!(merged.external_plugins.unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_oxlintrc_schema_field() {
+        // Test that $schema field is accepted and deserialized correctly
+        let config: Oxlintrc = serde_json::from_str(
+            r#"{
+                "$schema": "./node_modules/oxlint/configuration_schema.json",
+                "rules": {
+                    "no-console": "warn"
+                }
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.schema,
+            Some("./node_modules/oxlint/configuration_schema.json".to_string())
+        );
+
+        // Test that config without $schema still works
+        let config_without_schema: Oxlintrc = serde_json::from_str(r#"{"rules": {}}"#).unwrap();
+        assert_eq!(config_without_schema.schema, None);
+
+        // Test serialization - $schema should be skipped when None
+        let serialized = serde_json::to_string(&config_without_schema).unwrap();
+        assert!(!serialized.contains("$schema"));
+
+        // Test merge - self takes priority over other
+        let config1: Oxlintrc = serde_json::from_str(r#"{"$schema": "schema1.json"}"#).unwrap();
+        let config2: Oxlintrc = serde_json::from_str(r#"{"$schema": "schema2.json"}"#).unwrap();
+        let merged = config1.merge(config2);
+        assert_eq!(merged.schema, Some("schema1.json".to_string()));
+
+        // Test merge - when self has no schema, use other's schema
+        let config1: Oxlintrc = serde_json::from_str(r"{}").unwrap();
+        let config2: Oxlintrc = serde_json::from_str(r#"{"$schema": "schema2.json"}"#).unwrap();
+        let merged = config1.merge(config2);
+        assert_eq!(merged.schema, Some("schema2.json".to_string()));
+    }
+
+    #[test]
+    fn test_set_config_dir() {
+        let mut config: Oxlintrc = serde_json::from_str(
+            r#"{
+                "jsPlugins": ["./plugin1.ts", { "name": "custom", "specifier": "./plugin2.ts" }],
+                "overrides": [{ "files": ["*.test.ts"], "jsPlugins": ["./override-plugin.ts"] }]
+            }"#,
+        )
+        .unwrap();
+
+        // Verify initial state - config_dir should be empty PathBuf
+        let top_level_plugins = config.external_plugins.as_ref().unwrap();
+        assert_eq!(top_level_plugins.len(), 2);
+        for entry in top_level_plugins {
+            assert_eq!(entry.config_dir, PathBuf::new());
+        }
+
+        let override_plugins =
+            config.overrides.iter().next().unwrap().external_plugins.as_ref().unwrap();
+        assert_eq!(override_plugins.len(), 1);
+        for entry in override_plugins {
+            assert_eq!(entry.config_dir, PathBuf::new());
+        }
+
+        // Call set_config_dir
+        let new_config_dir = PathBuf::from("/project/config");
+        config.set_config_dir(&new_config_dir);
+
+        // Assert that all top-level plugins have the new config_dir
+        let top_level_plugins = config.external_plugins.as_ref().unwrap();
+        assert_eq!(top_level_plugins.len(), 2);
+        for entry in top_level_plugins {
+            assert_eq!(entry.config_dir, new_config_dir);
+        }
+
+        // Assert that all override plugins have the new config_dir
+        let override_plugins =
+            config.overrides.iter().next().unwrap().external_plugins.as_ref().unwrap();
+        assert_eq!(override_plugins.len(), 1);
+        for entry in override_plugins {
+            assert_eq!(entry.config_dir, new_config_dir);
+        }
     }
 }

@@ -6,14 +6,14 @@ arguments: -W no-undef -c fixtures/no_undef/eslintrc.json fixtures/no_undef/test
 working directory: 
 ----------
 
-  ! ]8;;https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-undef.html\eslint(no-undef)]8;;\: 'console' is not defined.
+  ! eslint(no-undef): 'console' is not defined.
    ,-[fixtures/no_undef/test.js:1:1]
  1 | console.log(foo)
    : ^^^^^^^
    `----
 
 Found 1 warning and 0 errors.
-Finished in <variable>ms on 1 file with 88 rules using 1 threads.
+Finished in <variable>ms on 1 file with 93 rules using 1 threads.
 ----------
 CLI result: LintSucceeded
 ----------

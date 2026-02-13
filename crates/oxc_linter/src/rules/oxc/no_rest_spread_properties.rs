@@ -1,9 +1,14 @@
-use oxc_ast::{AstKind, ast::AssignmentTarget};
+use crate::{
+    AstNode,
+    context::LintContext,
+    rule::{DefaultRuleConfig, Rule},
+};
+use oxc_ast::AstKind;
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
-
-use crate::{AstNode, context::LintContext, rule::Rule};
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 fn no_rest_spread_properties_diagnostic(
     span: Span,
@@ -13,12 +18,15 @@ fn no_rest_spread_properties_diagnostic(
     OxcDiagnostic::warn(format!("{spread_kind} are not allowed. {message_suffix}")).with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct NoRestSpreadProperties(Box<NoRestSpreadPropertiesOptions>);
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct NoRestSpreadPropertiesOptions {
+    /// A message to display when object spread properties are found.
     object_spread_message: String,
+    /// A message to display when object rest properties are found.
     object_rest_message: String,
 }
 
@@ -35,6 +43,14 @@ declare_oxc_lint!(
     ///
     /// Disallow [Object Rest/Spread Properties](https://github.com/tc39/proposal-object-rest-spread#readme).
     ///
+    /// ### Why is this bad?
+    ///
+    /// Object rest/spread properties are a relatively new JavaScript feature that may
+    /// not be supported in all target environments. If you need to support older
+    /// browsers or JavaScript engines that don't support these features, using them
+    /// can cause runtime errors. This rule helps maintain compatibility with older
+    /// environments by preventing the use of these modern syntax features.
+    ///
     /// ### Examples
     ///
     /// Examples of **incorrect** code for this rule:
@@ -42,57 +58,21 @@ declare_oxc_lint!(
     /// let { x, ...y } = z;
     /// let z = { x, ...y };
     /// ```
-    ///
-    /// ### Options
-    ///
-    /// ```json
-    /// {
-    ///   "rules": {
-    ///     "no-rest-spread-properties": [
-    ///         "error",
-    ///         {
-    ///             "objectSpreadMessage": "Object spread properties are not allowed.",
-    ///             "objectRestMessage": "Object rest properties are not allowed."
-    ///         }
-    ///     ]
-    ///   }
-    /// }
-    /// ```
-    ///
-    /// - `objectSpreadMessage`: A message to display when object spread properties are found.
-    /// - `objectRestMessage`: A message to display when object rest properties are found.
-    ///
     NoRestSpreadProperties,
     oxc,
     restriction,
+    config = NoRestSpreadPropertiesOptions,
 );
 
 impl Rule for NoRestSpreadProperties {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let config = value.get(0);
-        let object_spread_message = config
-            .and_then(|v| v.get("objectSpreadMessage"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
-        let object_rest_message = config
-            .and_then(|v| v.get("objectRestMessage"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
-
-        Self(Box::new(NoRestSpreadPropertiesOptions {
-            object_spread_message: object_spread_message.to_string(),
-            object_rest_message: object_rest_message.to_string(),
-        }))
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
         match node.kind() {
             AstKind::SpreadElement(spread_element) => {
-                if ctx
-                    .nodes()
-                    .parent_kind(node.id())
-                    .is_some_and(|parent| matches!(parent, AstKind::ObjectExpression(_)))
-                {
+                if matches!(ctx.nodes().parent_kind(node.id()), AstKind::ObjectExpression(_)) {
                     ctx.diagnostic(no_rest_spread_properties_diagnostic(
                         spread_element.span,
                         "object spread property",
@@ -101,11 +81,7 @@ impl Rule for NoRestSpreadProperties {
                 }
             }
             AstKind::BindingRestElement(rest_element) => {
-                if ctx
-                    .nodes()
-                    .parent_kind(node.id())
-                    .is_some_and(|parent| matches!(parent, AstKind::ObjectPattern(_)))
-                {
+                if matches!(ctx.nodes().parent_kind(node.id()), AstKind::ObjectPattern(_)) {
                     ctx.diagnostic(no_rest_spread_properties_diagnostic(
                         rest_element.span,
                         "object rest property",
@@ -113,10 +89,7 @@ impl Rule for NoRestSpreadProperties {
                     ));
                 }
             }
-            AstKind::AssignmentTarget(assign_target) => {
-                let AssignmentTarget::ObjectAssignmentTarget(object_assign) = assign_target else {
-                    return;
-                };
+            AstKind::ObjectAssignmentTarget(object_assign) => {
                 let Some(rest) = &object_assign.rest else {
                     return;
                 };

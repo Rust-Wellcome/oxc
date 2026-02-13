@@ -90,15 +90,18 @@ declare_oxc_lint!(
 
 impl Rule for NoExtraLabel {
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
-        if let AstKind::BreakStatement(break_stmt) = node.kind() {
-            if let Some(label) = &break_stmt.label {
-                report_label_if_extra(label, node, ctx);
+        match node.kind() {
+            AstKind::BreakStatement(break_stmt) => {
+                if let Some(label) = &break_stmt.label {
+                    report_label_if_extra(label, node, ctx);
+                }
             }
-        }
-        if let AstKind::ContinueStatement(cont_stmt) = node.kind() {
-            if let Some(label) = &cont_stmt.label {
-                report_label_if_extra(label, node, ctx);
+            AstKind::ContinueStatement(cont_stmt) => {
+                if let Some(label) = &cont_stmt.label {
+                    report_label_if_extra(label, node, ctx);
+                }
             }
+            _ => {}
         }
     }
 }
@@ -109,7 +112,7 @@ fn report_label_if_extra(label: &LabelIdentifier, node: &AstNode, ctx: &LintCont
         if !is_breakable_statement(nodes.kind(ancestor_id)) {
             continue;
         }
-        let Some(AstKind::LabeledStatement(labeled_stmt)) = nodes.parent_kind(ancestor_id) else {
+        let AstKind::LabeledStatement(labeled_stmt) = nodes.parent_kind(ancestor_id) else {
             return; // no need to check outer loops/switches
         };
         if labeled_stmt.label.name != label.name {

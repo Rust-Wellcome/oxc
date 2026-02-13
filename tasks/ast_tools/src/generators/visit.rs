@@ -491,20 +491,20 @@ impl VisitBuilder<'_> {
         // We handle exiting scope first, to create correct output if entering and exiting on same field.
         // The `if` block for entering scope prepends `enter_scope` call *before* whatever it's passed.
         // If both entering and exiting, that means `enter_scope` is inserted before `leave_scope`.
-        if let Some((exit_index, _)) = scope_exit {
-            if *exit_index <= field_index {
-                let (_, leave_scope) = scope_exit.take().unwrap();
-                visit = quote!( #leave_scope #visit );
-                visit_mut = quote!( #leave_scope #visit_mut );
-            }
+        if let Some((exit_index, _)) = scope_exit
+            && *exit_index <= field_index
+        {
+            let (_, leave_scope) = scope_exit.take().unwrap();
+            visit = quote!( #leave_scope #visit );
+            visit_mut = quote!( #leave_scope #visit_mut );
         }
 
-        if let Some((enter_index, _)) = scope_entry {
-            if *enter_index <= field_index {
-                let (_, enter_scope) = scope_entry.take().unwrap();
-                visit = quote!( #enter_scope #visit );
-                visit_mut = quote!( #enter_scope #visit_mut );
-            }
+        if let Some((enter_index, _)) = scope_entry
+            && *enter_index <= field_index
+        {
+            let (_, enter_scope) = scope_entry.take().unwrap();
+            visit = quote!( #enter_scope #visit );
+            visit_mut = quote!( #enter_scope #visit_mut );
         }
 
         Some((visit, visit_mut))
@@ -587,6 +587,8 @@ impl VisitBuilder<'_> {
                 let match_ident = format_ident!("match_{inherits_snake_name}");
 
                 let to_fn_ident = format_ident!("to_{inherits_snake_name}");
+                // For Argument, we call visitor.visit_expression to maintain enter/leave node bookkeeping
+                // This provides recursion protection for deeply nested argument lists
                 let match_arm = quote! {
                     #match_ident!(#enum_ident) => visitor.#inner_visit_fn_ident(it.#to_fn_ident()),
                 };
@@ -673,15 +675,67 @@ impl VisitBuilder<'_> {
             _ => unreachable!(),
         };
 
+        // Special optimization for Vec<Argument> to reduce stack usage:
+        // Since Argument inherits from Expression and most arguments are expressions,
+        // we can directly dispatch to the expression visitor for non-spread elements,
+        // avoiding the intermediate walk_argument call and its stack frame.
+        let inner_type_name = match inner_type {
+            TypeDef::Enum(enum_def) => &enum_def.name,
+            _ => "",
+        };
+        let is_arguments_vec = inner_type_name == "Argument";
+
         let gen_walk = |visit_trait_name, reference| {
             let visit_trait_ident = create_safe_ident(visit_trait_name);
+            let is_mut = visit_trait_name == "VisitMut";
+
+            let loop_body = if is_arguments_vec {
+                // Optimize for Vec<Argument> by directly dispatching to expression visitor
+                if is_mut {
+                    quote! {
+                        for el in it {
+                            // For Argument types, directly dispatch to avoid intermediate stack frame
+                            match el {
+                                oxc_ast::ast::Argument::SpreadElement(spread) => {
+                                    visitor.visit_spread_element(spread);
+                                }
+                                _ => {
+                                    // All other Argument variants are expressions
+                                    visitor.visit_expression(el.to_expression_mut());
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    quote! {
+                        for el in it {
+                            // For Argument types, directly dispatch to avoid intermediate stack frame
+                            match el {
+                                oxc_ast::ast::Argument::SpreadElement(spread) => {
+                                    visitor.visit_spread_element(spread);
+                                }
+                                _ => {
+                                    // All other Argument variants are expressions
+                                    visitor.visit_expression(el.to_expression());
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Normal case for other Vec types
+                quote! {
+                    for el in it {
+                        visitor.#inner_visit_fn_ident(el);
+                    }
+                }
+            };
+
             quote! {
                 ///@@line_break
                 #[inline]
                 pub fn #walk_fn_ident<'a, V: #visit_trait_ident<'a>>(visitor: &mut V, it: #reference #vec_ty) {
-                    for el in it {
-                        visitor.#inner_visit_fn_ident(el);
-                    }
+                    #loop_body
                 }
             }
         };
@@ -787,8 +841,8 @@ pub fn generate_visit_type<V: VisitorOutputs>(
         TypeDef::Vec(vec_def) => {
             generate_visit_vec(vec_def, target, visit_args, visitor, trailing_semicolon, schema)
         }
-        // Primitives and `Cell`s are not visited
-        TypeDef::Primitive(_) | TypeDef::Cell(_) => None,
+        // Primitives, `Cell`s, and pointers are not visited
+        TypeDef::Primitive(_) | TypeDef::Cell(_) | TypeDef::Pointer(_) => None,
     }
 }
 

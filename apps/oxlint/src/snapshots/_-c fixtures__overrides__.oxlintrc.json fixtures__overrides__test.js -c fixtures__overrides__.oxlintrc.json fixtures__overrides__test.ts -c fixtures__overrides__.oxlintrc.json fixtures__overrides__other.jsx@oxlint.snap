@@ -6,7 +6,7 @@ arguments: -c fixtures/overrides/.oxlintrc.json fixtures/overrides/test.js
 working directory: 
 ----------
 
-  x ]8;;https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-var.html\eslint(no-var)]8;;\: Unexpected var, use let or const instead.
+  x eslint(no-var): Unexpected var, use let or const instead.
    ,-[fixtures/overrides/test.js:1:1]
  1 | var msg = "hello";
    : ^^^
@@ -15,7 +15,7 @@ working directory:
   help: Replace var with let or const
 
 Found 0 warnings and 1 error.
-Finished in <variable>ms on 1 file with 89 rules using 1 threads.
+Finished in <variable>ms on 1 file with 94 rules using 1 threads.
 ----------
 CLI result: LintFoundErrors
 ----------
@@ -25,7 +25,7 @@ arguments: -c fixtures/overrides/.oxlintrc.json fixtures/overrides/test.ts
 working directory: 
 ----------
 
-  x ]8;;https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-var.html\eslint(no-var)]8;;\: Unexpected var, use let or const instead.
+  x eslint(no-var): Unexpected var, use let or const instead.
    ,-[fixtures/overrides/test.ts:1:1]
  1 | var msg = "hello";
    : ^^^
@@ -33,7 +33,7 @@ working directory:
    `----
   help: Replace var with let or const
 
-  ! ]8;;https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-console.html\eslint(no-console)]8;;\: Unexpected console statement.
+  ! eslint(no-console): Unexpected console statement.
    ,-[fixtures/overrides/test.ts:2:1]
  1 | var msg = "hello";
  2 | console.log(msg);
@@ -42,7 +42,7 @@ working directory:
   help: Delete this console statement.
 
 Found 1 warning and 1 error.
-Finished in <variable>ms on 1 file with 89 rules using 1 threads.
+Finished in <variable>ms on 1 file with 94 rules using 1 threads.
 ----------
 CLI result: LintFoundErrors
 ----------
@@ -52,7 +52,7 @@ arguments: -c fixtures/overrides/.oxlintrc.json fixtures/overrides/other.jsx
 working directory: 
 ----------
 
-  x ]8;;https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-var.html\eslint(no-var)]8;;\: Unexpected var, use let or const instead.
+  x eslint(no-var): Unexpected var, use let or const instead.
    ,-[fixtures/overrides/other.jsx:1:1]
  1 | var msg = "hello";
    : ^^^
@@ -61,7 +61,7 @@ working directory:
   help: Replace var with let or const
 
 Found 0 warnings and 1 error.
-Finished in <variable>ms on 1 file with 89 rules using 1 threads.
+Finished in <variable>ms on 1 file with 94 rules using 1 threads.
 ----------
 CLI result: LintFoundErrors
 ----------

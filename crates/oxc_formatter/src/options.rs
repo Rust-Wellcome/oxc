@@ -1,18 +1,16 @@
 use std::{fmt, num::ParseIntError, str::FromStr};
 
-pub use crate::formatter::{
-    Buffer, Format, FormatResult, SyntaxTriviaPieceComments, token::string::Quote,
-};
+pub use crate::formatter::{Buffer, Format, FormatResult, token::string::Quote};
 use crate::{
     formatter::{
         formatter::Formatter,
-        prelude::{if_group_breaks, text},
+        prelude::{if_group_breaks, token},
         printer::PrinterOptions,
     },
+    ir_transform::options::SortImportsOptions,
     write,
 };
 
-// TODO: rename these to align with prettier
 #[derive(Debug, Default, Clone)]
 pub struct FormatOptions {
     /// The indent style.
@@ -24,7 +22,7 @@ pub struct FormatOptions {
     /// The type of line ending.
     pub line_ending: LineEnding,
 
-    /// What's the max width of a line. Defaults to 80.
+    /// What's the max width of a line. Defaults to 100.
     pub line_width: LineWidth,
 
     /// The style for quotes. Defaults to double.
@@ -57,11 +55,75 @@ pub struct FormatOptions {
     /// Whether to expand object and array literals to multiple lines. Defaults to "auto".
     pub expand: Expand,
 
-    /// Controls the position of operators in binary expressions.
+    /// Controls the position of operators in binary expressions. [**NOT SUPPORTED YET**]
+    ///
     /// Accepted values are:
     /// - `"start"`: Places the operator at the beginning of the next line.
     /// - `"end"`: Places the operator at the end of the current line (default).
     pub experimental_operator_position: OperatorPosition,
+
+    /// Try prettier's new ternary formatting before it becomes the default behavior. [**NOT SUPPORTED YET**]
+    ///
+    /// Valid options:
+    /// - `true` - Use curious ternaries, with the question mark after the condition.
+    /// - `false` - Retain the default behavior of ternaries; keep question marks on the same line as the consequent.
+    pub experimental_ternaries: bool,
+
+    /// Enable formatting for embedded languages (e.g., CSS, SQL, GraphQL) within template literals. Defaults to "auto".
+    pub embedded_language_formatting: EmbeddedLanguageFormatting,
+
+    /// Sort import statements. By default disabled.
+    pub experimental_sort_imports: Option<SortImportsOptions>,
+
+    /// Enable Tailwind CSS class sorting in JSX class/className attributes.
+    /// When enabled, class strings will be collected and passed to a callback for sorting.
+    /// Defaults to None (disabled).
+    pub experimental_tailwindcss: Option<TailwindcssOptions>,
+}
+
+/// Options for Tailwind CSS class sorting.
+/// Based on options from `prettier-plugin-tailwindcss`.
+///
+/// See <https://github.com/tailwindlabs/prettier-plugin-tailwindcss#options>
+#[derive(Debug, Default, Clone)]
+pub struct TailwindcssOptions {
+    /// Path to your Tailwind CSS configuration file (v3).
+    ///
+    /// Note: Paths are resolved relative to the Oxfmt configuration file.
+    ///
+    /// Default: `"./tailwind.config.js"`
+    pub config: Option<String>,
+
+    /// Path to your Tailwind CSS stylesheet (v4).
+    ///
+    /// Note: Paths are resolved relative to the Oxfmt configuration file.
+    ///
+    /// Example: `"./src/app.css"`
+    pub stylesheet: Option<String>,
+
+    /// List of custom function names that contain Tailwind CSS classes.
+    ///
+    /// Example: `["clsx", "cn", "cva", "tw"]`
+    ///
+    /// Default: `[]`
+    pub functions: Vec<String>,
+
+    /// List of additional attributes to sort (beyond `class` and `className`).
+    ///
+    /// Example: `["myClassProp", ":class"]`
+    ///
+    /// Default: `[]`
+    pub attributes: Vec<String>,
+
+    /// Preserve whitespace around classes.
+    ///
+    /// Default: `false`
+    pub preserve_whitespace: bool,
+
+    /// Preserve duplicate classes.
+    ///
+    /// Default: `false`
+    pub preserve_duplicates: bool,
 }
 
 impl FormatOptions {
@@ -82,6 +144,10 @@ impl FormatOptions {
             attribute_position: AttributePosition::default(),
             expand: Expand::default(),
             experimental_operator_position: OperatorPosition::default(),
+            experimental_ternaries: false,
+            embedded_language_formatting: EmbeddedLanguageFormatting::default(),
+            experimental_sort_imports: None,
+            experimental_tailwindcss: None,
         }
     }
 
@@ -106,7 +172,10 @@ impl fmt::Display for FormatOptions {
         writeln!(f, "Bracket same line: {}", self.bracket_same_line.value())?;
         writeln!(f, "Attribute Position: {}", self.attribute_position)?;
         writeln!(f, "Expand lists: {}", self.expand)?;
-        writeln!(f, "Experimental operator position: {}", self.experimental_operator_position)
+        writeln!(f, "Experimental operator position: {}", self.experimental_operator_position)?;
+        writeln!(f, "Embedded language formatting: {}", self.embedded_language_formatting)?;
+        writeln!(f, "Experimental sort imports: {:?}", self.experimental_sort_imports)?;
+        writeln!(f, "Experimental tailwindcss: {:?}", self.experimental_tailwindcss)
     }
 }
 
@@ -161,21 +230,19 @@ pub enum LineEnding {
     ///  Line Feed only (\n), common on Linux and macOS as well as inside git repos
     #[default]
     Lf,
-
     /// Carriage Return + Line Feed characters (\r\n), common on Windows
     Crlf,
-
     /// Carriage Return character only (\r), used very rarely
     Cr,
 }
 
 impl LineEnding {
     #[inline]
-    pub const fn as_str(self) -> &'static str {
+    pub const fn as_bytes(self) -> &'static [u8] {
         match self {
-            LineEnding::Lf => "\n",
-            LineEnding::Crlf => "\r\n",
-            LineEnding::Cr => "\r",
+            LineEnding::Lf => b"\n",
+            LineEnding::Crlf => b"\r\n",
+            LineEnding::Cr => b"\r",
         }
     }
 
@@ -293,7 +360,7 @@ impl LineWidth {
 
 impl Default for LineWidth {
     fn default() -> Self {
-        Self(80)
+        Self(100)
     }
 }
 
@@ -311,6 +378,7 @@ impl fmt::Debug for LineWidth {
 }
 
 /// Error type returned when parsing a [LineWidth] or [IndentWidth] from a string fails
+#[expect(clippy::enum_variant_names)]
 pub enum ParseFormatNumberError {
     /// The string could not be parsed to a number
     ParseError(ParseIntError),
@@ -425,6 +493,13 @@ impl QuoteStyle {
         }
     }
 
+    pub fn as_str(self) -> &'static str {
+        match self {
+            QuoteStyle::Double => "\"",
+            QuoteStyle::Single => "'",
+        }
+    }
+
     pub fn as_byte(self) -> u8 {
         self.as_char() as u8
     }
@@ -486,6 +561,13 @@ impl From<QuoteStyle> for Quote {
 #[derive(Eq, PartialEq, Debug, Copy, Clone, Hash)]
 pub struct TabWidth(u8);
 
+impl TabWidth {
+    /// Returns the numeric value for this [TabWidth]
+    pub fn value(self) -> u8 {
+        self.0
+    }
+}
+
 impl From<u8> for TabWidth {
     fn from(value: u8) -> Self {
         TabWidth(value)
@@ -500,9 +582,19 @@ impl From<TabWidth> for u8 {
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum QuoteProperties {
+    /// Only add quotes around object properties where required.
     #[default]
     AsNeeded,
+    /// Respect the input use of quotes in object properties.
     Preserve,
+    /// If at least one property in an object requires quotes, quote all properties.
+    Consistent,
+}
+
+impl QuoteProperties {
+    pub const fn is_consistent(self) -> bool {
+        matches!(self, Self::Consistent)
+    }
 }
 
 impl FromStr for QuoteProperties {
@@ -512,6 +604,7 @@ impl FromStr for QuoteProperties {
         match s {
             "as-needed" => Ok(Self::AsNeeded),
             "preserve" => Ok(Self::Preserve),
+            "consistent" => Ok(Self::Consistent),
             _ => Err("Value not supported for QuoteProperties"),
         }
     }
@@ -522,6 +615,7 @@ impl fmt::Display for QuoteProperties {
         let s = match self {
             QuoteProperties::AsNeeded => "As needed",
             QuoteProperties::Preserve => "Preserve",
+            QuoteProperties::Consistent => "Consistent",
         };
         f.write_str(s)
     }
@@ -623,13 +717,10 @@ pub enum TrailingSeparator {
     /// A trailing separator is allowed and preferred
     #[default]
     Allowed,
-
     /// A trailing separator is not allowed
     Disallowed,
-
     /// A trailing separator is mandatory for the syntax to be correct
     Mandatory,
-
     /// A trailing separator might be present, but the consumer
     /// decides to remove it
     Omit,
@@ -656,16 +747,14 @@ impl FormatTrailingCommas {
 }
 
 impl Format<'_> for FormatTrailingCommas {
-    fn fmt(&self, f: &mut Formatter) -> FormatResult<()> {
+    fn fmt(&self, f: &mut Formatter) {
         if f.options().trailing_commas.is_none() {
-            return Ok(());
+            return;
         }
 
         if matches!(self, FormatTrailingCommas::ES5) || f.options().trailing_commas.is_all() {
-            write!(f, [if_group_breaks(&text(","))])?;
+            write!(f, [if_group_breaks(&token(","))]);
         }
-
-        Ok(())
     }
 }
 
@@ -836,8 +925,6 @@ pub enum Expand {
     /// expanded if they are shorter than the line width.
     #[default]
     Auto,
-    /// Objects and arrays are always expanded.
-    Always,
     /// Objects and arrays are never expanded, if they are shorter than the line width.
     Never,
 }
@@ -848,7 +935,6 @@ impl FromStr for Expand {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "auto" => Ok(Self::Auto),
-            "always" => Ok(Self::Always),
             "never" => Ok(Self::Never),
             _ => Err(std::format!("unknown expand literal: {s}")),
         }
@@ -859,7 +945,6 @@ impl fmt::Display for Expand {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let s = match self {
             Expand::Auto => "Auto",
-            Expand::Always => "Always",
             Expand::Never => "Never",
         };
         f.write_str(s)
@@ -870,7 +955,6 @@ impl fmt::Display for Expand {
 pub enum OperatorPosition {
     /// When binary expressions wrap lines, print operators at the start of new lines.
     Start,
-
     // Default behavior; when binary expressions wrap lines, print operators at the end of previous lines.
     #[default]
     End,
@@ -903,6 +987,47 @@ impl fmt::Display for OperatorPosition {
         let s = match self {
             OperatorPosition::Start => "Start",
             OperatorPosition::End => "End",
+        };
+        f.write_str(s)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum EmbeddedLanguageFormatting {
+    /// Enable formatting for embedded languages.
+    #[default]
+    Auto,
+    /// Disable formatting for embedded languages.
+    Off,
+}
+
+impl EmbeddedLanguageFormatting {
+    pub const fn is_auto(self) -> bool {
+        matches!(self, Self::Auto)
+    }
+
+    pub const fn is_off(self) -> bool {
+        matches!(self, Self::Off)
+    }
+}
+
+impl FromStr for EmbeddedLanguageFormatting {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "auto" => Ok(Self::Auto),
+            "off" => Ok(Self::Off),
+            _ => Err("Value not supported for EmbeddedLanguageFormatting"),
+        }
+    }
+}
+
+impl fmt::Display for EmbeddedLanguageFormatting {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let s = match self {
+            EmbeddedLanguageFormatting::Auto => "Auto",
+            EmbeddedLanguageFormatting::Off => "Off",
         };
         f.write_str(s)
     }

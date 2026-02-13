@@ -143,16 +143,15 @@ impl Rule for PreferObjectSpread {
                 let fixer = fixer.for_multifix();
                 let mut rule_fixes = fixer.new_fix_with_capacity(2 + call_expr.arguments.len() * 5);
 
+                let parent_kind = ctx.nodes().parent_kind(node.id());
                 let needs_paren = !matches!(
-                    ctx.nodes().parent_kind(node.id()),
-                    Some(
-                        AstKind::VariableDeclarator(_)
-                            | AstKind::ArrayExpression(_)
-                            | AstKind::ReturnStatement(_)
-                            | AstKind::Argument(_)
-                            | AstKind::ObjectProperty(_)
-                            | AstKind::AssignmentExpression(_)
-                    )
+                    parent_kind,
+                    AstKind::VariableDeclarator(_)
+                        | AstKind::ArrayExpression(_)
+                        | AstKind::ReturnStatement(_)
+                        | AstKind::CallExpression(_)
+                        | AstKind::ObjectProperty(_)
+                        | AstKind::AssignmentExpression(_)
                 );
 
                 let Some(callee_left_paren_span) = find_char_span(ctx, call_expr, b'(') else {
@@ -188,16 +187,13 @@ impl Rule for PreferObjectSpread {
                         rule_fixes.push(fixer.delete_range(delete_span_of_left));
                         rule_fixes.push(fixer.delete_range(delete_span_of_right));
 
-                        if obj_expr.properties.is_empty()
+                        if (obj_expr.properties.is_empty()
                             || ctx.source_range(get_last_char_span(expression, 1, ctx).unwrap())
-                                == ","
+                                == ",")
+                            && let Some(maybe_arg_comma_span) = get_char_span_after(expression, ctx)
+                            && ctx.source_range(maybe_arg_comma_span) == ","
                         {
-                            if let Some(maybe_arg_comma_span) = get_char_span_after(expression, ctx)
-                            {
-                                if ctx.source_range(maybe_arg_comma_span) == "," {
-                                    rule_fixes.push(fixer.delete_range(maybe_arg_comma_span));
-                                }
-                            }
+                            rule_fixes.push(fixer.delete_range(maybe_arg_comma_span));
                         }
                     } else {
                         let span = expression.span();

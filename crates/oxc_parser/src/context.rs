@@ -47,6 +47,10 @@ bitflags! {
         ///   * ambient variable declaration => `declare var $: any`
         ///   * ambient class declaration => `declare class C { foo(); } , etc..`
         const Ambient = 1 << 6;
+
+        /// Parsing at the top level of the program (not inside any function).
+        /// Used to detect top-level await in unambiguous mode.
+        const TopLevel = 1 << 7;
     }
 }
 
@@ -90,6 +94,11 @@ impl Context {
     #[inline]
     pub(crate) fn has_ambient(self) -> bool {
         self.contains(Self::Ambient)
+    }
+
+    #[inline]
+    pub(crate) fn has_top_level(self) -> bool {
+        self.contains(Self::TopLevel)
     }
 
     #[inline]
@@ -150,13 +159,13 @@ impl Context {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum StatementContext {
+    StatementList,
     If,
     Label,
     Do,
     While,
     With,
     For,
-    StatementList,
 }
 
 impl StatementContext {

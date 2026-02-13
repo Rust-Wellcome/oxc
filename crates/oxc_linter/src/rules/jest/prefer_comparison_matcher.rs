@@ -17,10 +17,10 @@ use crate::{
     },
 };
 
-fn use_to_be_comparison(x0: &str, span1: Span) -> OxcDiagnostic {
+fn use_to_be_comparison(preferred_method: &str, span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Suggest using the built-in comparison matchers")
-        .with_help(format!("Prefer using `{x0:?}` instead"))
-        .with_label(span1)
+        .with_help(format!("Prefer using `{preferred_method:?}` instead"))
+        .with_label(span)
 }
 
 #[derive(Debug, Default, Clone)]
@@ -35,6 +35,13 @@ declare_oxc_lint!(
     /// - `toBeGreaterThanOrEqual`
     /// - `toBeLessThan`
     /// - `toBeLessThanOrEqual`
+    ///
+    /// ### Why is this bad?
+    ///
+    /// Using generic matchers like `toBe(true)` with comparison expressions
+    /// makes tests less readable and provides less helpful error messages when
+    /// they fail. Jest's specific comparison matchers offer clearer intent and
+    /// better error output that shows the actual values being compared.
     ///
     /// ### Examples
     ///
@@ -52,6 +59,17 @@ declare_oxc_lint!(
     /// expect(x).toBeLessThanOrEqual(y);
     /// // special case - see below
     /// expect(x < 'Carl').toBe(true);
+    /// ```
+    ///
+    /// This rule is compatible with [eslint-plugin-vitest](https://github.com/vitest-dev/eslint-plugin-vitest/blob/main/docs/rules/prefer-comparison-matcher.md),
+    /// to use it, add the following configuration to your `.oxlintrc.json`:
+    ///
+    /// ```json
+    /// {
+    ///   "rules": {
+    ///      "vitest/prefer-comparison-matcher": "error"
+    ///   }
+    /// }
     /// ```
     PreferComparisonMatcher,
     jest,

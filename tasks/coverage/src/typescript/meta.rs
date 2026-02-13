@@ -1,7 +1,8 @@
 //! <https://github.com/microsoft/TypeScript/blob/6f06eb1b27a6495b209e8be79036f3b2ea92cd0b/src/harness/harnessIO.ts#L1237>
 
-use std::{fs, path::Path, sync::Arc};
+use std::{fmt::Display, fs, path::Path, sync::Arc};
 
+use itertools::Itertools;
 use lazy_regex::{Lazy, Regex, lazy_regex};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -10,7 +11,7 @@ use oxc::{
     codegen::Codegen,
     diagnostics::{NamedSource, OxcDiagnostic},
     parser::Parser,
-    span::SourceType,
+    span::{SourceType, Span},
 };
 
 use crate::workspace_root;
@@ -20,8 +21,12 @@ static META_OPTIONS: Lazy<Regex> = lazy_regex!(
     r"(?m)^/{2}[[:space:]]*@(?P<name>[[:word:]]+)[[:space:]]*:[[:space:]]*(?P<value>[^\r\n]*)"
 );
 // static TEST_BRACES: Lazy<Regex> = lazy_regex!(r"^[[:space:]]*[{|}][[:space:]]*$");
+// Returns a match for a tsc diagnostic error code like `error TS1234: xxx`
+static TS_ERROR_CODES: Lazy<Regex> =
+    lazy_regex!(r"error[[:space:]]+TS(?P<code>\d{4,5}):[[:space:]]+");
+// Returns matches for @ts-ignore or @ts-expect-error in comments (// or /* */)
+static TS_IGNORE_PATTERN: Lazy<Regex> = lazy_regex!(r"(?://|/\*).*?(@ts-ignore|@ts-expect-error)");
 
-#[expect(unused)]
 #[derive(Debug)]
 pub struct CompilerSettings {
     pub modules: Vec<String>,
@@ -34,7 +39,10 @@ pub struct CompilerSettings {
     pub allow_unreachable_code: bool,
     pub allow_unused_labels: bool,
     pub no_fallthrough_cases_in_switch: bool,
+    pub preserve_const_enums: Vec<bool>,
+    pub use_define_for_class_fields: Vec<bool>,
     pub experimental_decorators: Vec<bool>,
+    pub module_detection: Vec<String>, // "auto", "legacy", "force"
 }
 
 impl CompilerSettings {
@@ -59,11 +67,22 @@ impl CompilerSettings {
                 options.get("nofallthroughcasesinswitch"),
                 false,
             ),
+            preserve_const_enums: Self::split_value_options(options.get("preserveconstenums"))
+                .into_iter()
+                .map(|v| Self::value_to_boolean(Some(&v), false))
+                .collect(),
+            use_define_for_class_fields: Self::split_value_options(
+                options.get("usedefineforclassfields"),
+            )
+            .into_iter()
+            .map(|v| Self::value_to_boolean(Some(&v), false))
+            .collect(),
             experimental_decorators: options
                 .get("experimentaldecorators")
                 .filter(|&v| v == "*")
                 .map(|_| vec![true, false])
                 .unwrap_or_default(),
+            module_detection: Self::split_value_options(options.get("moduledetection")),
         }
     }
 
@@ -87,6 +106,9 @@ pub struct TestUnitData {
     pub name: String,
     pub content: String,
     pub source_type: SourceType,
+    /// Spans of `@ts-ignore` or `@ts-expect-error` comments.
+    /// Errors on the line immediately following these should be suppressed.
+    pub ts_ignore_spans: Vec<Span>,
 }
 
 #[derive(Debug)]
@@ -116,6 +138,7 @@ impl TestCaseContent {
                             name: file_name,
                             content: std::mem::take(&mut current_file_content),
                             source_type: SourceType::default(),
+                            ts_ignore_spans: vec![],
                         });
                     }
                     current_file_name = Some(meta_value);
@@ -141,29 +164,60 @@ impl TestCaseContent {
             name: file_name,
             content: std::mem::take(&mut current_file_content),
             source_type: SourceType::default(),
+            ts_ignore_spans: vec![],
         });
 
         let settings = CompilerSettings::new(&current_file_options);
+        let package_json_types = Self::collect_package_json_types(&test_unit_data);
 
-        let is_module = test_unit_data.len() > 1;
         let test_unit_data = test_unit_data
             .into_iter()
+            // Some snapshot units contain an invalid file with just a message, not even a comment!
+            // e.g. typescript/tests/cases/compiler/extendsUntypedModule.ts
+            // e.g. typescript/tests/cases/conformance/moduleResolution/untypedModuleImport.ts
+            // Based on some config, it's not expected to be read in the first place.
+            .filter(|unit| {
+                // `unit.content.trim().starts_with()` is insufficient when dealing with the first unit.
+                // This is because the first unit may contain normal comments before the invalid content.
+                let is_invalid_line = |line: &str| {
+                    [
+                        "This file is not read.",
+                        "This file is not processed.",
+                        "Nor is this one.",
+                        "not read",
+                        "content not parsed",
+                    ]
+                    .iter()
+                    .any(|&invalid| line.starts_with(invalid))
+                };
+                !unit.content.lines().any(is_invalid_line)
+            })
             .filter_map(|mut unit| {
                 let mut source_type = Self::get_source_type(Path::new(&unit.name), &settings)?;
-                if is_module {
+                if Self::is_forced_module(&settings, &unit.name, &package_json_types) {
                     source_type = source_type.with_module(true);
                 }
                 unit.source_type = source_type;
+
+                // Collect spans of @ts-ignore or @ts-expect-error comments
+                unit.ts_ignore_spans = TS_IGNORE_PATTERN
+                    .captures_iter(&unit.content)
+                    .filter_map(|cap| {
+                        #[expect(clippy::cast_possible_truncation)]
+                        cap.get(1).map(|m| Span::new(m.start() as u32, m.end() as u32))
+                    })
+                    .collect();
+
                 Some(unit)
             })
             .collect::<Vec<_>>();
 
         let error_files = Self::get_error_files(path, &settings);
-        let error_codes = Self::extract_error_codes(&error_files, path);
+        let error_codes = Self::extract_error_codes(&error_files);
         assert!(
-            !error_codes.is_empty() || error_files.is_empty(),
+            error_files.is_empty() || !error_codes.is_empty(),
             "No error codes found for test case: {}",
-            path.display()
+            path.display(),
         );
 
         Self { tests: test_unit_data, settings, error_codes }
@@ -177,23 +231,136 @@ impl TestCaseContent {
         Some(source_type)
     }
 
+    /// Should this file be forced into module mode?
+    ///
+    /// Matches TypeScript's `moduleDetection` behavior:
+    /// * `force` — every non-declaration file is a module
+    /// * `legacy` — only files with import/export are modules (handled by the parser's unambiguous mode)
+    /// * `auto` (default) — like legacy, plus JSX-with-react-jsx and package.json `"type":"module"` checks
+    ///
+    /// When `moduleDetection` is unset, node-style modules (`node16`..`nodenext`) default to `force`.
+    /// <https://github.com/microsoft/TypeScript/blob/6f06eb1b27a6495b209e8be79036f3b2ea92cd0b/src/compiler/utilities.ts#L9035-L9047>
+    fn is_forced_module(
+        settings: &CompilerSettings,
+        filename: &str,
+        package_json_types: &FxHashMap<String, Option<String>>,
+    ) -> bool {
+        if filename.ends_with(".d.ts")
+            || filename.ends_with(".d.mts")
+            || filename.ends_with(".d.cts")
+        {
+            return false;
+        }
+
+        let is_node_esm = settings
+            .modules
+            .iter()
+            .any(|m| matches!(m.as_str(), "node16" | "node18" | "node20" | "nodenext"));
+
+        match settings.module_detection.first().map(String::as_str) {
+            Some("force") => true,
+            Some("legacy") => false,
+            // Unset: node-style modules default to "force", everything else to "auto"
+            None if is_node_esm => true,
+            // "auto" (explicit or default fallthrough)
+            _ => {
+                let ext = Path::new(filename).extension();
+                let is_jsx = ext.is_some_and(|e| {
+                    e.eq_ignore_ascii_case("jsx") || e.eq_ignore_ascii_case("tsx")
+                });
+                // react-jsx JSX files are always modules
+                if is_jsx && settings.jsx.first().is_some_and(|j| j == "react-jsx") {
+                    return true;
+                }
+                // Node-style modules: nearest package.json "type":"module" → module
+                is_node_esm
+                    && Self::find_package_type(filename, package_json_types) == Some("module")
+            }
+        }
+    }
+
+    /// Walk ancestor directories of `filename` looking for a `package.json`,
+    /// and return its `"type"` field value (e.g. `Some("module")`).
+    fn find_package_type<'a>(
+        filename: &str,
+        package_json_types: &'a FxHashMap<String, Option<String>>,
+    ) -> Option<&'a str> {
+        let mut dir = Path::new(filename)
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        loop {
+            if let Some(type_value) = package_json_types.get(&dir) {
+                return type_value.as_deref();
+            }
+            match dir.rfind('/') {
+                Some(pos) => dir.truncate(pos),
+                None if !dir.is_empty() => dir.clear(),
+                None => break,
+            }
+        }
+        None
+    }
+
+    /// Collect `"type"` fields from all `package.json` test units.
+    /// Returns a map from directory path to the `"type"` value.
+    fn collect_package_json_types(units: &[TestUnitData]) -> FxHashMap<String, Option<String>> {
+        units
+            .iter()
+            .filter(|unit| Path::new(&unit.name).file_name().is_some_and(|f| f == "package.json"))
+            .map(|unit| {
+                let dir = Path::new(&unit.name)
+                    .parent()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let type_value: Option<String> =
+                    serde_json::from_str::<serde_json::Value>(&unit.content)
+                        .ok()
+                        .and_then(|v| v.get("type")?.as_str().map(String::from));
+                (dir, type_value)
+            })
+            .collect()
+    }
+
     // TypeScript error files can be:
     //   * `filename(module=es2022).errors.txt`
     //   * `filename(target=esnext).errors.txt`
     //   * `filename.errors.txt`
     fn get_error_files(path: &Path, options: &CompilerSettings) -> Vec<String> {
+        #[must_use]
+        fn create_suffixes<T: Display>(name: &str, flags: &[T]) -> Option<Vec<String>> {
+            if flags.len() < 2 {
+                return None;
+            }
+            Some(flags.iter().map(|flag| format!("{name}={flag}")).collect())
+        }
+
         let file_name = path.file_stem().unwrap().to_string_lossy();
         let root = workspace_root().join("typescript/tests/baselines/reference");
-        let mut suffixes = vec![String::new()];
-        suffixes.extend(options.modules.iter().map(|module| format!("(module={module})")));
-        suffixes.extend(options.targets.iter().map(|target| format!("(target={target})")));
-        suffixes.extend(options.jsx.iter().map(|jsx| format!("(jsx={jsx})")));
-        suffixes.extend(
-            options
-                .experimental_decorators
-                .iter()
-                .map(|&b| format!("(experimentaldecorators={})", if b { "true" } else { "false" })),
-        );
+        let mut suffixes = vec![];
+        suffixes.extend(create_suffixes("module", &options.modules));
+        suffixes.extend(create_suffixes("target", &options.targets));
+        suffixes.extend(create_suffixes("jsx", &options.jsx));
+        suffixes.extend(create_suffixes("preserveconstenums", &options.preserve_const_enums));
+        suffixes.extend(create_suffixes(
+            "usedefineforclassfields",
+            &options.use_define_for_class_fields,
+        ));
+        suffixes
+            .extend(create_suffixes("experimentaldecorators", &options.experimental_decorators));
+
+        let suffixes = suffixes
+            .into_iter()
+            .multi_cartesian_product()
+            .map(|suffixes| {
+                if suffixes.is_empty() {
+                    String::new()
+                } else {
+                    format!("({})", suffixes.join(","))
+                }
+            })
+            .chain(std::iter::once(String::new()))
+            .collect::<Vec<_>>();
         let mut error_files = vec![];
         for suffix in suffixes {
             let error_path = root.join(format!("{file_name}{suffix}.errors.txt"));
@@ -205,38 +372,16 @@ impl TestCaseContent {
         error_files
     }
 
-    // See https://github.com/microsoft/TypeScript/blob/479285d0ac293c35a926508d17f0bb5eca7e0303/src/harness/harnessIO.ts#L540
-    fn extract_error_codes(error_files: &[String], path: &Path) -> Vec<String> {
+    fn extract_error_codes(error_files: &[String]) -> Vec<String> {
         if error_files.is_empty() {
             return vec![];
         }
 
         let mut error_codes = FxHashSet::default();
         for error_file in error_files {
-            // It may seem that parsing the summary is sufficient at first glance,
-            // but since the summary is equivalent to the CLI output,
-            // it may contain escape sequences for changing text color, so simple string processing is not enough to handle it.
-            // In addition, there are rare cases where code is output in the summary but not in the details...
-            let (summary_part, details_part) = error_file.split_once("\r\n\r\n").unwrap_or_else(|| {
-                unreachable!("`.errors.txt` for {} should contain summary and detail separated by <CRLF><CRLF>", path.display())
-            });
-
-            // ArrowFunction3.ts(1,12): error TS1005: ',' expected.
-            // error TS2688: Cannot find type definition file for 'react'.
-            for line in summary_part.lines() {
-                // 1005: ',' expected.
-                if let Some((_, code_part)) = line.split_once("error TS") {
-                    if let Some((code, _)) = code_part.split_once(':') {
-                        error_codes.insert(code.to_string());
-                    }
-                }
-            }
-            // !!! error TS1005: '}' expected.
-            for line in details_part.lines() {
-                if let Some((_, code_part)) = line.split_once("!!! error TS") {
-                    if let Some((code, _)) = code_part.split_once(':') {
-                        error_codes.insert(code.to_string());
-                    }
+            for cap in TS_ERROR_CODES.captures_iter(error_file) {
+                if let Some(code) = cap.name("code") {
+                    error_codes.insert(code.as_str().to_string());
                 }
             }
         }
@@ -245,7 +390,11 @@ impl TestCaseContent {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+// ================================
+// Baseline types for transpile tests
+// ================================
+
+#[derive(Debug, Default)]
 pub struct Baseline {
     pub name: String,
     pub original: String,
@@ -257,7 +406,7 @@ pub struct Baseline {
 impl Baseline {
     pub fn print_oxc(&mut self) {
         let allocator = Allocator::default();
-        let source_type = SourceType::from_path(Path::new(&self.name)).unwrap();
+        let source_type = SourceType::from_path(Path::new(&self.name)).unwrap_or_default();
         let ret = Parser::new(&allocator, &self.original, source_type).parse();
         let printed = Codegen::new().build(&ret.program).code;
         self.oxc_printed = printed;
@@ -279,16 +428,15 @@ pub struct BaselineFile {
 
 impl BaselineFile {
     pub fn print(&self) -> String {
-        self.files.iter().map(|f| f.oxc_printed.clone()).collect::<Vec<_>>().join("\n")
+        self.files.iter().map(|f| f.oxc_printed.as_str()).collect::<Vec<_>>().join("\n")
     }
 
     pub fn snapshot(&self) -> String {
         self.files
             .iter()
             .map(|f| {
-                let printed = f.oxc_printed.clone();
                 let diagnostics = f.get_oxc_diagnostic();
-                format!("//// [{}] ////\n{}{}", f.name, printed, diagnostics)
+                format!("//// [{}] ////\n{}{}", f.name, f.oxc_printed, diagnostics)
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -313,7 +461,7 @@ impl BaselineFile {
                 }
                 continue;
             }
-            let last = files.last_mut().unwrap();
+            let Some(last) = files.last_mut() else { continue };
             if is_diagnostic {
                 // Skip details of the diagnostic
                 if line.is_empty() {
@@ -329,6 +477,7 @@ impl BaselineFile {
             }
         }
 
+        // Regenerate content through oxc's codegen for consistent formatting
         for file in &mut files {
             file.print_oxc();
         }

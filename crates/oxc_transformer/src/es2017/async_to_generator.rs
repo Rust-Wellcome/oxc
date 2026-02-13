@@ -131,11 +131,13 @@ impl<'a> Traverse<'a, TransformState<'a>> for AsyncToGenerator<'a, '_> {
             _ => None,
         };
 
-        if let Some(function) = function {
-            if function.r#async && !function.generator && !function.is_typescript_syntax() {
-                let new_statement = self.executor.transform_function_declaration(function, ctx);
-                self.ctx.statement_injector.insert_after(stmt, new_statement);
-            }
+        if let Some(function) = function
+            && function.r#async
+            && !function.generator
+            && !function.is_typescript_syntax()
+        {
+            let new_statement = self.executor.transform_function_declaration(function, ctx);
+            self.ctx.statement_injector.insert_after(stmt, new_statement);
         }
     }
 
@@ -363,7 +365,7 @@ impl<'a, 'ctx> AsyncGeneratorExecutor<'a, 'ctx> {
                 // `function foo() { ... }` -> `function foo() {} return foo;`
                 let reference = ctx.create_bound_ident_expr(
                     SPAN,
-                    id.name,
+                    id.name.into(),
                     id.symbol_id(),
                     ReferenceFlags::Read,
                 );
@@ -548,7 +550,7 @@ impl<'a, 'ctx> AsyncGeneratorExecutor<'a, 'ctx> {
         match ctx.parent() {
             // infer `foo` from `const foo = async function() {}`
             Ancestor::VariableDeclaratorInit(declarator) => {
-                declarator.id().get_binding_identifier().map(|id| id.name)
+                declarator.id().get_binding_identifier().map(|id| id.name.into())
             }
             // infer `foo` from `({ foo: async function() {} })`
             Ancestor::ObjectPropertyValue(property) if !*property.method() => {
@@ -564,9 +566,9 @@ impl<'a, 'ctx> AsyncGeneratorExecutor<'a, 'ctx> {
     ///
     /// // Valid
     /// * `foo` -> `foo`
-    /// // Contains space
+    ///   // Contains space
     /// * `foo bar` -> `foo_bar`
-    /// // Reserved keyword
+    ///   // Reserved keyword
     /// * `this` -> `_this`
     /// * `arguments` -> `_arguments`
     fn normalize_function_name(input: &Cow<'a, str>, ctx: &TraverseCtx<'a>) -> Atom<'a> {
@@ -579,10 +581,10 @@ impl<'a, 'ctx> AsyncGeneratorExecutor<'a, 'ctx> {
         let mut capitalize_next = false;
 
         let mut chars = input_str.chars();
-        if let Some(first) = chars.next() {
-            if is_identifier_start(first) {
-                name.push(first);
-            }
+        if let Some(first) = chars.next()
+            && is_identifier_start(first)
+        {
+            name.push(first);
         }
 
         for c in chars {
@@ -716,6 +718,7 @@ impl<'a, 'ctx> AsyncGeneratorExecutor<'a, 'ctx> {
             SPAN,
             VariableDeclarationKind::Var,
             bound_ident.create_binding_pattern(ctx),
+            NONE,
             Some(init),
             false,
         ));
@@ -762,7 +765,7 @@ impl<'a, 'ctx> AsyncGeneratorExecutor<'a, 'ctx> {
     ) -> ArenaBox<'a, FormalParameters<'a>> {
         let mut parameters = ctx.ast.vec_with_capacity(params.items.len());
         for param in &params.items {
-            if param.pattern.kind.is_assignment_pattern() {
+            if param.initializer.is_some() {
                 break;
             }
             let binding = ctx.generate_uid("x", scope_id, SymbolFlags::FunctionScopedVariable);
@@ -819,18 +822,18 @@ impl<'a, 'ctx> AsyncGeneratorExecutor<'a, 'ctx> {
     // <https://github.com/babel/babel/blob/3bcfee232506a4cebe410f02042fb0f0adeeb0b1/packages/babel-helper-wrap-function/src/index.ts#L164>
     #[inline]
     fn is_function_length_affected(params: &FormalParameters<'_>) -> bool {
-        params.items.first().is_some_and(|param| !param.pattern.kind.is_assignment_pattern())
+        params.items.first().is_some_and(|param| param.initializer.is_none())
     }
 
     /// Check whether the function parameters could throw errors.
     #[inline]
     fn could_throw_errors_parameters(params: &FormalParameters<'a>) -> bool {
-        params.items.iter().any(|param|
-            matches!(
-                &param.pattern.kind,
-                BindingPatternKind::AssignmentPattern(pattern) if Self::could_potentially_throw_error_expression(&pattern.right)
-            )
-        )
+        params.items.iter().any(|param| {
+            param
+                .initializer
+                .as_ref()
+                .is_some_and(|init| Self::could_potentially_throw_error_expression(init))
+        })
     }
 
     /// Check whether the expression could potentially throw an error.
@@ -886,7 +889,7 @@ impl<'a> Visit<'a> for BindingMover<'a, '_> {
         let symbol_id = ident.symbol_id();
         let current_scope_id = symbols.symbol_scope_id(symbol_id);
         let scopes = self.ctx.scoping_mut();
-        scopes.move_binding(current_scope_id, self.target_scope_id, ident.name.as_str());
+        scopes.move_binding(current_scope_id, self.target_scope_id, ident.name);
         let symbols = self.ctx.scoping_mut();
         symbols.set_symbol_scope_id(symbol_id, self.target_scope_id);
     }

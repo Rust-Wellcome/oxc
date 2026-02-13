@@ -1,8 +1,13 @@
-use memchr::memmem::Finder;
+use memchr::memmem::{Finder, FinderRev};
 
 use oxc_span::SourceType;
 
-use super::{JavaScriptSource, SCRIPT_END, SCRIPT_START, find_script_closing_angle};
+use crate::frameworks::FrameworkOptions;
+
+use super::{
+    COMMENT_END, COMMENT_START, JavaScriptSource, SCRIPT_END, SCRIPT_START,
+    find_script_closing_angle, find_script_start,
+};
 
 pub struct VuePartialLoader<'a> {
     source_text: &'a str,
@@ -20,7 +25,7 @@ impl<'a> VuePartialLoader<'a> {
     /// Each *.vue file can contain at most
     ///  * one `<script>` block (excluding `<script setup>`).
     ///  * one `<script setup>` block (excluding normal `<script>`).
-    /// <https://vuejs.org/api/sfc-spec.html#script>
+    ///    <https://vuejs.org/api/sfc-spec.html#script>
     fn parse_scripts(&self) -> Vec<JavaScriptSource<'a>> {
         let mut pointer = 0;
         let Some(result1) = self.parse_script(&mut pointer) else {
@@ -34,10 +39,16 @@ impl<'a> VuePartialLoader<'a> {
 
     fn parse_script(&self, pointer: &mut usize) -> Option<JavaScriptSource<'a>> {
         let script_start_finder = Finder::new(SCRIPT_START);
-
+        let comment_start_finder = FinderRev::new(COMMENT_START);
+        let comment_end_finder: Finder<'_> = Finder::new(COMMENT_END);
         // find opening "<script"
-        let offset = script_start_finder.find(&self.source_text.as_bytes()[*pointer..])?;
-        *pointer += offset + SCRIPT_START.len();
+        *pointer += find_script_start(
+            self.source_text,
+            *pointer,
+            &script_start_finder,
+            &comment_start_finder,
+            &comment_end_finder,
+        )?;
 
         // skip `<script-`
         if !self.source_text[*pointer..].starts_with([' ', '>']) {
@@ -51,16 +62,14 @@ impl<'a> VuePartialLoader<'a> {
         let content = &self.source_text[*pointer..*pointer + offset];
 
         // parse `lang`
-        let lang = content.split_once("lang").map_or(Some("mjs"), |(_, s)| {
-            const QUOTES: [char; 2] = ['"', '\''];
-            s.trim_start()
-                .trim_start_matches('=')
-                .trim_start()
-                .trim_start_matches(QUOTES)
-                .split_once(QUOTES)
-                .map(|(s, _)| s)
-        })?;
+        let lang = Self::extract_lang_attribute(content);
+        let is_setup = content.contains("setup"); // check if "setup" is present, does not check if its inside an attribute
+
         let Ok(mut source_type) = SourceType::from_extension(lang) else { return None };
+        // Vue script blocks are ESM modules - upgrade unambiguous to module
+        if source_type.is_unambiguous() {
+            source_type = source_type.with_module(true);
+        }
         if !lang.contains('x') {
             source_type = source_type.with_standard(true);
         }
@@ -69,7 +78,7 @@ impl<'a> VuePartialLoader<'a> {
         let js_start = *pointer;
 
         // find "</script>"
-        let script_end_finder = Finder::new(SCRIPT_END);
+        let script_end_finder: Finder<'_> = Finder::new(SCRIPT_END);
         let offset = script_end_finder.find(&self.source_text.as_bytes()[*pointer..])?;
         let js_end = *pointer + offset;
         *pointer += offset + SCRIPT_END.len();
@@ -77,14 +86,54 @@ impl<'a> VuePartialLoader<'a> {
         let source_text = &self.source_text[js_start..js_end];
         // NOTE: loader checked that source_text.len() is less than u32::MAX
         #[expect(clippy::cast_possible_truncation)]
-        Some(JavaScriptSource::partial(source_text, source_type, js_start as u32))
+        Some(JavaScriptSource::partial_with_framework_options(
+            source_text,
+            source_type,
+            if is_setup { FrameworkOptions::VueSetup } else { FrameworkOptions::Default },
+            js_start as u32,
+        ))
+    }
+
+    fn extract_lang_attribute(content: &str) -> &str {
+        let content = content.trim();
+
+        let Some(lang_index) = content.find("lang") else { return "mjs" };
+
+        // Move past "lang"
+        let mut rest = content[lang_index + 4..].trim_start();
+
+        if !rest.starts_with('=') {
+            return "mjs";
+        }
+
+        // Move past "="
+        rest = rest[1..].trim_start();
+
+        let first_char = rest.chars().next();
+
+        match first_char {
+            Some('"' | '\'') => {
+                let quote = first_char.unwrap();
+                rest = &rest[1..];
+                match rest.find(quote) {
+                    Some(end) => &rest[..end],
+                    None => "mjs", // Unterminated quote
+                }
+            }
+            Some(_) => {
+                // Unquoted value: take until first whitespace or attribute separator
+                match rest.find(|c: char| c.is_whitespace() || c == '>') {
+                    Some(end) => &rest[..end],
+                    None => rest, // whole rest is the lang value
+                }
+            }
+            None => "mjs", // nothing after =
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use oxc_span::SourceType;
-
     use super::{JavaScriptSource, VuePartialLoader};
 
     fn parse_vue(source_text: &str) -> JavaScriptSource<'_> {
@@ -114,7 +163,8 @@ mod test {
         "#;
 
         let result = parse_vue(source_text);
-        assert_eq!(result.source_type, SourceType::ts());
+        assert!(result.source_type.is_typescript());
+        assert!(!result.source_type.is_jsx());
         assert_eq!(result.source_text.trim(), "1/1");
     }
 
@@ -127,7 +177,8 @@ mod test {
         ";
 
         let result = parse_vue(source_text);
-        assert_eq!(result.source_type, SourceType::ts());
+        assert!(result.source_type.is_typescript());
+        assert!(!result.source_type.is_jsx());
         assert_eq!(result.source_text.trim(), "1/1");
     }
 
@@ -242,25 +293,55 @@ mod test {
     }
 
     #[test]
+    fn test_closing_character_inside_attribute() {
+        let source_text = r"
+        <script description='PI > 5'>a</script>
+        ";
+
+        let result = parse_vue(source_text);
+        assert_eq!(result.source_text, "a");
+    }
+
+    #[test]
+    fn test_script_inside_code_comment() {
+        let source_text = r"
+        <!-- <script>a</script> -->
+        <!-- <script> -->
+        <script>b</script>
+        ";
+
+        let result: JavaScriptSource<'_> = parse_vue(source_text);
+        assert_eq!(result.source_text, "b");
+        assert_eq!(result.start, 79);
+    }
+
+    #[test]
+    #[expect(clippy::type_complexity)]
     fn lang() {
-        let cases = [
-            ("<script>debugger</script>", Some(SourceType::mjs())),
-            ("<script lang = 'tsx' >debugger</script>", Some(SourceType::tsx())),
-            (r#"<script lang = "cjs" >debugger</script>"#, Some(SourceType::cjs())),
+        // Test cases: (source_text, expected_is_typescript, expected_is_jsx, expected_is_module)
+        // None means parsing should fail (invalid extension)
+        // Unambiguous source types are upgraded to module for Vue scripts
+        let cases: [(&str, Option<(bool, bool, bool)>); 8] = [
+            ("<script>debugger</script>", Some((false, false, true))), // mjs -> module
+            ("<script lang = 'tsx' >debugger</script>", Some((true, true, true))), // tsx -> unambiguous -> module
+            (r#"<script lang = "cjs" >debugger</script>"#, Some((false, false, false))), // cjs -> script (not upgraded)
+            ("<script lang=tsx>debugger</script>", Some((true, true, true))), // tsx -> unambiguous -> module
             ("<script lang = 'xxx'>debugger</script>", None),
             (r#"<script lang = "xxx">debugger</script>"#, None),
             ("<script lang='xxx'>debugger</script>", None),
             (r#"<script lang="xxx">debugger</script>"#, None),
-            ("<script lang=tsx>debugger</script>", None), // this is valid but too compliated to parse
         ];
 
-        for (source_text, source_type) in cases {
+        for (source_text, expected) in cases {
             let sources = VuePartialLoader::new(source_text).parse();
-            if let Some(expected) = source_type {
-                assert_eq!(sources.len(), 1);
-                assert_eq!(sources[0].source_type, expected);
+            if let Some((is_ts, is_jsx, is_module)) = expected {
+                assert_eq!(sources.len(), 1, "Expected 1 source for: {source_text}");
+                let st = sources[0].source_type;
+                assert_eq!(st.is_typescript(), is_ts, "is_typescript mismatch for: {source_text}");
+                assert_eq!(st.is_jsx(), is_jsx, "is_jsx mismatch for: {source_text}");
+                assert_eq!(st.is_module(), is_module, "is_module mismatch for: {source_text}");
             } else {
-                assert_eq!(sources.len(), 0);
+                assert_eq!(sources.len(), 0, "Expected 0 sources for: {source_text}");
             }
         }
     }

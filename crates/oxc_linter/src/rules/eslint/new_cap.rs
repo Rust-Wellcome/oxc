@@ -7,6 +7,7 @@ use oxc_ast::{
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{CompactStr, GetSpan, Span};
+use schemars::JsonSchema;
 
 fn new_cap_diagnostic(span: Span, cap: &GetCapResult) -> OxcDiagnostic {
     let msg = if *cap == GetCapResult::Lower {
@@ -21,15 +22,37 @@ fn new_cap_diagnostic(span: Span, cap: &GetCapResult) -> OxcDiagnostic {
 #[derive(Debug, Default, Clone)]
 pub struct NewCap(Box<NewCapConfig>);
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone, JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
 pub struct NewCapConfig {
+    /// `true` to require that all constructor names start with an uppercase letter, e.g. `new Person()`.
     new_is_cap: bool,
+    /// `true` to require that all functions with names starting with an uppercase letter to be called with `new`.
     cap_is_new: bool,
+    /// Exceptions to ignore for constructor names starting with an uppercase letter.
     new_is_cap_exceptions: Vec<CompactStr>,
+    /// A regex pattern to match exceptions for constructor names starting with an uppercase letter.
     new_is_cap_exception_pattern: Option<Regex>,
+    /// Exceptions to ignore for functions with names starting with an uppercase letter.
     cap_is_new_exceptions: Vec<CompactStr>,
+    /// A regex pattern to match exceptions for functions with names starting with an uppercase letter.
     cap_is_new_exception_pattern: Option<Regex>,
+    /// `true` to require capitalization for object properties (e.g., `new obj.Method()`).
     properties: bool,
+}
+
+impl Default for NewCapConfig {
+    fn default() -> Self {
+        Self {
+            new_is_cap: true,
+            cap_is_new: true,
+            new_is_cap_exceptions: caps_allowed_vec(),
+            new_is_cap_exception_pattern: None,
+            cap_is_new_exceptions: vec![],
+            cap_is_new_exception_pattern: None,
+            properties: true,
+        }
+    }
 }
 
 impl std::ops::Deref for NewCap {
@@ -81,27 +104,12 @@ fn regex_serde_value(map: &serde_json::Map<String, serde_json::Value>, key: &str
 impl From<&serde_json::Value> for NewCap {
     fn from(raw: &serde_json::Value) -> Self {
         let Some(config_entry) = raw.get(0) else {
-            return Self(Box::new(NewCapConfig {
-                new_is_cap: true,
-                cap_is_new: true,
-                new_is_cap_exceptions: caps_allowed_vec(),
-                new_is_cap_exception_pattern: None,
-                cap_is_new_exceptions: vec![],
-                cap_is_new_exception_pattern: None,
-                properties: true,
-            }));
+            return Self(Box::default());
         };
 
         let config = config_entry
             .as_object()
-            .map_or_else(
-                || {
-                    Err(OxcDiagnostic::warn(
-                        "eslint/new-cap: invalid configuration, expected object.",
-                    ))
-                },
-                Ok,
-            )
+            .map_or_else(|| Err(OxcDiagnostic::warn("Invalid configuration, expected object.")), Ok)
             .unwrap();
 
         Self(Box::new(NewCapConfig {
@@ -162,7 +170,7 @@ declare_oxc_lint!(
     /// Examples of **incorrect** code for this rule with the default `{ "newIsCap": true }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "newIsCap": true }]*/
+    /// /* new-cap: ["error", { "newIsCap": true }] */
     ///
     /// var friend = new person();
     /// ```
@@ -170,7 +178,7 @@ declare_oxc_lint!(
     /// Examples of **correct** code for this rule with the default `{ "newIsCap": true }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "newIsCap": true }]*/
+    /// /* new-cap: ["error", { "newIsCap": true }] */
     ///
     /// var friend = new Person();
     /// ```
@@ -178,7 +186,7 @@ declare_oxc_lint!(
     /// Examples of **correct** code for this rule with the `{ "newIsCap": false }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "newIsCap": false }]*/
+    /// /* new-cap: ["error", { "newIsCap": false }] */
     ///
     /// var friend = new person();
     /// ```
@@ -186,7 +194,7 @@ declare_oxc_lint!(
     /// Examples of **incorrect** code for this rule with the default `{ "capIsNew": true }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "capIsNew": true }]*/
+    /// /* new-cap: ["error", { "capIsNew": true }] */
     ///
     /// var colleague = Person();
     /// ```
@@ -194,7 +202,7 @@ declare_oxc_lint!(
     /// Examples of **correct** code for this rule with the default `{ "capIsNew": true }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "capIsNew": true }]*/
+    /// /* new-cap: ["error", { "capIsNew": true }] */
     ///
     /// var colleague = new Person();
     /// ```
@@ -202,7 +210,7 @@ declare_oxc_lint!(
     /// Examples of **correct** code for this rule with the `{ "capIsNew": false }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "capIsNew": false }]*/
+    /// /* new-cap: ["error", { "capIsNew": false }] */
     ///
     /// var colleague = Person();
     /// ```
@@ -210,7 +218,7 @@ declare_oxc_lint!(
     /// Examples of additional **correct** code for this rule with the `{ "newIsCapExceptions": ["events"] }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "newIsCapExceptions": ["events"] }]*/
+    /// /* new-cap: ["error", { "newIsCapExceptions": ["events"] }] */
     ///
     /// var events = require('events');
     ///
@@ -220,7 +228,7 @@ declare_oxc_lint!(
     /// Examples of additional **correct** code for this rule with the `{ "newIsCapExceptionPattern": "^person\\.." }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "newIsCapExceptionPattern": "^person\\.." }]*/
+    /// /* new-cap: ["error", { "newIsCapExceptionPattern": "^person\\.." }] */
     ///
     /// var friend = new person.acquaintance();
     ///
@@ -230,7 +238,7 @@ declare_oxc_lint!(
     /// Examples of additional **correct** code for this rule with the `{ "newIsCapExceptionPattern": "\\.bar$" }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "newIsCapExceptionPattern": "\\.bar$" }]*/
+    /// /* new-cap: ["error", { "newIsCapExceptionPattern": "\\.bar$" }] */
     ///
     /// var friend = new person.bar();
     /// ```
@@ -238,7 +246,7 @@ declare_oxc_lint!(
     /// Examples of additional **correct** code for this rule with the `{ "capIsNewExceptions": ["Person"] }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "capIsNewExceptions": ["Person"] }]*/
+    /// /* new-cap: ["error", { "capIsNewExceptions": ["Person"] }] */
     ///
     /// function foo(arg) {
     ///     return Person(arg);
@@ -248,7 +256,7 @@ declare_oxc_lint!(
     /// Examples of additional **correct** code for this rule with the `{ "capIsNewExceptionPattern": "^person\\.." }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "capIsNewExceptionPattern": "^person\\.." }]*/
+    /// /* new-cap: ["error", { "capIsNewExceptionPattern": "^person\\.." }] */
     ///
     /// var friend = person.Acquaintance();
     /// var bestFriend = person.Friend();
@@ -257,7 +265,7 @@ declare_oxc_lint!(
     /// Examples of additional **correct** code for this rule with the `{ "capIsNewExceptionPattern": "\\.Bar$" }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "capIsNewExceptionPattern": "\\.Bar$" }]*/
+    /// /* new-cap: ["error", { "capIsNewExceptionPattern": "\\.Bar$" }] */
     ///
     /// foo.Bar();
     /// ```
@@ -265,7 +273,7 @@ declare_oxc_lint!(
     /// Examples of additional **correct** code for this rule with the `{ "capIsNewExceptionPattern": "^Foo" }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "capIsNewExceptionPattern": "^Foo" }]*/
+    /// /* new-cap: ["error", { "capIsNewExceptionPattern": "^Foo" }] */
     ///
     /// var x = Foo(42);
     ///
@@ -279,7 +287,7 @@ declare_oxc_lint!(
     /// Examples of **incorrect** code for this rule with the default `{ "properties": true }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "properties": true }]*/
+    /// /* new-cap: ["error", { "properties": true }] */
     ///
     /// var friend = new person.acquaintance();
     /// ```
@@ -287,7 +295,7 @@ declare_oxc_lint!(
     /// Examples of **correct** code for this rule with the default `{ "properties": true }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "properties": true }]*/
+    /// /* new-cap: ["error", { "properties": true }] */
     ///
     /// var friend = new person.Acquaintance();
     /// ```
@@ -295,7 +303,7 @@ declare_oxc_lint!(
     /// Examples of **correct** code for this rule with the `{ "properties": false }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "properties": false }]*/
+    /// /* new-cap: ["error", { "properties": false }] */
     ///
     /// var friend = new person.acquaintance();
     /// ```
@@ -303,7 +311,7 @@ declare_oxc_lint!(
     /// Examples of **incorrect** code for this rule with the default `{ "newIsCap": true }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "newIsCap": true }]*/
+    /// /* new-cap: ["error", { "newIsCap": true }] */
     ///
     /// var friend = new person();
     /// ```
@@ -311,7 +319,7 @@ declare_oxc_lint!(
     /// Examples of **correct** code for this rule with the default `{ "newIsCap": true }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "newIsCap": true }]*/
+    /// /* new-cap: ["error", { "newIsCap": true }] */
     ///
     /// var friend = new Person();
     /// ```
@@ -319,7 +327,7 @@ declare_oxc_lint!(
     /// Examples of **correct** code for this rule with the `{ "newIsCap": false }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "newIsCap": false }]*/
+    /// /* new-cap: ["error", { "newIsCap": false }] */
     ///
     /// var friend = new person();
     /// ```
@@ -327,7 +335,7 @@ declare_oxc_lint!(
     /// Examples of **incorrect** code for this rule with the default `{ "capIsNew": true }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "capIsNew": true }]*/
+    /// /* new-cap: ["error", { "capIsNew": true }] */
     ///
     /// var colleague = Person();
     /// ```
@@ -335,7 +343,7 @@ declare_oxc_lint!(
     /// Examples of **correct** code for this rule with the default `{ "capIsNew": true }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "capIsNew": true }]*/
+    /// /* new-cap: ["error", { "capIsNew": true }] */
     ///
     /// var colleague = new Person();
     /// ```
@@ -343,7 +351,7 @@ declare_oxc_lint!(
     /// Examples of **correct** code for this rule with the `{ "capIsNew": false }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "capIsNew": false }]*/
+    /// /* new-cap: ["error", { "capIsNew": false }] */
     ///
     /// var colleague = Person();
     /// ```
@@ -351,7 +359,7 @@ declare_oxc_lint!(
     /// Examples of additional **correct** code for this rule with the `{ "newIsCapExceptions": ["events"] }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "newIsCapExceptions": ["events"] }]*/
+    /// /* new-cap: ["error", { "newIsCapExceptions": ["events"] }] */
     ///
     /// var events = require('events');
     ///
@@ -361,7 +369,7 @@ declare_oxc_lint!(
     /// Examples of additional **correct** code for this rule with the `{ "newIsCapExceptionPattern": "^person\\.." }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "newIsCapExceptionPattern": "^person\\.." }]*/
+    /// /* new-cap: ["error", { "newIsCapExceptionPattern": "^person\\.." }] */
     ///
     /// var friend = new person.acquaintance();
     ///
@@ -371,7 +379,7 @@ declare_oxc_lint!(
     /// Examples of additional **correct** code for this rule with the `{ "newIsCapExceptionPattern": "\\.bar$" }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "newIsCapExceptionPattern": "\\.bar$" }]*/
+    /// /* new-cap: ["error", { "newIsCapExceptionPattern": "\\.bar$" }] */
     ///
     /// var friend = new person.bar();
     /// ```
@@ -381,7 +389,7 @@ declare_oxc_lint!(
     /// ::: correct
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "capIsNewExceptions": ["Person"] }]*/
+    /// /* new-cap: ["error", { "capIsNewExceptions": ["Person"] }] */
     ///
     /// function foo(arg) {
     ///     return Person(arg);
@@ -391,7 +399,7 @@ declare_oxc_lint!(
     /// Examples of additional **correct** code for this rule with the `{ "capIsNewExceptionPattern": "^person\\.." }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "capIsNewExceptionPattern": "^person\\.." }]*/
+    /// /* new-cap: ["error", { "capIsNewExceptionPattern": "^person\\.." }] */
     ///
     /// var friend = person.Acquaintance();
     /// var bestFriend = person.Friend();
@@ -400,7 +408,7 @@ declare_oxc_lint!(
     /// Examples of additional **correct** code for this rule with the `{ "capIsNewExceptionPattern": "\\.Bar$" }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "capIsNewExceptionPattern": "\\.Bar$" }]*/
+    /// /* new-cap: ["error", { "capIsNewExceptionPattern": "\\.Bar$" }] */
     ///
     /// foo.Bar();
     /// ```
@@ -408,7 +416,7 @@ declare_oxc_lint!(
     /// Examples of additional **correct** code for this rule with the `{ "capIsNewExceptionPattern": "^Foo" }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "capIsNewExceptionPattern": "^Foo" }]*/
+    /// /* new-cap: ["error", { "capIsNewExceptionPattern": "^Foo" }] */
     ///
     /// var x = Foo(42);
     ///
@@ -420,7 +428,7 @@ declare_oxc_lint!(
     /// Examples of **incorrect** code for this rule with the default `{ "properties": true }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "properties": true }]*/
+    /// /* new-cap: ["error", { "properties": true }] */
     ///
     /// var friend = new person.acquaintance();
     /// ```
@@ -429,7 +437,7 @@ declare_oxc_lint!(
     /// Examples of **correct** code for this rule with the default `{ "properties": true }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "properties": true }]*/
+    /// /* new-cap: ["error", { "properties": true }] */
     ///
     /// var friend = new person.Acquaintance();
     /// ```
@@ -437,19 +445,20 @@ declare_oxc_lint!(
     /// Examples of **correct** code for this rule with the `{ "properties": false }` option:
     ///
     /// ```js
-    /// /*eslint new-cap: ["error", { "properties": false }]*/
+    /// /* new-cap: ["error", { "properties": false }] */
     ///
     /// var friend = new person.acquaintance();
     /// ```
     NewCap,
     eslint,
     style,
-    pending  // TODO: maybe?
+    pending, // TODO: maybe?
+    config = NewCapConfig,
 );
 
 impl Rule for NewCap {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        NewCap::from(&value)
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        Ok(NewCap::from(&value))
     }
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
         match node.kind() {
@@ -470,7 +479,7 @@ impl Rule for NewCap {
                     || is_cap_allowed_expression(
                         short_name,
                         name,
-                        &self.new_is_cap_exceptions,
+                        self.new_is_cap_exceptions.iter().map(CompactStr::as_str),
                         self.new_is_cap_exception_pattern.as_ref(),
                     )
                     || (!self.properties && short_name != name);
@@ -492,14 +501,14 @@ impl Rule for NewCap {
 
                 let capitalization = &get_cap(short_name);
 
-                let mut caps_is_new_exceptions = self.cap_is_new_exceptions.clone();
-                caps_is_new_exceptions.append(&mut caps_allowed_vec());
-
                 let allowed = *capitalization != GetCapResult::Upper
                     || is_cap_allowed_expression(
                         short_name,
                         name,
-                        &caps_is_new_exceptions,
+                        self.cap_is_new_exceptions
+                            .iter()
+                            .map(CompactStr::as_str)
+                            .chain(CAPS_ALLOWED),
                         self.cap_is_new_exception_pattern.as_ref(),
                     )
                     || (!self.properties && short_name != name);
@@ -582,8 +591,12 @@ fn get_computed_member_name(computed_member: &ComputedMemberExpression) -> Optio
     let expression = computed_member.expression.without_parentheses();
 
     match &expression {
-        Expression::StringLiteral(lit) => Some(lit.value.as_ref().into()),
-        Expression::TemplateLiteral(lit) if lit.expressions.is_empty() && lit.quasis.len() == 1 => {
+        Expression::StringLiteral(lit) if !lit.value.is_empty() => Some(lit.value.as_ref().into()),
+        Expression::TemplateLiteral(lit)
+            if lit.expressions.is_empty()
+                && lit.quasis.len() == 1
+                && !lit.quasis[0].value.raw.is_empty() =>
+        {
             Some(lit.quasis[0].value.raw.as_ref().into())
         }
         Expression::RegExpLiteral(lit) => lit.raw.as_ref().map(|&x| x.into_compact_str()),
@@ -618,14 +631,19 @@ fn extract_name_from_expression(expression: &Expression) -> Option<CompactStr> {
     }
 }
 
-fn is_cap_allowed_expression(
+fn is_cap_allowed_expression<'a, I>(
     short_name: &CompactStr,
     name: &CompactStr,
-    exceptions: &[CompactStr],
+    exceptions: I,
     patterns: Option<&Regex>,
-) -> bool {
-    if exceptions.contains(name) || exceptions.contains(short_name) {
-        return true;
+) -> bool
+where
+    I: Iterator<Item = &'a str>,
+{
+    for exception in exceptions {
+        if exception == name.as_str() || exception == short_name.as_str() {
+            return true;
+        }
     }
 
     if name == "Date.UTC" {
@@ -739,6 +757,11 @@ fn test() {
         ("new (foo?.bar)();", Some(serde_json::json!([{ "properties": false }]))), // { "ecmaVersion": 2020 },
         ("Date?.UTC();", None),   // { "ecmaVersion": 2020 },
         ("(Date?.UTC)();", None), // { "ecmaVersion": 2020 }
+        (r#"expect(1)[""](1);"#, None),
+        (
+            "let tz = Intl.DateTimeFormat().resolvedOptions().timezone()",
+            Some(serde_json::json!([{ "capIsNewExceptions": ["Intl.DateTimeFormat"] }])),
+        ),
     ];
 
     let fail = vec![

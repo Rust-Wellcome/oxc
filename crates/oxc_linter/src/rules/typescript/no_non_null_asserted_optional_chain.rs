@@ -57,7 +57,7 @@ declare_oxc_lint!(
     NoNonNullAssertedOptionalChain,
     typescript,
     correctness,
-    fix
+    suggestion
 );
 
 impl Rule for NoNonNullAssertedOptionalChain {
@@ -111,8 +111,7 @@ impl Rule for NoNonNullAssertedOptionalChain {
                 Span::sized(chain_span_end, 1),
                 Span::sized(non_null_end, 1),
             );
-            // ctx.diagnostic(diagnostic);
-            ctx.diagnostic_with_fix(diagnostic, |fixer| {
+            ctx.diagnostic_with_suggestion(diagnostic, |fixer| {
                 fixer.delete_range(Span::sized(non_null_end, 1))
             });
         }
@@ -125,8 +124,7 @@ impl Rule for NoNonNullAssertedOptionalChain {
 
 fn is_parent_member_or_call(node: &AstNode<'_>, ctx: &LintContext<'_>) -> bool {
     let parent_kind = ctx.nodes().parent_kind(node.id());
-    matches!(parent_kind, Some(AstKind::CallExpression(_)))
-        || parent_kind.is_some_and(|k| k.is_member_expression_kind())
+    matches!(parent_kind, AstKind::CallExpression(_)) || parent_kind.is_member_expression_kind()
 }
 
 #[test]

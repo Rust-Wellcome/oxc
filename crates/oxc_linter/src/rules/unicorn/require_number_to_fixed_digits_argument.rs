@@ -61,29 +61,29 @@ impl Rule for RequireNumberToFixedDigitsArgument {
                 return;
             }
 
-            if let Some(property_name) = member.static_property_name() {
-                if property_name == "toFixed" {
-                    let parenthesis_span = Span::new(member.span().end, expr.span.end);
+            if let Some(property_name) = member.static_property_name()
+                && property_name == "toFixed"
+            {
+                let parenthesis_span = Span::new(member.span().end, expr.span.end);
 
-                    ctx.diagnostic_with_fix(
-                        require_number_to_fixed_digits_argument_diagnostic(parenthesis_span),
-                        |fixer| {
-                            let modified_code = {
-                                let span_source_code = fixer.source_range(Span::new(
-                                    parenthesis_span.start,
-                                    parenthesis_span.end - 1,
-                                ));
+                ctx.diagnostic_with_fix(
+                    require_number_to_fixed_digits_argument_diagnostic(parenthesis_span),
+                    |fixer| {
+                        let modified_code = {
+                            let span_source_code = fixer.source_range(Span::new(
+                                parenthesis_span.start,
+                                parenthesis_span.end - 1,
+                            ));
 
-                                let mut code = String::with_capacity(span_source_code.len() + 2);
-                                code.push_str(span_source_code);
-                                code.push_str("0)");
-                                code
-                            };
+                            let mut code = String::with_capacity(span_source_code.len() + 2);
+                            code.push_str(span_source_code);
+                            code.push_str("0)");
+                            code
+                        };
 
-                            fixer.replace(parenthesis_span, modified_code)
-                        },
-                    );
-                }
+                        fixer.replace(parenthesis_span, modified_code)
+                    },
+                );
             }
         }
     }
@@ -99,8 +99,7 @@ fn test() {
         "number.toFixed(2)",
         "number.toFixed(1,2,3)",
         "number[toFixed]()",
-        "number[\"toFixed\"]()",
-        "number?.toFixed()",
+        r#"number["toFixed"]()"#,
         "number.toFixed?.()",
         "number.notToFixed();",
         "new BigNumber(1).toFixed()",
@@ -109,6 +108,7 @@ fn test() {
 
     let fail = vec![
         "const string = number.toFixed();",
+        // r#"const string = number?.toFixed() ?? "";"#,
         "const string = number.toFixed( /* comment */ );",
         "Number(1).toFixed()",
         "const bigNumber = new BigNumber(1); const string = bigNumber.toFixed();",

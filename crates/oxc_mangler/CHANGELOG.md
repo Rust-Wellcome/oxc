@@ -4,6 +4,169 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.111.0] - 2026-01-26
+
+### 💥 BREAKING CHANGES
+
+- 777fc40 ast: [**BREAKING**] Add `Ident` type (#18354) (Boshen)
+
+## [0.110.0] - 2026-01-19
+
+### 🐛 Bug Fixes
+
+- ee9f6a4 mangler: Use `retain` instead of `truncate` to remove empty frequency slots (#18225) (Dunqing)
+
+## [0.109.0] - 2026-01-19
+
+### 🐛 Bug Fixes
+
+- f69b6da mangler: Reserve names from eval-containing scopes (#18037) (camc314)
+
+### ⚡ Performance
+
+- 91c143f mangler: Remove `frequencies` items if they are unused (#18183) (Dunqing)
+- 9af52c6 mangler: Turn off `scope_tree_child_ids` for `SemanticBuilder` (#18122) (Dunqing)
+
+## [0.107.0] - 2026-01-05
+
+### 🚀 Features
+
+- 23680a3 mangler: Skip mangling only in scopes affected by direct eval (#17612) (camc314)
+
+## [0.106.0] - 2025-12-29
+
+### ⚡ Performance
+
+- e073925 mangler: Early exit in liveness walk when scope already marked live (#17382) (camc314)
+- 50f0ddd mangler: Optimize slot assignment with pre-computed ancestor sets (#17379) (camc314)
+- c3ff642 mangler: Avoid `ToString` allocations (#17378) (camc314)
+
+
+## [0.95.0] - 2025-10-15
+
+### 🚀 Features
+
+- bce31b5 napi/playground: Call `with_private_member_mappings()` for private class member mangling (#14380) (copilot-swe-agent)
+
+
+## [0.94.0] - 2025-10-06
+
+### 🚀 Features
+
+- 3656908 rust: Oxc-index-vec v4.0 (#14254) (Boshen)
+
+### 🐛 Bug Fixes
+
+- c257b41 mangler: Avoid reusing same mangled names in the outer class (#14362) (sapphi-red)
+- fc519c8 mangler: Mangle private class members in subsequent classes correctly (#14361) (sapphi-red)
+- 5d3114c mangler: Allow using typescript keywords as variable names (#14315) (sapphi-red)
+
+
+## [0.93.0] - 2025-09-28
+
+### 🐛 Bug Fixes
+
+- d02d750 mangler: Mangle non top-level `exports` variable (#14169) (sapphi-red)
+
+
+## [0.92.0] - 2025-09-24
+
+### 🚀 Features
+
+- 0fe4d95 mangler: Mangle private class members (#14027) (sapphi-red)
+
+
+## [0.91.0] - 2025-09-22
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
+
+
+
+
+
+## [0.86.0] - 2025-08-31
+
+### 🚀 Features
+
+- afa0877 allocator: Introduce `BitSet` type (#13449) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- e3f953d mangler: Keep names for parenthesized functions and classes (#13421) (sapphi-red)
+
+### ⚡ Performance
+
+- 0d66399 mangler: Store slot indexes as `u32`s (#13462) (overlookmotel)
+- caf40c5 mangler: Do not sort `Vec` if empty (#13461) (overlookmotel)
+- e473b83 mangler: Replace `FixedBitSet` with `BitSet` based on Rolldown's implementation (#13419) (sapphi-red)
+
+
+
+
+
+
+
+
+
+
+## [0.80.0] - 2025-08-03
+
+### 🚜 Refactor
+
+- 77d397a mangler: Move `NodeId` lookup into `is_name_set_reference_node` (#12664) (overlookmotel)
+
+### 📚 Documentation
+
+- de1de35 rust: Add comprehensive README.md documentation for all Rust crates (#12706) (Copilot)
+
+### ⚡ Performance
+
+- 4adc1ed mangler: Remove unnecessary `AstNode` lookups (#12663) (overlookmotel)
+
+
+
+## [0.79.0] - 2025-07-30
+
+### 🚜 Refactor
+
+- a696227 linter: Remove AstKind for SimpleAssignmentTarget (#12401) (Tyler Earls)
+
+
+
+
+
+## [0.77.1] - 2025-07-16
+
+### 🚜 Refactor
+
+- ee761de ast: Remove `AstKind` for `AssignmentTarget` (#12252) (Tyler Earls)
+
+
+## [0.77.0] - 2025-07-12
+
+### ⚡ Performance
+
+- c7889c3 semantic,linter: Simplify implementation and uses of ancestors iterators (#12164) (Ulrich Stark)
+
+
+## [0.76.0] - 2025-07-08
+
+### 🚜 Refactor
+
+- 54cf5cb semantic: Remove Option from parent_* methods (#12087) (Ulrich Stark)
+
+
+## [0.75.1] - 2025-07-03
+
+### 🚜 Refactor
+
+- f7a2ae4 ast: Add `AstKind` for `AssignmentTargetPropertyIdentifier`, `AssignmentTargetPropertyProperty` (#11985) (camc314)
+
+
 
 
 

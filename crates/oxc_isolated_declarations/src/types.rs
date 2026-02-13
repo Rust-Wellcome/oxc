@@ -66,7 +66,7 @@ impl<'a> IsolatedDeclarations<'a> {
         })
     }
 
-    /// Convert a a computed property key to a static property key when possible
+    /// Convert a computed property key to a static property key when possible
     fn transform_property_key(&self, key: &PropertyKey<'a>) -> PropertyKey<'a> {
         match key {
             // ["string"] -> string
@@ -184,7 +184,7 @@ impl<'a> IsolatedDeclarations<'a> {
                                 );
                             };
                             let annotation = function.params.items.first().and_then(|param| {
-                                param.pattern.type_annotation.clone_in(self.ast.allocator)
+                                param.type_annotation.clone_in(self.ast.allocator)
                             });
                             if annotation.is_none() {
                                 accessor_spans.push((key, function.params.span));

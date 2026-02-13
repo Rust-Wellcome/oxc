@@ -1,14 +1,17 @@
+use std::ops::Deref;
+
 use oxc_ast::AstKind;
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_semantic::{JSDoc, JSDocTag};
 use oxc_span::Span;
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::{
     AstNode,
     context::LintContext,
-    rule::Rule,
+    rule::{DefaultRuleConfig, Rule},
     utils::{
         get_function_nearest_jsdoc_node, is_duplicated_special_tag, is_missing_special_tag,
         should_ignore_as_avoid, should_ignore_as_custom_skip, should_ignore_as_internal,
@@ -34,8 +37,37 @@ fn missing_yields_with_generator(span: Span) -> OxcDiagnostic {
         .with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct RequireYields(Box<RequireYieldsConfig>);
+
+impl Deref for RequireYields {
+    type Target = RequireYieldsConfig;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct RequireYieldsConfig {
+    /// Functions with these tags will be exempted from the lint rule.
+    exempted_by: Vec<String>,
+    /// When `true`, all generator functions must have a `@yields` tag, even if they don't yield a value or have an empty body.
+    force_require_yields: bool,
+    /// When `true`, require `@yields` when a `@generator` tag is present.
+    with_generator_tag: bool,
+}
+
+impl Default for RequireYieldsConfig {
+    fn default() -> Self {
+        Self {
+            exempted_by: vec!["inheritdoc".to_string()],
+            force_require_yields: false,
+            with_generator_tag: false,
+        }
+    }
+}
 
 declare_oxc_lint!(
     /// ### What it does
@@ -67,44 +99,16 @@ declare_oxc_lint!(
     /// ```
     RequireYields,
     jsdoc,
-    correctness
+    correctness,
+    config = RequireYieldsConfig,
 );
 
-#[derive(Debug, Clone, Deserialize)]
-struct RequireYieldsConfig {
-    #[serde(default = "default_exempted_by", rename = "exemptedBy")]
-    exempted_by: Vec<String>,
-    #[serde(default, rename = "forceRequireYields")]
-    force_require_yields: bool,
-    #[serde(default, rename = "withGeneratorTag")]
-    with_generator_tag: bool,
-}
-impl Default for RequireYieldsConfig {
-    fn default() -> Self {
-        Self {
-            exempted_by: default_exempted_by(),
-            force_require_yields: false,
-            with_generator_tag: false,
-        }
-    }
-}
-
-fn default_exempted_by() -> Vec<String> {
-    vec!["inheritdoc".to_string()]
-}
-
 impl Rule for RequireYields {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        value
-            .as_array()
-            .and_then(|arr| arr.first())
-            .and_then(|value| serde_json::from_value(value.clone()).ok())
-            .map_or_else(Self::default, |value| Self(Box::new(value)))
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
-        let config = &self.0;
-
         // This rule checks generator function should have JSDoc `@yields` tag.
         // By default, this rule only checks:
         // ```
@@ -124,7 +128,7 @@ impl Rule for RequireYields {
             {
                 // If no JSDoc is found, skip
                 let Some(jsdocs) = get_function_nearest_jsdoc_node(node, ctx)
-                    .and_then(|node| ctx.jsdoc().get_all_by_node(node))
+                    .and_then(|node| ctx.jsdoc().get_all_by_node(ctx.nodes(), node))
                 else {
                     return;
                 };
@@ -134,7 +138,7 @@ impl Rule for RequireYields {
                 if jsdocs
                     .iter()
                     .filter(|jsdoc| !should_ignore_as_custom_skip(jsdoc))
-                    .filter(|jsdoc| !should_ignore_as_avoid(jsdoc, settings, &config.exempted_by))
+                    .filter(|jsdoc| !should_ignore_as_avoid(jsdoc, settings, &self.exempted_by))
                     .filter(|jsdoc| !should_ignore_as_private(jsdoc, settings))
                     .filter(|jsdoc| !should_ignore_as_internal(jsdoc, settings))
                     .count()
@@ -148,7 +152,7 @@ impl Rule for RequireYields {
 
                 // Without this option, need to check `yield` value.
                 // Check will be performed in `YieldExpression` branch.
-                if config.force_require_yields
+                if self.force_require_yields
                     && is_missing_special_tag(&jsdoc_tags, resolved_yields_tag_name)
                 {
                     ctx.diagnostic(missing_yields(func.span));
@@ -163,7 +167,7 @@ impl Rule for RequireYields {
                     return;
                 }
 
-                if config.with_generator_tag {
+                if self.with_generator_tag {
                     let resolved_generator_tag_name = settings.resolve_tag_name("generator");
 
                     if let Some(span) = is_missing_yields_tag_with_generator_tag(
@@ -186,7 +190,7 @@ impl Rule for RequireYields {
             AstKind::YieldExpression(yield_expr) => {
                 // With this option, no needs to check `yield` value.
                 // We can perform all checks in `Function` branch instead.
-                if config.force_require_yields {
+                if self.force_require_yields {
                     return;
                 }
 
@@ -198,13 +202,15 @@ impl Rule for RequireYields {
                 // Find the nearest generator function
                 let mut generator_func_node = None;
                 let mut current_node = node;
-                while let Some(parent_node) = ctx.nodes().parent_node(current_node.id()) {
+                while !matches!(current_node.kind(), AstKind::Program(_)) {
+                    let parent_node = ctx.nodes().parent_node(current_node.id());
                     // If syntax is valid, `yield` should be inside a generator function
-                    if let AstKind::Function(func) = parent_node.kind() {
-                        if func.generator && (func.is_expression() || func.is_declaration()) {
-                            generator_func_node = Some((func, parent_node));
-                            break;
-                        }
+                    if let AstKind::Function(func) = parent_node.kind()
+                        && func.generator
+                        && (func.is_expression() || func.is_declaration())
+                    {
+                        generator_func_node = Some((func, parent_node));
+                        break;
                     }
                     current_node = parent_node;
                 }
@@ -214,7 +220,7 @@ impl Rule for RequireYields {
 
                 // If no JSDoc is found, skip
                 let Some(jsdocs) = get_function_nearest_jsdoc_node(generator_func_node, ctx)
-                    .and_then(|node| ctx.jsdoc().get_all_by_node(node))
+                    .and_then(|node| ctx.jsdoc().get_all_by_node(ctx.nodes(), node))
                 else {
                     return;
                 };
@@ -224,7 +230,7 @@ impl Rule for RequireYields {
                 if jsdocs
                     .iter()
                     .filter(|jsdoc| !should_ignore_as_custom_skip(jsdoc))
-                    .filter(|jsdoc| !should_ignore_as_avoid(jsdoc, settings, &config.exempted_by))
+                    .filter(|jsdoc| !should_ignore_as_avoid(jsdoc, settings, &self.exempted_by))
                     .filter(|jsdoc| !should_ignore_as_private(jsdoc, settings))
                     .filter(|jsdoc| !should_ignore_as_internal(jsdoc, settings))
                     .count()

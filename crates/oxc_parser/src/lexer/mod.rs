@@ -40,14 +40,20 @@ pub use token::Token;
 use source::{Source, SourcePosition};
 use trivia_builder::TriviaBuilder;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct LexerCheckpoint<'a> {
-    /// Current position in source
-    position: SourcePosition<'a>,
-
+    source_position: SourcePosition<'a>,
     token: Token,
+    errors_snapshot: ErrorSnapshot,
+    has_pure_comment: bool,
+    has_no_side_effects_comment: bool,
+}
 
-    errors_pos: usize,
+#[derive(Debug, Clone)]
+enum ErrorSnapshot {
+    Empty,
+    Count(usize),
+    Full(Vec<OxcDiagnostic>),
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -68,6 +74,13 @@ pub struct Lexer<'a> {
     token: Token,
 
     pub(crate) errors: Vec<OxcDiagnostic>,
+
+    /// Errors that are only emitted if the file is determined to be a Module.
+    /// For `ModuleKind::Unambiguous`, HTML-like comments are allowed during lexing,
+    /// but if ESM syntax is found later, these comments become invalid.
+    /// If resolved to Module → emit these errors.
+    /// If resolved to Script → discard these errors.
+    pub(crate) deferred_module_errors: Vec<OxcDiagnostic>,
 
     context: LexerContext,
 
@@ -105,6 +118,7 @@ impl<'a> Lexer<'a> {
             source_type,
             token,
             errors: vec![],
+            deferred_module_errors: vec![],
             context: LexerContext::Regular,
             trivia_builder: TriviaBuilder::default(),
             escaped_strings: FxHashMap::default(),
@@ -140,18 +154,55 @@ impl<'a> Lexer<'a> {
     /// Creates a checkpoint storing the current lexer state.
     /// Use `rewind` to restore the lexer to the state stored in the checkpoint.
     pub fn checkpoint(&self) -> LexerCheckpoint<'a> {
+        let errors_snapshot = if self.errors.is_empty() {
+            ErrorSnapshot::Empty
+        } else {
+            ErrorSnapshot::Count(self.errors.len())
+        };
         LexerCheckpoint {
-            position: self.source.position(),
+            source_position: self.source.position(),
             token: self.token,
-            errors_pos: self.errors.len(),
+            errors_snapshot,
+            has_pure_comment: self.trivia_builder.has_pure_comment,
+            has_no_side_effects_comment: self.trivia_builder.has_no_side_effects_comment,
+        }
+    }
+
+    /// Create a checkpoint that can handle error popping.
+    /// This is more expensive as it clones the errors vector.
+    pub(crate) fn checkpoint_with_error_recovery(&self) -> LexerCheckpoint<'a> {
+        let errors_snapshot = if self.errors.is_empty() {
+            ErrorSnapshot::Empty
+        } else {
+            ErrorSnapshot::Full(self.errors.clone())
+        };
+        LexerCheckpoint {
+            source_position: self.source.position(),
+            token: self.token,
+            errors_snapshot,
+            has_pure_comment: self.trivia_builder.has_pure_comment,
+            has_no_side_effects_comment: self.trivia_builder.has_no_side_effects_comment,
         }
     }
 
     /// Rewinds the lexer to the same state as when the passed in `checkpoint` was created.
     pub fn rewind(&mut self, checkpoint: LexerCheckpoint<'a>) {
-        self.errors.truncate(checkpoint.errors_pos);
-        self.source.set_position(checkpoint.position);
+        match checkpoint.errors_snapshot {
+            ErrorSnapshot::Empty => self.errors.clear(),
+            ErrorSnapshot::Count(len) => self.errors.truncate(len),
+            ErrorSnapshot::Full(errors) => self.errors = errors,
+        }
+        self.source.set_position(checkpoint.source_position);
         self.token = checkpoint.token;
+        self.trivia_builder.has_pure_comment = checkpoint.has_pure_comment;
+        self.trivia_builder.has_no_side_effects_comment = checkpoint.has_no_side_effects_comment;
+    }
+
+    pub fn peek_token(&mut self) -> Token {
+        let checkpoint = self.checkpoint();
+        let token = self.next_token();
+        self.rewind(checkpoint);
+        token
     }
 
     /// Set context
@@ -159,8 +210,32 @@ impl<'a> Lexer<'a> {
         self.context = context;
     }
 
-    /// Main entry point
+    /// Read first token in file.
+    pub fn first_token(&mut self) -> Token {
+        // HashbangComment ::
+        //     `#!` SingleLineCommentChars?
+        let kind = if let Some([b'#', b'!']) = self.peek_2_bytes() {
+            // SAFETY: Next 2 bytes are `#!`
+            unsafe { self.read_hashbang_comment() }
+        } else {
+            self.read_next_token()
+        };
+        self.finish_next(kind)
+    }
+
+    /// Read next token in file.
+    /// Use `first_token` for first token, and this method for all further tokens.
     pub fn next_token(&mut self) -> Token {
+        let kind = self.read_next_token();
+        self.finish_next(kind)
+    }
+
+    // This is a workaround for a problem where `next_token` is not inlined in lexer benchmark.
+    // Must be kept in sync with `next_token` above, and contain exactly the same code.
+    #[cfg(feature = "benchmarking")]
+    #[expect(clippy::inline_always)]
+    #[inline(always)]
+    pub fn next_token_for_benchmarks(&mut self) -> Token {
         let kind = self.read_next_token();
         self.finish_next(kind)
     }
@@ -266,23 +341,72 @@ impl<'a> Lexer<'a> {
 
     /// Read each char and set the current token
     /// Whitespace and line terminators are skipped
+    #[inline] // Make sure is inlined into `next_token`
     fn read_next_token(&mut self) -> Kind {
         self.trivia_builder.has_pure_comment = false;
         self.trivia_builder.has_no_side_effects_comment = false;
+
+        let end_pos = self.source.end();
         loop {
-            let offset = self.offset();
-            self.token.set_start(offset);
+            // Single spaces between tokens are common, so consume a space before processing the next token.
+            // Do this without a branch. This produces more instructions, but avoids an unpredictable branch.
+            // Can only do this if there are at least 2 bytes left in source.
+            // If there aren't 2 bytes left, delegate to `read_next_token_at_end` (cold branch).
+            let mut pos = self.source.position();
+            // SAFETY: `source.end()` is always equal to or after `source.position()`
+            let remaining_bytes = unsafe { end_pos.offset_from(pos) };
+            if remaining_bytes >= 2 {
+                // Read next byte.
+                // SAFETY: There are at least 2 bytes remaining in source.
+                let byte = unsafe { pos.read() };
 
-            let Some(byte) = self.peek_byte() else {
-                return Kind::Eof;
-            };
+                // If next byte is a space, advance by 1 byte.
+                // Do this with maths, instead of a branch.
+                let is_space = byte == b' ';
+                // SAFETY: There are at least 2 bytes remaining in source, so advancing 1 byte cannot be out of bounds
+                pos = unsafe { pos.add(usize::from(is_space)) };
+                self.source.set_position(pos);
 
+                // Read next byte again, in case we skipped a space.
+                // SAFETY: We checked above that there were at least 2 bytes to read,
+                // and we skipped a maximum of 1 byte, so there's still at least 1 byte left to read.
+                let byte = unsafe { pos.read() };
+
+                // Set token start
+                let offset = self.source.offset_of(pos);
+                self.token.set_start(offset);
+
+                // SAFETY: `byte` is byte value at current position in source
+                let kind = unsafe { self.handle_byte(byte) };
+                if kind != Kind::Skip {
+                    return kind;
+                }
+            } else {
+                // Only 0 or 1 bytes left in source.
+                // Delegate to `#[cold]` function as this is a very rare case.
+                return self.read_next_token_at_end();
+            }
+        }
+    }
+
+    /// Cold path for reading next token where only 0 or 1 bytes are left in source.
+    #[inline(never)]
+    #[cold]
+    fn read_next_token_at_end(&mut self) -> Kind {
+        let offset = self.offset();
+        self.token.set_start(offset);
+
+        if let Some(byte) = self.peek_byte() {
             // SAFETY: `byte` is byte value at current position in source
             let kind = unsafe { self.handle_byte(byte) };
             if kind != Kind::Skip {
                 return kind;
             }
+            // Last byte was whitespace/line break (`Kind::Skip`), so now at EOF
+            self.token.set_start(offset + 1);
         }
+
+        Kind::Eof
     }
 }
 

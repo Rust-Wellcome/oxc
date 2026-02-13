@@ -6,15 +6,24 @@ use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
 use schemars::JsonSchema;
+use serde::Deserialize;
 
-use crate::{AstNode, context::LintContext, rule::Rule};
+use crate::{
+    AstNode,
+    context::LintContext,
+    rule::{DefaultRuleConfig, Rule},
+};
 
-#[derive(Debug, Clone, Default, JsonSchema)]
-#[serde(renameAll = "camelCase", default)]
+#[derive(Debug, Clone, Default, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct NoExtraneousClass {
+    /// Allow classes that only have a constructor.
     allow_constructor_only: bool,
+    /// Allow empty classes.
     allow_empty: bool,
+    /// Allow classes with only static members.
     allow_static_only: bool,
+    /// Allow classes with decorators.
     allow_with_decorator: bool,
 }
 
@@ -78,7 +87,8 @@ declare_oxc_lint!(
     NoExtraneousClass,
     typescript,
     suspicious,
-    dangerous_suggestion
+    dangerous_suggestion,
+    config = NoExtraneousClass,
 );
 
 fn empty_class_diagnostic(span: Span, has_decorators: bool) -> OxcDiagnostic {
@@ -103,29 +113,8 @@ fn only_constructor_no_extraneous_class_diagnostic(span: Span) -> OxcDiagnostic 
 }
 
 impl Rule for NoExtraneousClass {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        use serde_json::Value;
-        let Some(config) = value.get(0).and_then(Value::as_object) else {
-            return Self::default();
-        };
-        Self {
-            allow_constructor_only: config
-                .get("allowConstructorOnly")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            allow_empty: config
-                .get("allowEmpty") // lb
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            allow_static_only: config
-                .get("allowStaticOnly")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            allow_with_decorator: config
-                .get("allowWithDecorator")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-        }
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -161,7 +150,7 @@ impl Rule for NoExtraneousClass {
                             if has_decorators {
                                 return fixer.noop();
                             }
-                            if let Some(AstKind::ExportNamedDeclaration(decl)) =
+                            if let AstKind::ExportNamedDeclaration(decl) =
                                 ctx.nodes().parent_kind(node.id())
                             {
                                 fixer.delete(decl)

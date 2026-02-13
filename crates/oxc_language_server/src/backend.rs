@@ -1,0 +1,1038 @@
+use std::{borrow::Cow, sync::Arc};
+
+use futures::future::join_all;
+use rustc_hash::FxBuildHasher;
+use serde_json::Value;
+use tokio::sync::{OnceCell, RwLock, SetError};
+use tower_lsp_server::{
+    Client, LanguageServer,
+    jsonrpc::{Error, ErrorCode, Result},
+    ls_types::{
+        CodeActionParams, CodeActionResponse, ConfigurationItem, Diagnostic,
+        DidChangeConfigurationParams, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
+        DidChangeWorkspaceFoldersParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+        DidSaveTextDocumentParams, DocumentDiagnosticParams, DocumentDiagnosticReport,
+        DocumentDiagnosticReportKind, DocumentDiagnosticReportResult, DocumentFormattingParams,
+        ExecuteCommandParams, FullDocumentDiagnosticReport, InitializeParams, InitializeResult,
+        InitializedParams, MessageType, RelatedFullDocumentDiagnosticReport, ServerInfo, TextEdit,
+        Uri,
+    },
+};
+use tracing::{debug, error, info, warn};
+
+use crate::{
+    ConcurrentHashMap, ToolBuilder,
+    capabilities::{Capabilities, DiagnosticMode, server_capabilities},
+    file_system::LSPFileSystem,
+    options::WorkspaceOption,
+    worker::WorkspaceWorker,
+};
+
+/// The Backend implements the LanguageServer trait to handle LSP requests and notifications.
+///
+/// It manages multiple WorkspaceWorkers, each corresponding to a workspace folder.
+/// Depending on the client's capabilities, it can dynamically register features and start up other services.
+/// The Client will send requests and notifications to the Backend, which will delegate them to the appropriate WorkspaceWorker.
+/// The Backend also manages the in-memory file system for open files.
+///
+/// A basic flow of an Editor and Server interaction is as follows:
+/// - Editor sends `initialize` request with workspace folders and client capabilities.
+/// - Server responds with its capabilities.
+/// - Editor sends `initialized` notification.
+/// - Server registers dynamic capabilities like file watchers.
+/// - Editor sends `textDocument/didOpen`, `textDocument/didChange`, `textDocument/didSave`, and `textDocument/didClose` notifications.
+/// - Editor sends `shutdown` request when the user closes the editor.
+/// - Editor sends `exit` notification and the server exits.
+///
+/// Because `initialized` is a notification, the client will not wait for a response from the server.
+/// Therefore, the server must be able to handle requests and notifications that may arrive directly after `initialized` notification,
+/// such as `textDocument/didOpen`.
+pub struct Backend {
+    // The LSP client to communicate with the editor or IDE.
+    client: Client,
+    // Information about the server, such as name and version.
+    // The client can use this information for display or logging purposes.
+    server_info: ServerInfo,
+    // The available tool builders to create tools like linters and formatters.
+    tool_builders: Arc<[Box<dyn ToolBuilder>]>,
+    // Each Workspace has it own worker with Linter (and in the future the formatter).
+    // We must respect each program inside with its own root folder
+    // and can not use shared programmes across multiple workspaces.
+    // Each Workspace can have its own server configuration and program root configuration.
+    // WorkspaceWorkers are only written on 2 occasions:
+    // 1. `initialize` request with workspace folders
+    // 2. `workspace/didChangeWorkspaceFolders` request
+    pub(crate) workspace_workers: Arc<RwLock<Vec<WorkspaceWorker>>>,
+    // Capabilities of the language server, set once during `initialize` request.
+    // Depending on the client capabilities, the server supports different capabilities.
+    capabilities: OnceCell<Capabilities>,
+    // A simple in-memory file system to store the content of open files.
+    // The client will send the content of in-memory files on `textDocument/didOpen` and `textDocument/didChange`.
+    // This is only needed when the client supports `textDocument/formatting` request.
+    file_system: Arc<RwLock<LSPFileSystem>>,
+}
+
+impl LanguageServer for Backend {
+    /// Initialize the language server with the given parameters.
+    /// This method sets up workspace workers, capabilities, and starts the
+    /// [WorkspaceWorker]s if the client sent the configuration with initialization options.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#initialize>
+    #[expect(deprecated)] // `params.root_uri` is deprecated, we are only falling back to it if no workspace folder is provided
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        // initialization_options can be anything, so we are requesting `workspace/configuration` when no initialize options are provided
+        let options = params.initialization_options.and_then(|value| {
+            // the client supports the new settings object
+            if let Ok(new_settings) = serde_json::from_value::<Vec<WorkspaceOption>>(value.clone())
+            {
+                // ToDo: validate they have the same length as params.workspace_folders
+                return Some(new_settings);
+            }
+
+            // the client has deprecated settings and has a deprecated root uri.
+            // handle all things like the old way
+            if let (Some(deprecated_settings), Some(root_uri)) =
+                (value.get("settings"), params.root_uri.as_ref())
+            {
+                return Some(vec![WorkspaceOption {
+                    workspace_uri: root_uri.clone(),
+                    options: deprecated_settings.clone(),
+                }]);
+            }
+
+            // no workspace options could be generated fallback to default one or request when possible
+            None
+        });
+
+        let mut capabilities = Capabilities::from(params.capabilities);
+        let mut server_capabilities = server_capabilities();
+        for tool_builder in self.tool_builders.iter() {
+            tool_builder.server_capabilities(&mut server_capabilities, &mut capabilities);
+        }
+
+        info!("initialize: {options:?}");
+        info!(
+            "{} version: {}",
+            self.server_info.name,
+            self.server_info.version.as_deref().unwrap_or("unknown")
+        );
+        debug!("diagnostic model: {:?}", capabilities.diagnostic_mode);
+
+        // client sent workspace folders
+        let workers = if let Some(workspace_folders) = params.workspace_folders {
+            let uris: Vec<Uri> =
+                workspace_folders.iter().map(|folder| folder.uri.clone()).collect();
+            Self::assert_workspaces_are_valid_paths(&uris)?;
+
+            workspace_folders
+                .into_iter()
+                .map(|workspace_folder| {
+                    WorkspaceWorker::new(
+                        workspace_folder.uri,
+                        Arc::clone(&self.tool_builders),
+                        capabilities.diagnostic_mode.clone(),
+                    )
+                })
+                .collect()
+        // client sent deprecated root uri
+        } else if let Some(root_uri) = params.root_uri {
+            Self::assert_workspaces_are_valid_paths(std::slice::from_ref(&root_uri))?;
+
+            vec![WorkspaceWorker::new(
+                root_uri,
+                Arc::clone(&self.tool_builders),
+                capabilities.diagnostic_mode.clone(),
+            )]
+        // client is in single file mode, create no workers
+        } else {
+            vec![]
+        };
+
+        // When the client did not send our custom `initialization_options`,
+        // or the client does not support `workspace/configuration` request,
+        // start the linter. We do not start the linter when the client support the request,
+        // we will init the linter after requesting for the workspace configuration.
+        if !capabilities.workspace_configuration || options.is_some() {
+            let options = options.unwrap_or_default();
+
+            for worker in &workers {
+                let option = options
+                    .iter()
+                    .find(|workspace_option| {
+                        worker.get_root_uri() == &workspace_option.workspace_uri
+                    })
+                    .map(|workspace_options| workspace_options.options.clone())
+                    .unwrap_or_default();
+
+                debug!("starting worker in initialize with options: {option:?}");
+                worker.start_worker(option).await;
+            }
+        }
+
+        *self.workspace_workers.write().await = workers;
+
+        self.capabilities.set(capabilities).map_err(|err| {
+            let message = match err {
+                SetError::AlreadyInitializedError(_) => {
+                    "capabilities are already initialized".into()
+                }
+                SetError::InitializingError(_) => "initializing error".into(),
+            };
+
+            Error { code: ErrorCode::ParseError, message, data: None }
+        })?;
+
+        Ok(InitializeResult {
+            server_info: Some(self.server_info.clone()),
+            offset_encoding: None,
+            capabilities: server_capabilities,
+        })
+    }
+
+    /// It registers dynamic capabilities like file watchers and formatting if the client supports it.
+    /// It also starts the [WorkspaceWorker]s if they did not start during initialization.
+    /// If the client supports `workspace/configuration` request, it will request the configuration for each workspace folder
+    /// and start the [WorkspaceWorker]s with the received configuration.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#initialized>
+    async fn initialized(&self, _params: InitializedParams) {
+        debug!("oxc initialized.");
+        let Some(capabilities) = self.capabilities.get() else {
+            return;
+        };
+
+        let workers = &*self.workspace_workers.read().await;
+        let needed_configurations =
+            ConcurrentHashMap::with_capacity_and_hasher(workers.len(), FxBuildHasher);
+        let needed_configurations = needed_configurations.pin_owned();
+        for worker in workers {
+            if worker.needs_init_options().await {
+                needed_configurations.insert(worker.get_root_uri().clone(), worker);
+            }
+        }
+
+        if !needed_configurations.is_empty() {
+            let configurations = if capabilities.workspace_configuration {
+                self.request_workspace_configuration(needed_configurations.keys().collect()).await
+            } else {
+                // every worker should be initialized already in `initialize` request
+                vec![serde_json::Value::Null; needed_configurations.len()]
+            };
+
+            let known_files = self.file_system.read().await.keys();
+            let mut new_diagnostics = Vec::new();
+
+            for (index, worker) in needed_configurations.values().copied().enumerate() {
+                // get the configuration from the response and start the worker
+                let configuration = configurations.get(index).unwrap_or(&serde_json::Value::Null);
+                debug!("starting worker in initialize with options: {configuration:?}");
+                worker.start_worker(configuration.clone()).await;
+
+                // run diagnostics for all known files in the workspace of the worker.
+                // This is necessary because the worker was not started before.
+                for uri in &known_files {
+                    // Check if this worker is the most specific one for this URI
+                    let responsible_worker = Self::find_worker_for_uri(workers, uri);
+                    if responsible_worker.is_none_or(|w| !std::ptr::eq(w, worker)) {
+                        continue;
+                    }
+                    let content = self.file_system.read().await.get(uri);
+                    let diagnostics = worker.run_diagnostic(uri, content.as_deref()).await;
+                    match diagnostics {
+                        Err(err) => {
+                            error!("running diagnostics for {} failed: {err}", uri.as_str());
+                            if self.capabilities.get().is_some_and(|cap| cap.show_message) {
+                                self.client.show_message(MessageType::ERROR, err).await;
+                            }
+                        }
+                        Ok(diagnostics) => new_diagnostics.extend(diagnostics),
+                    }
+                }
+            }
+
+            if !new_diagnostics.is_empty() {
+                self.publish_all_diagnostics(new_diagnostics, ConcurrentHashMap::default()).await;
+            }
+        }
+
+        let mut registrations = vec![];
+
+        // init all file watchers
+        if capabilities.dynamic_watchers {
+            for worker in workers {
+                registrations.extend(worker.init_watchers().await);
+            }
+        }
+
+        if registrations.is_empty() {
+            return;
+        }
+        if let Err(err) = self.client.register_capability(registrations).await {
+            warn!("sending registerCapability.didChangeWatchedFiles failed: {err}");
+        }
+    }
+
+    /// This method clears all diagnostics and the in-memory file system.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#shutdown>
+    async fn shutdown(&self) -> Result<()> {
+        let mut clearing_diagnostics = Vec::new();
+
+        for worker in &*self.workspace_workers.read().await {
+            // shutdown each worker and collect the URIs to clear diagnostics.
+            // unregistering file watchers is not necessary, because the client will do it automatically on shutdown.
+            // some clients (`helix`) do not expect any requests after shutdown is sent.
+            let (uris, _) = worker.shutdown().await;
+            clearing_diagnostics.extend(uris);
+        }
+
+        // only clear diagnostics when we are using push diagnostics
+        if self.capabilities.get().is_some_and(|cap| cap.diagnostic_mode == DiagnosticMode::Push)
+            && !clearing_diagnostics.is_empty()
+        {
+            self.clear_diagnostics(clearing_diagnostics).await;
+        }
+        self.file_system.write().await.clear();
+
+        Ok(())
+    }
+
+    /// This method updates the configuration of each [WorkspaceWorker] and restarts them if necessary.
+    /// It also manages dynamic registrations for file watchers and formatting based on the new configuration.
+    /// It will remove/add dynamic registrations if the client supports it.
+    /// As an example, if a workspace changes the configuration file path, the file watcher will be updated.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#workspace_didChangeConfiguration>
+    async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
+        let workers = self.workspace_workers.read().await;
+        let mut new_diagnostics = Vec::new();
+        let mut removing_registrations = vec![];
+        let mut adding_registrations = vec![];
+
+        // when null, request configuration from client; otherwise, parse as per-workspace options or use as global configuration
+        let options = if params.settings == Value::Null {
+            None
+        } else {
+            serde_json::from_value::<Vec<WorkspaceOption>>(params.settings.clone()).ok().or_else(
+                || {
+                    // fallback to old configuration
+                    // for all workers (default only one)
+                    let options = workers
+                        .iter()
+                        .map(|worker| WorkspaceOption {
+                            workspace_uri: worker.get_root_uri().clone(),
+                            options: params.settings.clone(),
+                        })
+                        .collect();
+
+                    Some(options)
+                },
+            )
+        };
+
+        // the client passed valid options.
+        let resolved_options = if let Some(options) = options {
+            options
+            // else check if the client support workspace configuration requests
+        } else if self
+            .capabilities
+            .get()
+            .is_some_and(|capabilities| capabilities.workspace_configuration)
+        {
+            let configs = self
+                .request_workspace_configuration(
+                    workers.iter().map(WorkspaceWorker::get_root_uri).collect(),
+                )
+                .await;
+
+            // Only create WorkspaceOption when the config is Some
+            configs
+                .into_iter()
+                .enumerate()
+                .map(|(index, options)| WorkspaceOption {
+                    workspace_uri: workers[index].get_root_uri().clone(),
+                    options,
+                })
+                .collect::<Vec<_>>()
+        } else {
+            warn!(
+                "could not update the configuration for a worker. Send a custom configuration with `workspace/didChangeConfiguration` or support `workspace/configuration`."
+            );
+            return;
+        };
+
+        let mut needs_diagnostics_refresh = false;
+        let diagnostic_mode =
+            self.capabilities.get().map(|cap| cap.diagnostic_mode.clone()).unwrap_or_default();
+        let fs_guard = if diagnostic_mode == DiagnosticMode::Push {
+            Some(self.file_system.read().await)
+        } else {
+            None
+        };
+        let fs_ref = fs_guard.as_deref();
+
+        for option in resolved_options {
+            let Some(worker) =
+                workers.iter().find(|worker| worker.get_root_uri() == &option.workspace_uri)
+            else {
+                continue;
+            };
+
+            let (diagnostics, registrations, unregistrations) = worker
+                .did_change_configuration(option.options, &mut needs_diagnostics_refresh, fs_ref)
+                .await;
+
+            if let Some(diagnostics) = diagnostics {
+                new_diagnostics.extend(diagnostics);
+            }
+
+            removing_registrations.extend(unregistrations);
+            adding_registrations.extend(registrations);
+        }
+
+        if diagnostic_mode == DiagnosticMode::Push && !new_diagnostics.is_empty() {
+            self.publish_all_diagnostics(new_diagnostics, ConcurrentHashMap::default()).await;
+        }
+
+        if diagnostic_mode == DiagnosticMode::Pull && needs_diagnostics_refresh {
+            // In pull diagnostic model, we ask the client to refresh diagnostics
+            if let Err(err) = self.client.workspace_diagnostic_refresh().await {
+                warn!("sending workspace/diagnostic/refresh failed: {err}");
+            }
+        }
+
+        if !removing_registrations.is_empty()
+            && let Err(err) = self.client.unregister_capability(removing_registrations).await
+        {
+            warn!("sending unregisterCapability.didChangeWatchedFiles failed: {err}");
+        }
+        if !adding_registrations.is_empty()
+            && let Err(err) = self.client.register_capability(adding_registrations).await
+        {
+            warn!("sending registerCapability.didChangeWatchedFiles failed: {err}");
+        }
+    }
+
+    /// This notification is sent when a configuration file of a tool changes (example: `.oxlintrc.json`).
+    /// The server will re-lint the affected files and send updated diagnostics.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#workspace_didChangeWatchedFiles>
+    async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
+        let workers = self.workspace_workers.read().await;
+        // ToDo: what if an empty changes flag is passed?
+        debug!("watched file did change");
+
+        let mut new_diagnostics = Vec::new();
+        let mut removing_registrations = vec![];
+        let mut adding_registrations = vec![];
+
+        let mut needs_diagnostics_refresh = false;
+        let diagnostic_mode =
+            self.capabilities.get().map(|cap| cap.diagnostic_mode.clone()).unwrap_or_default();
+        let fs_guard = if diagnostic_mode == DiagnosticMode::Push {
+            Some(self.file_system.read().await)
+        } else {
+            None
+        };
+        let fs_ref = fs_guard.as_deref();
+
+        for file_event in &params.changes {
+            // We do not expect multiple changes from the same workspace folder.
+            // If we should consider it, we need to map the events to the workers first,
+            // to only restart the internal linter / diagnostics for once
+            let Some(worker) = Self::find_worker_for_uri(&workers, &file_event.uri) else {
+                continue;
+            };
+            let (diagnostics, registrations, unregistrations) = worker
+                .did_change_watched_files(file_event, &mut needs_diagnostics_refresh, fs_ref)
+                .await;
+
+            if let Some(diagnostics) = diagnostics {
+                new_diagnostics.extend(diagnostics);
+            }
+            removing_registrations.extend(unregistrations);
+            adding_registrations.extend(registrations);
+        }
+
+        if diagnostic_mode == DiagnosticMode::Push && !new_diagnostics.is_empty() {
+            self.publish_all_diagnostics(new_diagnostics, ConcurrentHashMap::default()).await;
+        }
+
+        if diagnostic_mode == DiagnosticMode::Pull && needs_diagnostics_refresh {
+            // In pull diagnostic model, we ask the client to refresh diagnostics
+            if let Err(err) = self.client.workspace_diagnostic_refresh().await {
+                warn!("sending workspace/diagnostic/refresh failed: {err}");
+            }
+        }
+
+        if self.capabilities.get().is_some_and(|capabilities| capabilities.dynamic_watchers) {
+            if !removing_registrations.is_empty()
+                && let Err(err) = self.client.unregister_capability(removing_registrations).await
+            {
+                warn!("sending unregisterCapability.didChangeWatchedFiles failed: {err}");
+            }
+
+            if !adding_registrations.is_empty()
+                && let Err(err) = self.client.register_capability(adding_registrations).await
+            {
+                warn!("sending registerCapability.didChangeWatchedFiles failed: {err}");
+            }
+        }
+    }
+
+    /// The server will start new [WorkspaceWorker]s for added workspace folders
+    /// and stop and remove [WorkspaceWorker]s for removed workspace folders including:
+    /// - clearing diagnostics
+    /// - unregistering file watchers
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#workspace_didChangeWorkspaceFolders>
+    async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
+        let mut workers = self.workspace_workers.write().await;
+        let mut cleared_diagnostics = vec![];
+        let mut added_registrations = vec![];
+        let mut removed_registrations = vec![];
+
+        for folder in params.event.removed {
+            let Some((index, worker)) =
+                workers.iter().enumerate().find(|(_, worker)| worker.get_root_uri() == &folder.uri)
+            else {
+                continue;
+            };
+            let (uris, unregistrations) = worker.shutdown().await;
+            cleared_diagnostics.extend(uris);
+            removed_registrations.extend(unregistrations);
+            workers.remove(index);
+        }
+
+        let diagnostic_mode =
+            self.capabilities.get().map(|cap| cap.diagnostic_mode.clone()).unwrap_or_default();
+
+        if diagnostic_mode == DiagnosticMode::Push && !cleared_diagnostics.is_empty() {
+            self.clear_diagnostics(cleared_diagnostics).await;
+        }
+
+        // client support `workspace/configuration` request
+        if self.capabilities.get().is_some_and(|capabilities| capabilities.workspace_configuration)
+        {
+            let configurations = self
+                .request_workspace_configuration(
+                    params.event.added.iter().map(|w| &w.uri).collect(),
+                )
+                .await;
+
+            for (index, folder) in params.event.added.into_iter().enumerate() {
+                let worker = WorkspaceWorker::new(
+                    folder.uri,
+                    Arc::clone(&self.tool_builders),
+                    diagnostic_mode.clone(),
+                );
+                // get the configuration from the response and init the linter
+                let options = configurations.get(index).unwrap_or(&serde_json::Value::Null);
+                worker.start_worker(options.clone()).await;
+
+                added_registrations.extend(worker.init_watchers().await);
+                workers.push(worker);
+            }
+        // client does not support the request
+        } else {
+            for folder in params.event.added {
+                let worker = WorkspaceWorker::new(
+                    folder.uri,
+                    Arc::clone(&self.tool_builders),
+                    diagnostic_mode.clone(),
+                );
+                // use default options
+                worker.start_worker(serde_json::Value::Null).await;
+                added_registrations.extend(worker.init_watchers().await);
+                workers.push(worker);
+            }
+        }
+
+        // tell client to stop / start watching for files
+        if self.capabilities.get().is_some_and(|capabilities| capabilities.dynamic_watchers) {
+            if !added_registrations.is_empty()
+                && let Err(err) = self.client.register_capability(added_registrations).await
+            {
+                warn!("sending registerCapability.didChangeWatchedFiles failed: {err}");
+            }
+
+            if !removed_registrations.is_empty()
+                && let Err(err) = self.client.unregister_capability(removed_registrations).await
+            {
+                warn!("sending unregisterCapability.didChangeWatchedFiles failed: {err}");
+            }
+        }
+    }
+
+    /// It will remove the in-memory file content, because the file is saved to disk.
+    /// It will re-lint the file and send updated diagnostics, if necessary.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#textDocument_didSave>
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        debug!("oxc server did save");
+        let uri = params.text_document.uri;
+        let workers = self.workspace_workers.read().await;
+        let Some(worker) = Self::find_worker_for_uri(&workers, &uri) else {
+            return;
+        };
+
+        if self.capabilities.get().is_some_and(|cap| cap.diagnostic_mode == DiagnosticMode::Push) {
+            match worker.run_diagnostic_on_save(&uri, params.text.as_deref()).await {
+                Err(err) => {
+                    error!("running diagnostics for {} failed: {err}", uri.as_str());
+                    if self.capabilities.get().is_some_and(|cap| cap.show_message) {
+                        self.client.show_message(MessageType::ERROR, err).await;
+                    }
+                }
+                Ok(diagnostics) => {
+                    if !diagnostics.is_empty() {
+                        self.publish_all_diagnostics(diagnostics, ConcurrentHashMap::default())
+                            .await;
+                    }
+                }
+            }
+        }
+    }
+    /// It will update the in-memory file content if the client supports dynamic formatting.
+    /// It will re-lint the file and send updated diagnostics, if necessary.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#textDocument_didChange>
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        let uri = params.text_document.uri;
+        let workers = self.workspace_workers.read().await;
+        let Some(worker) = Self::find_worker_for_uri(&workers, &uri) else {
+            return;
+        };
+        let content = params.content_changes.first().map(|c| c.text.clone());
+
+        if let Some(content) = &content {
+            self.file_system.write().await.set(uri.clone(), content.clone());
+        }
+
+        if self.capabilities.get().is_some_and(|cap| cap.diagnostic_mode == DiagnosticMode::Push) {
+            match worker.run_diagnostic_on_change(&uri, content.as_deref()).await {
+                Err(err) => {
+                    error!("running diagnostics for {} failed: {err}", uri.as_str());
+                    if self.capabilities.get().is_some_and(|cap| cap.show_message) {
+                        self.client.show_message(MessageType::ERROR, err).await;
+                    }
+                }
+                Ok(diagnostics) => {
+                    if !diagnostics.is_empty() {
+                        let version_map = ConcurrentHashMap::default();
+                        version_map.pin().insert(uri.clone(), params.text_document.version);
+                        self.publish_all_diagnostics(diagnostics, version_map).await;
+                    }
+                }
+            }
+        }
+    }
+
+    /// It will add the in-memory file content if the client supports dynamic formatting.
+    /// It will lint the file and send diagnostics, if necessary.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#textDocument_didOpen>
+    async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        let uri = params.text_document.uri;
+        let workers = self.workspace_workers.read().await;
+        let Some(worker) = Self::find_worker_for_uri(&workers, &uri) else {
+            return;
+        };
+
+        let content = params.text_document.text;
+
+        self.file_system.write().await.set(uri.clone(), content.clone());
+
+        if self.capabilities.get().is_some_and(|cap| cap.diagnostic_mode == DiagnosticMode::Push) {
+            match worker.run_diagnostic(&uri, Some(&content)).await {
+                Err(err) => {
+                    error!("running diagnostics for {} failed: {err}", uri.as_str());
+                    if self.capabilities.get().is_some_and(|cap| cap.show_message) {
+                        self.client.show_message(MessageType::ERROR, err).await;
+                    }
+                }
+                Ok(diagnostics) => {
+                    if !diagnostics.is_empty() {
+                        let version_map = ConcurrentHashMap::default();
+                        version_map.pin().insert(uri.clone(), params.text_document.version);
+                        self.publish_all_diagnostics(diagnostics, version_map).await;
+                    }
+                }
+            }
+        }
+    }
+
+    /// It will remove the in-memory file content if the client supports dynamic formatting.
+    /// It will clear the diagnostics (internally) for the closed file.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#textDocument_didClose>
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        let uri = &params.text_document.uri;
+        let workers = self.workspace_workers.read().await;
+        let Some(worker) = Self::find_worker_for_uri(&workers, uri) else {
+            return;
+        };
+
+        self.file_system.write().await.remove(uri);
+        worker.remove_uri_cache(&params.text_document.uri).await;
+    }
+
+    /// It will return code actions or commands for the given range.
+    /// The client can send `context.only` to `source.fixAll.oxc` to fix all diagnostics of the file.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#textDocument_codeAction>
+    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+        let uri = &params.text_document.uri;
+        let workers = self.workspace_workers.read().await;
+        let Some(worker) = Self::find_worker_for_uri(&workers, uri) else {
+            return Ok(None);
+        };
+
+        let code_actions =
+            worker.get_code_actions_or_commands(uri, &params.range, params.context.only).await;
+
+        if code_actions.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(code_actions))
+    }
+
+    /// It will execute the given command with the provided arguments.
+    /// Currently, only the `fixAll` command is supported.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#workspace_executeCommand>
+    async fn execute_command(
+        &self,
+        params: ExecuteCommandParams,
+    ) -> Result<Option<serde_json::Value>> {
+        for worker in self.workspace_workers.read().await.iter() {
+            match worker.execute_command(&params.command, params.arguments.clone()).await {
+                Ok(changes) => {
+                    let Some(edit) = changes else {
+                        continue;
+                    };
+
+                    if !self.capabilities.get().unwrap().workspace_apply_edit {
+                        return Err(Error::invalid_params(
+                            "client does not support workspace apply edit",
+                        ));
+                    }
+
+                    self.client.apply_edit(edit).await?;
+                }
+                Err(err) => return Err(Error::new(err)),
+            }
+        }
+
+        Ok(None)
+    }
+
+    async fn diagnostic(
+        &self,
+        params: DocumentDiagnosticParams,
+    ) -> Result<DocumentDiagnosticReportResult> {
+        let uri = &params.text_document.uri;
+        let workers = self.workspace_workers.read().await;
+        let Some(worker) = Self::find_worker_for_uri(&workers, uri) else {
+            return Ok(DocumentDiagnosticReportResult::Report(DocumentDiagnosticReport::Full(
+                RelatedFullDocumentDiagnosticReport::default(),
+            )));
+        };
+        let diagnostics =
+            worker.run_diagnostic(uri, self.file_system.read().await.get(uri).as_deref()).await;
+
+        let diagnostics = match diagnostics {
+            Err(err) => {
+                error!("running diagnostics for {} failed: {err}", uri.as_str());
+                return Err(Error {
+                    code: ErrorCode::ServerError(1),
+                    message: Cow::Owned(err),
+                    data: None,
+                });
+            }
+            Ok(diagnostics) => diagnostics,
+        };
+
+        let uri_diagnostics = diagnostics
+            .iter()
+            .filter(|(diag_uri, _)| diag_uri == uri)
+            .flat_map(|(_, diags)| diags.clone())
+            .collect::<Vec<_>>();
+
+        let related_diagnostics =
+            diagnostics.into_iter().filter(|(diag_uri, _)| diag_uri != uri).collect::<Vec<_>>();
+
+        Ok(DocumentDiagnosticReportResult::Report(DocumentDiagnosticReport::Full(
+            RelatedFullDocumentDiagnosticReport {
+                full_document_diagnostic_report: FullDocumentDiagnosticReport {
+                    items: uri_diagnostics,
+                    ..Default::default()
+                },
+                related_documents: if related_diagnostics.is_empty() {
+                    None
+                } else {
+                    Some(
+                        related_diagnostics
+                            .into_iter()
+                            .map(|(diag_uri, diags)| {
+                                (
+                                    diag_uri,
+                                    DocumentDiagnosticReportKind::Full(
+                                        FullDocumentDiagnosticReport {
+                                            items: diags,
+                                            ..Default::default()
+                                        },
+                                    ),
+                                )
+                            })
+                            .collect(),
+                    )
+                },
+            },
+        )))
+    }
+
+    /// It will return text edits to format the document if formatting is enabled for the workspace.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#textDocument_formatting>
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let uri = &params.text_document.uri;
+        let workers = self.workspace_workers.read().await;
+        let Some(worker) = Self::find_worker_for_uri(&workers, uri) else {
+            return Ok(None);
+        };
+        match worker.format_file(uri, self.file_system.read().await.get(uri).as_deref()).await {
+            Ok(edits) => {
+                if edits.is_empty() {
+                    return Ok(None);
+                }
+                Ok(Some(edits))
+            }
+            Err(err) => {
+                Err(Error { code: ErrorCode::ServerError(1), message: Cow::Owned(err), data: None })
+            }
+        }
+    }
+}
+
+impl Backend {
+    /// Create a new Backend with the given client.
+    /// The Backend will manage multiple [WorkspaceWorker]s and their configurations.
+    /// It also holds the capabilities of the language server and an in-memory file system.
+    /// The client is used to communicate with the LSP client.
+    pub fn new(client: Client, server_info: ServerInfo, tools: Vec<Box<dyn ToolBuilder>>) -> Self {
+        Self {
+            client,
+            server_info,
+            tool_builders: Arc::from(tools),
+            workspace_workers: Arc::new(RwLock::new(vec![])),
+            capabilities: OnceCell::new(),
+            file_system: Arc::new(RwLock::new(LSPFileSystem::default())),
+        }
+    }
+
+    /// Request the workspace configuration from the client
+    /// and return the options for each workspace folder.
+    /// The check if the client support workspace configuration, should be done before.
+    async fn request_workspace_configuration(&self, uris: Vec<&Uri>) -> Vec<serde_json::Value> {
+        let length = uris.len();
+        let config_items = uris
+            .into_iter()
+            .map(|uri| ConfigurationItem {
+                scope_uri: Some(uri.clone()),
+                section: Some("oxc_language_server".into()),
+            })
+            .collect::<Vec<_>>();
+
+        let Ok(configs) = self.client.configuration(config_items).await else {
+            debug!("failed to get configuration");
+            // return none for each workspace folder
+            return vec![serde_json::Value::Null; length];
+        };
+
+        debug_assert!(
+            configs.len() == length,
+            "the number of configuration items should be the same as the number of workspace folders"
+        );
+
+        configs
+    }
+
+    async fn clear_diagnostics(&self, uris: Vec<Uri>) {
+        self.publish_all_diagnostics(
+            uris.into_iter().map(|uri| (uri, vec![])).collect(),
+            ConcurrentHashMap::default(),
+        )
+        .await;
+    }
+
+    /// Publish diagnostics for all files.
+    async fn publish_all_diagnostics(
+        &self,
+        result: Vec<(Uri, Vec<Diagnostic>)>,
+        version_map: ConcurrentHashMap<Uri, i32>,
+    ) {
+        join_all(result.into_iter().map(|(uri, diagnostics)| {
+            let version = version_map.pin().get(&uri).copied();
+            self.client.publish_diagnostics(uri, diagnostics, version)
+        }))
+        .await;
+    }
+
+    /// Assert that all workspace URIs are valid file paths.
+    /// If any URI is not a valid file path, return an error.
+    ///
+    /// The server requires file paths to work with the local file system, so we need to ensure that all workspace URIs can be converted to valid file paths.
+    fn assert_workspaces_are_valid_paths(workspaces: &[Uri]) -> Result<()> {
+        for uri in workspaces {
+            if uri.to_file_path().is_none() {
+                return Err(Error::invalid_params(format!(
+                    "workspace URI is not a valid file path: {}",
+                    uri.as_str()
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Find the most specific workspace worker for a given URI.
+    /// When multiple workers are responsible for a URI (e.g., in nested workspaces),
+    /// this returns the worker with the longest matching path.
+    ///
+    /// For example, if we have workspaces `[workspace, workspace/deeper]` and the URI is
+    /// `workspace/deeper/file.js`, both workers match, but `workspace/deeper` is more specific.
+    fn find_worker_for_uri<'a>(
+        workers: &'a [WorkspaceWorker],
+        uri: &Uri,
+    ) -> Option<&'a WorkspaceWorker> {
+        let file_path = uri.to_file_path()?;
+
+        workers
+            .iter()
+            .filter_map(|worker| {
+                let root_path = worker.get_root_uri().to_file_path()?;
+                if file_path.starts_with(&root_path) {
+                    Some((worker, root_path.as_os_str().len()))
+                } else {
+                    None
+                }
+            })
+            .max_by_key(|(_, len)| *len)
+            .map(|(worker, _)| worker)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use tower_lsp_server::ls_types::Uri;
+
+    use super::Backend;
+    use crate::{DiagnosticMode, worker::WorkspaceWorker};
+
+    #[test]
+    fn test_find_worker_for_uri_nested_workspaces() {
+        let workspace = WorkspaceWorker::new(
+            "file:///path/to/workspace".parse().unwrap(),
+            Arc::new([]),
+            DiagnosticMode::None,
+        );
+        let workspace_deeper = WorkspaceWorker::new(
+            "file:///path/to/workspace/deeper".parse().unwrap(),
+            Arc::new([]),
+            DiagnosticMode::None,
+        );
+        let workers = vec![workspace, workspace_deeper];
+
+        // File in deeper workspace should match the deeper worker
+        let file_in_deeper: Uri = "file:///path/to/workspace/deeper/file.js".parse().unwrap();
+        let worker = Backend::find_worker_for_uri(&workers, &file_in_deeper);
+        assert!(worker.is_some());
+        assert_eq!(worker.unwrap().get_root_uri().as_str(), "file:///path/to/workspace/deeper");
+
+        // File in parent workspace should match the parent worker
+        let file_in_parent: Uri = "file:///path/to/workspace/file.js".parse().unwrap();
+        let worker = Backend::find_worker_for_uri(&workers, &file_in_parent);
+        assert!(worker.is_some());
+        assert_eq!(worker.unwrap().get_root_uri().as_str(), "file:///path/to/workspace");
+
+        // File outside both workspaces should not match any worker
+        let file_outside: Uri = "file:///path/to/other/file.js".parse().unwrap();
+        let worker = Backend::find_worker_for_uri(&workers, &file_outside);
+        assert!(worker.is_none());
+    }
+
+    #[test]
+    fn test_find_worker_for_uri_similar_names() {
+        let workspace = WorkspaceWorker::new(
+            "file:///path/to/workspace".parse().unwrap(),
+            Arc::new([]),
+            DiagnosticMode::None,
+        );
+        let workspace2 = WorkspaceWorker::new(
+            "file:///path/to/workspace-2".parse().unwrap(),
+            Arc::new([]),
+            DiagnosticMode::None,
+        );
+        let workers = vec![workspace, workspace2];
+
+        // File in workspace-2 should match workspace-2 only
+        let file_in_workspace2: Uri = "file:///path/to/workspace-2/file.js".parse().unwrap();
+        let worker = Backend::find_worker_for_uri(&workers, &file_in_workspace2);
+        assert!(worker.is_some());
+        assert_eq!(worker.unwrap().get_root_uri().as_str(), "file:///path/to/workspace-2");
+
+        // File in workspace should match workspace only
+        let file_in_workspace: Uri = "file:///path/to/workspace/file.js".parse().unwrap();
+        let worker = Backend::find_worker_for_uri(&workers, &file_in_workspace);
+        assert!(worker.is_some());
+        assert_eq!(worker.unwrap().get_root_uri().as_str(), "file:///path/to/workspace");
+    }
+
+    #[test]
+    fn test_find_worker_for_uri_single_workspace() {
+        let workspace = WorkspaceWorker::new(
+            "file:///path/to/workspace".parse().unwrap(),
+            Arc::new([]),
+            DiagnosticMode::None,
+        );
+        let workers = vec![workspace];
+
+        // File in workspace should match
+        let file_in_workspace: Uri = "file:///path/to/workspace/file.js".parse().unwrap();
+        let worker = Backend::find_worker_for_uri(&workers, &file_in_workspace);
+        assert!(worker.is_some());
+        assert_eq!(worker.unwrap().get_root_uri().as_str(), "file:///path/to/workspace");
+
+        // File outside workspace should not match
+        let file_outside: Uri = "file:///path/to/other/file.js".parse().unwrap();
+        let worker = Backend::find_worker_for_uri(&workers, &file_outside);
+        assert!(worker.is_none());
+    }
+
+    #[test]
+    fn test_find_worker_for_uri_no_workers() {
+        let workers: Vec<WorkspaceWorker> = vec![];
+
+        let file: Uri = "file:///path/to/workspace/file.js".parse().unwrap();
+        let worker = Backend::find_worker_for_uri(&workers, &file);
+        assert!(worker.is_none());
+    }
+
+    #[test]
+    fn test_find_worker_for_uri_invalid_uri() {
+        let workspace = WorkspaceWorker::new(
+            "file:///path/to/workspace".parse().unwrap(),
+            Arc::new([]),
+            DiagnosticMode::None,
+        );
+        let workers = vec![workspace];
+
+        // Non-file URI should not match
+        let non_file_uri: Uri = "https://example.com/file.js".parse().unwrap();
+        let worker = Backend::find_worker_for_uri(&workers, &non_file_uri);
+        assert!(worker.is_none());
+    }
+}

@@ -2,12 +2,12 @@ use std::{cmp::Ordering, sync::Arc};
 
 use rustc_hash::FxHashSet;
 
-use oxc_allocator::{Address, Allocator, GetAddress};
+use oxc_allocator::{Address, Allocator, GetAddress, UnstableAddress};
 use oxc_ast::ast::*;
-use oxc_ast_visit::VisitMut;
+use oxc_ast_visit::{VisitMut, walk_mut};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_parser::Parser;
-use oxc_semantic::{IsGlobalReference, ScopeFlags, Scoping};
+use oxc_semantic::{IsGlobalReference, ReferenceFlags, ScopeFlags, Scoping};
 use oxc_span::{CompactStr, SPAN, SourceType};
 use oxc_syntax::identifier::is_identifier_name;
 use oxc_traverse::{Ancestor, Traverse, traverse_mut};
@@ -208,6 +208,7 @@ impl ReplaceGlobalDefinesConfig {
 #[must_use]
 pub struct ReplaceGlobalDefinesReturn {
     pub scoping: Scoping,
+    pub changed: bool,
 }
 
 /// Replace Global Defines.
@@ -227,6 +228,7 @@ pub struct ReplaceGlobalDefines<'a> {
     /// When `exit` the node, reset the `Lock` to `None` to make sure not affect other
     /// transformation.
     ast_node_lock: Option<Address>,
+    changed: bool,
 }
 
 impl<'a> Traverse<'a, ()> for ReplaceGlobalDefines<'a> {
@@ -237,6 +239,7 @@ impl<'a> Traverse<'a, ()> for ReplaceGlobalDefines<'a> {
         let is_replaced =
             self.replace_identifier_defines(expr, ctx) || self.replace_dot_defines(expr, ctx);
         if is_replaced {
+            self.mark_as_changed();
             self.ast_node_lock = Some(expr.address());
         }
     }
@@ -256,9 +259,9 @@ impl<'a> Traverse<'a, ()> for ReplaceGlobalDefines<'a> {
             return;
         }
         if self.replace_define_with_assignment_expr(node, ctx) {
-            // `AssignmentExpression` is stored in a `Box`, so we can use `from_ptr` to get
-            // the stable address
-            self.ast_node_lock = Some(Address::from_ptr(node));
+            self.mark_as_changed();
+            // `AssignmentExpression` is stored in a `Box`, so has a stable memory location
+            self.ast_node_lock = Some(node.unstable_address());
         }
     }
 
@@ -267,7 +270,8 @@ impl<'a> Traverse<'a, ()> for ReplaceGlobalDefines<'a> {
         node: &mut AssignmentExpression<'a>,
         _: &mut TraverseCtx<'a>,
     ) {
-        if self.ast_node_lock == Some(Address::from_ptr(node)) {
+        // `AssignmentExpression` is stored in a `Box`, so has a stable memory location
+        if self.ast_node_lock == Some(node.unstable_address()) {
             self.ast_node_lock = None;
         }
     }
@@ -275,7 +279,11 @@ impl<'a> Traverse<'a, ()> for ReplaceGlobalDefines<'a> {
 
 impl<'a> ReplaceGlobalDefines<'a> {
     pub fn new(allocator: &'a Allocator, config: ReplaceGlobalDefinesConfig) -> Self {
-        Self { allocator, config, ast_node_lock: None }
+        Self { allocator, config, ast_node_lock: None, changed: false }
+    }
+
+    fn mark_as_changed(&mut self) {
+        self.changed = true;
     }
 
     pub fn build(
@@ -284,11 +292,11 @@ impl<'a> ReplaceGlobalDefines<'a> {
         program: &mut Program<'a>,
     ) -> ReplaceGlobalDefinesReturn {
         let scoping = traverse_mut(self, self.allocator, program, scoping, ());
-        ReplaceGlobalDefinesReturn { scoping }
+        ReplaceGlobalDefinesReturn { scoping, changed: self.changed }
     }
 
     // Construct a new expression because we don't have ast clone right now.
-    fn parse_value(&self, source_text: &str) -> Expression<'a> {
+    fn parse_value(&self, source_text: &str, ctx: &mut TraverseCtx<'a>) -> Expression<'a> {
         // Allocate the string lazily because replacement happens rarely.
         let source_text = self.allocator.alloc_str(source_text);
         // Unwrapping here, it should already be checked by [ReplaceGlobalDefinesConfig::new].
@@ -296,12 +304,16 @@ impl<'a> ReplaceGlobalDefines<'a> {
             .parse_expression()
             .unwrap();
 
-        RemoveSpans.visit_expression(&mut expr);
+        UpdateReplacedExpression { ctx }.visit_expression(&mut expr);
 
         expr
     }
 
-    fn replace_identifier_defines(&self, expr: &mut Expression<'a>, ctx: &TraverseCtx<'a>) -> bool {
+    fn replace_identifier_defines(
+        &self,
+        expr: &mut Expression<'a>,
+        ctx: &mut TraverseCtx<'a>,
+    ) -> bool {
         match expr {
             Expression::Identifier(ident) => {
                 if let Some(new_expr) = self.replace_identifier_define_impl(ident, ctx) {
@@ -315,7 +327,7 @@ impl<'a> ReplaceGlobalDefines<'a> {
             {
                 for (key, value) in &self.config.0.identifier.identifier_defines {
                     if key.as_str() == "this" {
-                        let value = self.parse_value(value);
+                        let value = self.parse_value(value, ctx);
                         *expr = value;
 
                         return true;
@@ -330,14 +342,22 @@ impl<'a> ReplaceGlobalDefines<'a> {
     fn replace_identifier_define_impl(
         &self,
         ident: &oxc_allocator::Box<'_, IdentifierReference<'_>>,
-        ctx: &TraverseCtx<'a>,
+        ctx: &mut TraverseCtx<'a>,
     ) -> Option<Expression<'a>> {
-        if !ident.is_global_reference(ctx.scoping()) {
-            return None;
+        if let Some(symbol_id) = ident
+            .reference_id
+            .get()
+            .and_then(|reference_id| ctx.scoping().get_reference(reference_id).symbol_id())
+        {
+            // Ignore `declare const IS_PROD: boolean;`
+            if !ctx.scoping().symbol_flags(symbol_id).is_ambient() {
+                return None;
+            }
         }
+        // This is a global variable, including ambient variants such as `declare const`.
         for (key, value) in &self.config.0.identifier.identifier_defines {
             if ident.name.as_str() == key {
-                let value = self.parse_value(value);
+                let value = self.parse_value(value, ctx);
                 return Some(value);
             }
         }
@@ -347,17 +367,17 @@ impl<'a> ReplaceGlobalDefines<'a> {
     fn replace_define_with_assignment_expr(
         &self,
         node: &mut AssignmentExpression<'a>,
-        ctx: &TraverseCtx<'a>,
+        ctx: &mut TraverseCtx<'a>,
     ) -> bool {
         let new_left = node
             .left
             .as_simple_assignment_target_mut()
             .and_then(|item| match item {
                 SimpleAssignmentTarget::ComputedMemberExpression(computed_member_expr) => {
-                    self.replace_dot_computed_member_expr(ctx, computed_member_expr)
+                    self.replace_dot_computed_member_expr(computed_member_expr, ctx)
                 }
                 SimpleAssignmentTarget::StaticMemberExpression(member) => {
-                    self.replace_dot_static_member_expr(ctx, member)
+                    self.replace_dot_static_member_expr(member, ctx)
                 }
                 SimpleAssignmentTarget::AssignmentTargetIdentifier(ident) => {
                     self.replace_identifier_define_impl(ident, ctx)
@@ -372,16 +392,16 @@ impl<'a> ReplaceGlobalDefines<'a> {
         false
     }
 
-    fn replace_dot_defines(&self, expr: &mut Expression<'a>, ctx: &TraverseCtx<'a>) -> bool {
+    fn replace_dot_defines(&self, expr: &mut Expression<'a>, ctx: &mut TraverseCtx<'a>) -> bool {
         match expr {
             Expression::ChainExpression(chain) => {
                 let Some(new_expr) =
                     chain.expression.as_member_expression_mut().and_then(|item| match item {
                         MemberExpression::ComputedMemberExpression(computed_member_expr) => {
-                            self.replace_dot_computed_member_expr(ctx, computed_member_expr)
+                            self.replace_dot_computed_member_expr(computed_member_expr, ctx)
                         }
                         MemberExpression::StaticMemberExpression(member) => {
-                            self.replace_dot_static_member_expr(ctx, member)
+                            self.replace_dot_static_member_expr(member, ctx)
                         }
                         MemberExpression::PrivateFieldExpression(_) => None,
                     })
@@ -392,25 +412,25 @@ impl<'a> ReplaceGlobalDefines<'a> {
                 return true;
             }
             Expression::StaticMemberExpression(member) => {
-                if let Some(new_expr) = self.replace_dot_static_member_expr(ctx, member) {
+                if let Some(new_expr) = self.replace_dot_static_member_expr(member, ctx) {
                     *expr = new_expr;
                     return true;
                 }
             }
             Expression::ComputedMemberExpression(member) => {
-                if let Some(new_expr) = self.replace_dot_computed_member_expr(ctx, member) {
+                if let Some(new_expr) = self.replace_dot_computed_member_expr(member, ctx) {
                     *expr = new_expr;
                     return true;
                 }
             }
             Expression::MetaProperty(meta_property) => {
-                if let Some(replacement) = &self.config.0.import_meta {
-                    if meta_property.meta.name == "import" && meta_property.property.name == "meta"
-                    {
-                        let value = self.parse_value(replacement);
-                        *expr = value;
-                        return true;
-                    }
+                if let Some(replacement) = &self.config.0.import_meta
+                    && meta_property.meta.name == "import"
+                    && meta_property.property.name == "meta"
+                {
+                    let value = self.parse_value(replacement, ctx);
+                    *expr = value;
+                    return true;
                 }
             }
             _ => {}
@@ -420,8 +440,8 @@ impl<'a> ReplaceGlobalDefines<'a> {
 
     fn replace_dot_computed_member_expr(
         &self,
-        ctx: &TraverseCtx<'a>,
         member: &ComputedMemberExpression<'a>,
+        ctx: &mut TraverseCtx<'a>,
     ) -> Option<Expression<'a>> {
         for dot_define in &self.config.0.dot {
             if Self::is_dot_define(
@@ -429,7 +449,7 @@ impl<'a> ReplaceGlobalDefines<'a> {
                 dot_define,
                 DotDefineMemberExpression::ComputedMemberExpression(member),
             ) {
-                let value = self.parse_value(&dot_define.value);
+                let value = self.parse_value(&dot_define.value, ctx);
                 return Some(value);
             }
         }
@@ -439,8 +459,8 @@ impl<'a> ReplaceGlobalDefines<'a> {
 
     fn replace_dot_static_member_expr(
         &self,
-        ctx: &TraverseCtx<'a>,
         member: &StaticMemberExpression<'a>,
+        ctx: &mut TraverseCtx<'a>,
     ) -> Option<Expression<'a>> {
         for dot_define in &self.config.0.dot {
             if Self::is_dot_define(
@@ -448,13 +468,13 @@ impl<'a> ReplaceGlobalDefines<'a> {
                 dot_define,
                 DotDefineMemberExpression::StaticMemberExpression(member),
             ) {
-                let value = self.parse_value(&dot_define.value);
+                let value = self.parse_value(&dot_define.value, ctx);
                 return Some(destructing_dot_define_optimizer(value, ctx));
             }
         }
         for meta_property_define in &self.config.0.meta_property {
             if Self::is_meta_property_define(meta_property_define, member) {
-                let value = self.parse_value(&meta_property_define.value);
+                let value = self.parse_value(&meta_property_define.value, ctx);
                 return Some(destructing_dot_define_optimizer(value, ctx));
             }
         }
@@ -465,6 +485,11 @@ impl<'a> ReplaceGlobalDefines<'a> {
         meta_define: &MetaPropertyDefine,
         member: &StaticMemberExpression<'a>,
     ) -> bool {
+        enum WildCardStatus {
+            None,
+            Pending,
+            Matched,
+        }
         if meta_define.parts.is_empty() && meta_define.postfix_wildcard {
             match &member.object {
                 Expression::MetaProperty(meta) => {
@@ -476,13 +501,18 @@ impl<'a> ReplaceGlobalDefines<'a> {
         debug_assert!(!meta_define.parts.is_empty());
 
         let mut current_part_member_expression = Some(member);
-        let mut cur_part_name = &member.property.name;
+        let mut cur_part_name: &str = &member.property.name;
         let mut is_full_match = true;
         let mut i = meta_define.parts.len() - 1;
         let mut has_matched_part = false;
+        let mut wildcard_status = if meta_define.postfix_wildcard {
+            WildCardStatus::Pending
+        } else {
+            WildCardStatus::None
+        };
         loop {
             let part = &meta_define.parts[i];
-            let matched = cur_part_name.as_str() == part;
+            let matched = cur_part_name == part;
             if matched {
                 has_matched_part = true;
             } else {
@@ -493,10 +523,15 @@ impl<'a> ReplaceGlobalDefines<'a> {
                 // import.res.meta.env // should not matched
                 // ```
                 // So we use has_matched_part to track if any part has matched.
-
-                if !meta_define.postfix_wildcard || has_matched_part {
+                // `None` means there is no postfix wildcard defined, so any part not matched should return false
+                // `Matched` means there is a postfix wildcard defined, and already matched a part, so any further
+                // not matched part should return false
+                if matches!(wildcard_status, WildCardStatus::None | WildCardStatus::Matched)
+                    || has_matched_part
+                {
                     return false;
                 }
+                wildcard_status = WildCardStatus::Matched;
             }
 
             current_part_member_expression = if let Some(member) = current_part_member_expression {
@@ -510,7 +545,7 @@ impl<'a> ReplaceGlobalDefines<'a> {
                             // `import.meta.env` should not match `import.meta.env.*`
                             return has_matched_part && !is_full_match;
                         }
-                        return true;
+                        return i == 0;
                     }
                     Expression::Identifier(_) => {
                         return false;
@@ -545,13 +580,14 @@ impl<'a> ReplaceGlobalDefines<'a> {
     ) -> bool {
         debug_assert!(dot_define.parts.len() > 1);
         let should_replace_this_expr = should_replace_this_expr(ctx.current_scope_flags());
-        let Some(mut cur_part_name) = member.name() else {
+        let Some(cur_part_name) = member.name() else {
             return false;
         };
+        let mut cur_part_name: &str = cur_part_name.as_str();
         let mut current_part_member_expression = Some(member);
 
         for (i, part) in dot_define.parts.iter().enumerate().rev() {
-            if cur_part_name.as_str() != part {
+            if cur_part_name != part {
                 return false;
             }
             if i == 0 {
@@ -566,7 +602,7 @@ impl<'a> ReplaceGlobalDefines<'a> {
                     }
                     Expression::ComputedMemberExpression(computed_member) => {
                         static_property_name_of_computed_expr(computed_member).map(|name| {
-                            cur_part_name = name;
+                            cur_part_name = name.as_str();
                             DotDefineMemberExpression::ComputedMemberExpression(computed_member)
                         })
                     }
@@ -578,7 +614,26 @@ impl<'a> ReplaceGlobalDefines<'a> {
                         None
                     }
                     Expression::ThisExpression(_) if should_replace_this_expr => {
-                        cur_part_name = &THIS_ATOM;
+                        cur_part_name = THIS_ATOM.as_str();
+                        None
+                    }
+                    Expression::MetaProperty(meta) => {
+                        // Handle import.meta
+                        // When we encounter a MetaProperty, we need to verify that the remaining
+                        // parts match ["import", "meta"]
+                        if meta.meta.name == "import" && meta.property.name == "meta" {
+                            // At this point, i is the current position we're checking
+                            // We need the next two parts (going backwards) to be "meta" then "import"
+                            // i.e., parts[i-1] == "meta" and parts[i-2] == "import"
+                            if i >= 2
+                                && dot_define.parts[i - 1].as_str() == "meta"
+                                && dot_define.parts[i - 2].as_str() == "import"
+                            {
+                                // Successfully matched import.meta at the expected position
+                                // Return true if we've consumed all parts (i == 2)
+                                return i == 2;
+                            }
+                        }
                         None
                     }
                     _ => None,
@@ -599,11 +654,13 @@ pub enum DotDefineMemberExpression<'b, 'ast: 'b> {
 }
 
 impl<'b, 'a> DotDefineMemberExpression<'b, 'a> {
-    fn name(&self) -> Option<&'b Atom<'a>> {
+    fn name(&self) -> Option<Atom<'a>> {
         match self {
-            DotDefineMemberExpression::StaticMemberExpression(expr) => Some(&expr.property.name),
+            DotDefineMemberExpression::StaticMemberExpression(expr) => {
+                Some(expr.property.name.as_atom())
+            }
             DotDefineMemberExpression::ComputedMemberExpression(expr) => {
-                static_property_name_of_computed_expr(expr)
+                static_property_name_of_computed_expr(expr).copied()
             }
         }
     }
@@ -635,8 +692,8 @@ fn destructing_dot_define_optimizer<'ast>(
     let Expression::ObjectExpression(obj) = &mut expr else { return expr };
     let parent = ctx.parent();
     let destruct_obj_pat = match parent {
-        Ancestor::VariableDeclaratorInit(declarator) => match &declarator.id().kind {
-            BindingPatternKind::ObjectPattern(pat) => pat,
+        Ancestor::VariableDeclaratorInit(declarator) => match &declarator.id() {
+            BindingPattern::ObjectPattern(pat) => pat,
             _ => return expr,
         },
         _ => {
@@ -699,9 +756,21 @@ fn assignment_target_from_expr(expr: Expression) -> Option<AssignmentTarget> {
     }
 }
 
-struct RemoveSpans;
+/// Update the replaced expression:
+/// * change spans to empty spans for sourcemap
+/// * assign reference id in current scope
+struct UpdateReplacedExpression<'a, 'b> {
+    ctx: &'b mut TraverseCtx<'a>,
+}
 
-impl VisitMut<'_> for RemoveSpans {
+impl VisitMut<'_> for UpdateReplacedExpression<'_, '_> {
+    fn visit_identifier_reference(&mut self, ident: &mut IdentifierReference<'_>) {
+        let reference_id =
+            self.ctx.create_reference_in_current_scope(ident.name.as_str(), ReferenceFlags::Read);
+        ident.set_reference_id(reference_id);
+        walk_mut::walk_identifier_reference(self, ident);
+    }
+
     fn visit_span(&mut self, span: &mut Span) {
         *span = SPAN;
     }

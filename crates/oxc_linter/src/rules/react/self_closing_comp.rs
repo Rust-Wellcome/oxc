@@ -5,12 +5,14 @@ use oxc_ast::{
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 use crate::{
     AstNode,
     context::{ContextHost, LintContext},
     globals::HTML_TAG,
-    rule::Rule,
+    rule::{DefaultRuleConfig, Rule},
 };
 
 fn self_closing_comp_diagnostic(span: Span) -> OxcDiagnostic {
@@ -19,9 +21,12 @@ fn self_closing_comp_diagnostic(span: Span) -> OxcDiagnostic {
         .with_label(span)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct SelfClosingComp {
+    /// Whether to enforce self-closing for custom components.
     component: bool,
+    /// Whether to enforce self-closing for native HTML elements.
     html: bool,
 }
 
@@ -34,11 +39,17 @@ impl Default for SelfClosingComp {
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// Detects components without children which can be self-closed to avoid unnecessary extra
-    /// closing tags.
+    /// Detects components without children which can be self-closed to avoid
+    /// unnecessary extra closing tags.
     ///
-    /// A self closing component which contains whitespace is allowed except when it also contains
-    /// a newline.
+    /// ### Why is this bad?
+    ///
+    /// Components without children don't need explicit closing tags. Using
+    /// self-closing syntax makes code more concise and reduces visual clutter.
+    /// It also follows common React and JSX conventions for empty elements.
+    ///
+    /// A self-closing component which contains whitespace is allowed except
+    /// when it also contains a newline.
     ///
     /// ### Examples
     ///
@@ -60,23 +71,13 @@ declare_oxc_lint!(
     SelfClosingComp,
     react,
     style,
-    fix
+    fix,
+    config = SelfClosingComp,
 );
 
 impl Rule for SelfClosingComp {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let obj = value.get(0);
-
-        Self {
-            component: obj
-                .and_then(|v| v.get("component"))
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(true),
-            html: obj
-                .and_then(|v| v.get("html"))
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(true),
-        }
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -114,10 +115,8 @@ impl Rule for SelfClosingComp {
         );
 
         let mut is_dom_comp = false;
-        if !is_comp {
-            if let Some(tag_name) = jsx_el.opening_element.name.get_identifier_name() {
-                is_dom_comp = HTML_TAG.contains(tag_name.as_str());
-            }
+        if !is_comp && let Some(tag_name) = jsx_el.opening_element.name.get_identifier_name() {
+            is_dom_comp = HTML_TAG.contains(tag_name.as_str());
         }
 
         if self.html && is_dom_comp || self.component && !is_dom_comp {
@@ -356,6 +355,7 @@ fn test() {
             Some(serde_json::json!([{ "html": true }])),
         ),
     ];
+
     Tester::new(SelfClosingComp::NAME, SelfClosingComp::PLUGIN, pass, fail)
         .expect_fix(fix)
         .test_and_snapshot();

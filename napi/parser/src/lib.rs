@@ -1,13 +1,3 @@
-// Napi value need to be passed as value
-#![expect(clippy::needless_pass_by_value)]
-
-#[cfg(all(
-    feature = "allocator",
-    not(any(target_arch = "arm", target_os = "freebsd", target_family = "wasm"))
-))]
-#[global_allocator]
-static ALLOC: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
-
 use std::mem;
 
 use napi::{Task, bindgen_prelude::AsyncTask};
@@ -22,19 +12,46 @@ use oxc::{
 use oxc_napi::{Comment, OxcError, convert_utf8_to_utf16, get_source_type};
 
 mod convert;
+mod types;
+pub use types::*;
+
+#[cfg(all(
+    feature = "allocator",
+    not(any(
+        target_arch = "arm",
+        target_os = "freebsd",
+        target_os = "windows",
+        target_family = "wasm"
+    ))
+))]
+#[global_allocator]
+static ALLOC: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
+
+// Raw transfer is only supported on 64-bit little-endian systems.
+// Don't include raw transfer code on other platforms (notably WASM32).
+// `raw_transfer_types` still needs to be compiled, as `assert_layouts` refers to those types,
+// but it's all dead code on unsupported platforms, and will be excluded from binary.
+#[cfg(all(target_pointer_width = "64", target_endian = "little"))]
 mod raw_transfer;
 mod raw_transfer_types;
-mod types;
-pub use raw_transfer::{
-    get_buffer_offset, parse_async_raw, parse_sync_raw, raw_transfer_supported,
-};
-pub use types::{EcmaScriptModule, ParseResult, ParserOptions};
+#[cfg(all(target_pointer_width = "64", target_endian = "little"))]
+pub use raw_transfer::{get_buffer_offset, parse_raw, parse_raw_sync};
+
+/// Returns `true` if raw transfer is supported on this platform.
+#[napi]
+pub fn raw_transfer_supported() -> bool {
+    cfg!(all(target_pointer_width = "64", target_endian = "little"))
+}
 
 mod generated {
     // Note: We intentionally don't import `generated/derive_estree.rs`. It's not needed.
     #[cfg(debug_assertions)]
-    pub mod assert_layouts;
+    mod assert_layouts;
+    #[cfg(all(target_pointer_width = "64", target_endian = "little"))]
+    pub mod raw_transfer_constants;
 }
+#[cfg(all(target_pointer_width = "64", target_endian = "little"))]
+use generated::raw_transfer_constants;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AstType {
@@ -56,7 +73,7 @@ fn get_ast_type(source_type: SourceType, options: &ParserOptions) -> AstType {
     }
 }
 
-fn parse<'a>(
+fn parse_impl<'a>(
     allocator: &'a Allocator,
     source_type: SourceType,
     source_text: &'a str,
@@ -70,13 +87,13 @@ fn parse<'a>(
         .parse()
 }
 
-fn parse_with_return(filename: &str, source_text: String, options: &ParserOptions) -> ParseResult {
+fn parse_with_return(filename: &str, source_text: &str, options: &ParserOptions) -> ParseResult {
     let allocator = Allocator::default();
     let source_type =
         get_source_type(filename, options.lang.as_deref(), options.source_type.as_deref());
     let ast_type = get_ast_type(source_type, options);
     let ranges = options.range.unwrap_or(false);
-    let ret = parse(&allocator, source_type, &source_text, options);
+    let ret = parse_impl(&allocator, source_type, source_text, options);
 
     let mut program = ret.program;
     let mut module_record = ret.module_record;
@@ -87,10 +104,10 @@ fn parse_with_return(filename: &str, source_text: String, options: &ParserOption
         diagnostics.extend(semantic_ret.errors);
     }
 
-    let mut errors = OxcError::from_diagnostics(filename, &source_text, diagnostics);
+    let mut errors = OxcError::from_diagnostics(filename, source_text, diagnostics);
 
     let mut comments =
-        convert_utf8_to_utf16(&source_text, &mut program, &mut module_record, &mut errors);
+        convert_utf8_to_utf16(source_text, &mut program, &mut module_record, &mut errors);
 
     let program_and_fixes = match ast_type {
         AstType::JavaScript => {
@@ -123,15 +140,23 @@ fn parse_with_return(filename: &str, source_text: String, options: &ParserOption
     ParseResult { program_and_fixes, module, comments, errors }
 }
 
-/// Parse synchronously.
+/// Parse JS/TS source synchronously on current thread.
+///
+/// This is generally preferable over `parse` (async) as it does not have the overhead
+/// of spawning a thread, and the majority of the workload cannot be parallelized anyway
+/// (see `parse` documentation for details).
+///
+/// If you need to parallelize parsing multiple files, it is recommended to use worker threads
+/// with `parseSync` rather than using `parse`.
 #[napi]
+#[allow(clippy::needless_pass_by_value, clippy::allow_attributes)]
 pub fn parse_sync(
     filename: String,
     source_text: String,
     options: Option<ParserOptions>,
 ) -> ParseResult {
     let options = options.unwrap_or_default();
-    parse_with_return(&filename, source_text, &options)
+    parse_with_return(&filename, &source_text, &options)
 }
 
 pub struct ResolveTask {
@@ -147,7 +172,7 @@ impl Task for ResolveTask {
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         let source_text = mem::take(&mut self.source_text);
-        Ok(parse_with_return(&self.filename, source_text, &self.options))
+        Ok(parse_with_return(&self.filename, &source_text, &self.options))
     }
 
     fn resolve(&mut self, _: napi::Env, result: Self::Output) -> napi::Result<Self::JsValue> {
@@ -155,11 +180,19 @@ impl Task for ResolveTask {
     }
 }
 
-/// Parse asynchronously.
+/// Parse JS/TS source asynchronously on a separate thread.
 ///
-/// Note: This function can be slower than `parseSync` due to the overhead of spawning a thread.
+/// Note that not all of the workload can happen on a separate thread.
+/// Parsing on Rust side does happen in a separate thread, but deserialization of the AST to JS objects
+/// has to happen on current thread. This synchronous deserialization work typically outweighs
+/// the asynchronous parsing by a factor of between 3 and 20.
+///
+/// i.e. the majority of the workload cannot be parallelized by using this method.
+///
+/// Generally `parseSync` is preferable to use as it does not have the overhead of spawning a thread.
+/// If you need to parallelize parsing multiple files, it is recommended to use worker threads.
 #[napi]
-pub fn parse_async(
+pub fn parse(
     filename: String,
     source_text: String,
     options: Option<ParserOptions>,

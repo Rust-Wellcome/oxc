@@ -129,10 +129,10 @@ impl<'a> ClassesStack<'a> {
         // We skip the first, because this is a `NonEmptyStack` with dummy first entry.
         // TODO: Check there are tests for bindings in enclosing classes.
         for class in self.stack[1..].iter_mut().rev() {
-            if let Some(private_props) = &mut class.private_props {
-                if let Some(prop) = private_props.get(&ident.name) {
-                    return ret_fn(prop, &mut class.bindings, class.is_declaration);
-                }
+            if let Some(private_props) = &mut class.private_props
+                && let Some(prop) = private_props.get(&Atom::from(ident.name))
+            {
+                return ret_fn(prop, &mut class.bindings, class.is_declaration);
             }
         }
         unreachable!();
@@ -177,9 +177,9 @@ impl<'a> ClassesStack<'a> {
         })
     }
 
-    /// Lookup details of writeable private property referred to by `ident`.
+    /// Lookup details of writable private property referred to by `ident`.
     /// Returns `Some` if it refers to a private prop and setter method
-    pub fn find_writeable_private_prop<'b>(
+    pub fn find_writable_private_prop<'b>(
         &'b mut self,
         ident: &PrivateIdentifier<'a>,
     ) -> Option<ResolvedPrivateProp<'a, 'b>> {
@@ -229,7 +229,7 @@ impl<'a> ClassesStack<'a> {
 ///
 /// This is the return value of [`ClassesStack::find_private_prop`],
 /// [`ClassesStack::find_readable_private_prop`] and
-/// [`ClassesStack::find_writeable_private_prop`].
+/// [`ClassesStack::find_writable_private_prop`].
 pub(super) struct ResolvedPrivateProp<'a, 'b> {
     /// Binding for temp var representing the property
     pub prop_binding: &'b BoundIdentifier<'a>,

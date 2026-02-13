@@ -1,14 +1,19 @@
+use memchr::{memmem::Finder, memmem::FinderRev};
+use oxc_span::VALID_EXTENSIONS;
+
+use crate::loader::JavaScriptSource;
+
 mod astro;
 mod svelte;
 mod vue;
-
-use oxc_span::VALID_EXTENSIONS;
-
-pub use self::{astro::AstroPartialLoader, svelte::SveltePartialLoader, vue::VuePartialLoader};
-use crate::loader::JavaScriptSource;
+pub use astro::AstroPartialLoader;
+pub use svelte::SveltePartialLoader;
+pub use vue::VuePartialLoader;
 
 const SCRIPT_START: &str = "<script";
 const SCRIPT_END: &str = "</script>";
+const COMMENT_START: &str = "<!--";
+const COMMENT_END: &str = "-->";
 
 /// File extensions that can contain JS/TS code in certain parts, such as in `<script>` tags, and can
 /// be loaded using the [`PartialLoader`].
@@ -36,21 +41,62 @@ impl PartialLoader {
 
 /// Find closing angle for situations where there is another `>` in between.
 /// e.g. `<script generic="T extends Record<string, string>">`
+/// or `<script attribute="text with > inside">`
 fn find_script_closing_angle(source_text: &str, pointer: usize) -> Option<usize> {
-    let mut numbers_of_open_angle = 0;
+    let mut open_angle = 0;
+    let mut in_quote: Option<char> = None;
+
     for (offset, c) in source_text[pointer..].char_indices() {
         match c {
-            '>' => {
-                if numbers_of_open_angle == 0 {
+            '"' | '\'' => {
+                if let Some(q) = in_quote {
+                    if q == c {
+                        in_quote = None;
+                    }
+                } else {
+                    in_quote = Some(c);
+                }
+            }
+            '<' if in_quote.is_none() => {
+                open_angle += 1;
+            }
+            '>' if in_quote.is_none() => {
+                if open_angle == 0 {
                     return Some(offset);
                 }
-                numbers_of_open_angle -= 1;
-            }
-            '<' => {
-                numbers_of_open_angle += 1;
+                open_angle -= 1;
             }
             _ => {}
         }
     }
+
     None
+}
+
+fn find_script_start(
+    source_text: &str,
+    pointer: usize,
+    script_start_finder: &Finder<'_>,
+    comment_start_finder: &FinderRev<'_>,
+    comment_end_finder: &Finder<'_>,
+) -> Option<usize> {
+    let mut new_pointer = pointer;
+
+    loop {
+        new_pointer +=
+            script_start_finder.find(&source_text.as_bytes()[new_pointer..])? + SCRIPT_START.len();
+
+        if let Some(offset) = comment_start_finder.rfind(&source_text.as_bytes()[..new_pointer]) {
+            if comment_end_finder
+                .find(&source_text.as_bytes()[offset + COMMENT_START.len()..new_pointer])
+                .is_some()
+            {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    Some(new_pointer - pointer)
 }

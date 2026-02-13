@@ -95,10 +95,8 @@ use oxc_ast::{AstBuilder, NONE, ast::*};
 use oxc_ecmascript::PropName;
 use oxc_span::{Atom, SPAN, Span};
 use oxc_syntax::{
-    identifier::{is_line_terminator, is_white_space_single_line},
-    reference::ReferenceFlags,
-    symbol::SymbolFlags,
-    xml_entities::XML_ENTITIES,
+    identifier::is_white_space_single_line, line_terminator::is_line_terminator,
+    reference::ReferenceFlags, symbol::SymbolFlags, xml_entities::XML_ENTITIES,
 };
 use oxc_traverse::{BoundIdentifier, Traverse};
 
@@ -310,7 +308,7 @@ impl<'a, 'ctx> AutomaticModuleBindings<'a, 'ctx> {
 }
 
 #[inline]
-fn get_import_source(jsx_runtime_importer: &str, react_importer_len: u32) -> Atom {
+fn get_import_source(jsx_runtime_importer: &str, react_importer_len: u32) -> Atom<'_> {
     Atom::from(&jsx_runtime_importer[..react_importer_len as usize])
 }
 
@@ -462,15 +460,15 @@ impl<'a, 'ctx> JsxImpl<'a, 'ctx> {
                     }
                 };
 
-                if ctx.source_type.is_script() {
-                    Bindings::AutomaticScript(AutomaticScriptBindings::new(
+                if ctx.source_type.is_module() {
+                    Bindings::AutomaticModule(AutomaticModuleBindings::new(
                         ctx,
                         jsx_runtime_importer,
                         source_len,
                         is_development,
                     ))
                 } else {
-                    Bindings::AutomaticModule(AutomaticModuleBindings::new(
+                    Bindings::AutomaticScript(AutomaticScriptBindings::new(
                         ctx,
                         jsx_runtime_importer,
                         source_len,
@@ -499,7 +497,7 @@ impl<'a> Traverse<'a, TransformState<'a>> for JsxImpl<'a, '_> {
 
     #[inline]
     fn exit_expression(&mut self, expr: &mut Expression<'a>, ctx: &mut TraverseCtx<'a>) {
-        if !matches!(expr, Expression::JSXElement(_) | Expression::JSXFragment(_)) {
+        if !expr.is_jsx() {
             return;
         }
         *expr = match expr.take_in(ctx.ast) {
@@ -511,10 +509,6 @@ impl<'a> Traverse<'a, TransformState<'a>> for JsxImpl<'a, '_> {
 }
 
 impl<'a> JsxImpl<'a, '_> {
-    fn is_script(&self) -> bool {
-        self.ctx.source_type.is_script()
-    }
-
     fn insert_filename_var_statement(&self, ctx: &TraverseCtx<'a>) {
         let Some(declarator) = self.jsx_source.get_filename_var_declarator(ctx) else { return };
 
@@ -522,7 +516,7 @@ impl<'a> JsxImpl<'a, '_> {
         // This is the same behavior as Babel.
         // If in classic mode, then there are no import statements, so it doesn't matter either way.
         // TODO(improve-on-babel): Simplify this once we don't need to follow Babel exactly.
-        if self.bindings.is_classic() || !self.is_script() {
+        if self.bindings.is_classic() || self.ctx.source_type.is_module() {
             // Insert before imports - add to `top_level_statements` immediately
             let stmt = Statement::VariableDeclaration(ctx.ast.alloc_variable_declaration(
                 SPAN,
@@ -624,7 +618,12 @@ impl<'a> JsxImpl<'a, '_> {
                     // optimize `{...prop}` to `prop` in static mode
                     JSXAttributeItem::SpreadAttribute(spread) => {
                         let JSXSpreadAttribute { argument, span } = spread.unbox();
-                        if is_classic && attributes_len == 1 {
+                        if is_classic
+                            && attributes_len == 1
+                            // Don't optimize when dev plugins are enabled - spread must be preserved
+                            // to merge with injected `__self` and `__source` props
+                            && !(self.options.jsx_self_plugin || self.options.jsx_source_plugin)
+                        {
                             // deopt if spreading an object with `__proto__` key
                             if !matches!(&argument, Expression::ObjectExpression(o) if has_proto(o))
                             {
@@ -1092,7 +1091,7 @@ impl<'a> JsxImpl<'a, '_> {
 
     /// Replace entities like "&nbsp;", "&#123;", and "&#xDEADBEEF;" with the characters they encode.
     /// * See <https://en.wikipedia.org/wiki/List_of_XML_and_HTML_character_entity_references>
-    /// Code adapted from <https://github.com/microsoft/TypeScript/blob/514f7e639a2a8466c075c766ee9857a30ed4e196/src/compiler/transformers/jsx.ts#L617C1-L635>
+    ///   Code adapted from <https://github.com/microsoft/TypeScript/blob/514f7e639a2a8466c075c766ee9857a30ed4e196/src/compiler/transformers/jsx.ts#L617C1-L635>
     ///
     /// If either:
     /// (a) Text contains any HTML entities that need to be decoded, or
@@ -1111,12 +1110,14 @@ impl<'a> JsxImpl<'a, '_> {
         let mut prev = 0;
         while let Some((i, c)) = chars.next() {
             if c == '&' {
-                let start = i;
+                let mut start = i;
                 let mut end = None;
                 for (j, c) in chars.by_ref() {
                     if c == ';' {
                         end.replace(j);
                         break;
+                    } else if c == '&' {
+                        start = j;
                     }
                 }
                 if let Some(end) = end {
@@ -1182,10 +1183,10 @@ impl<'a> JsxImpl<'a, '_> {
         element: Option<&JSXClosingElement<'a>>,
         ctx: &mut TraverseCtx<'a>,
     ) {
-        if let Some(element) = &element {
-            if let Some(ident) = element.name.get_identifier() {
-                ctx.delete_reference_for_identifier(ident);
-            }
+        if let Some(element) = &element
+            && let Some(ident) = element.name.get_identifier()
+        {
+            ctx.delete_reference_for_identifier(ident);
         }
     }
 }
@@ -1367,5 +1368,15 @@ mod test {
         assert_eq!(&meta_prop.meta.name, "import");
         assert_eq!(&meta_prop.property.name, "meta");
         assert_eq!(member.property.name, "prop");
+    }
+
+    #[test]
+    fn entity_after_stray_amp() {
+        setup!(traverse_ctx, _transform_ctx);
+        let input = "& &amp;";
+        let mut acc = None;
+        super::JsxImpl::decode_entities(input, &mut acc, input.len(), traverse_ctx);
+        let out = acc.as_ref().unwrap().as_str();
+        assert_eq!(out, "& &");
     }
 }

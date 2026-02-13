@@ -14,7 +14,7 @@ fn no_named_as_default_diagnostic(
         .with_label(span)
 }
 
-/// <https://github.com/import-js/eslint-plugin-import/blob/v2.29.1/docs/rules/no-named-as-default-member.md>
+// <https://github.com/import-js/eslint-plugin-import/blob/v2.29.1/docs/rules/no-named-as-default-member.md>
 #[derive(Debug, Default, Clone)]
 pub struct NoNamedAsDefault;
 
@@ -66,8 +66,7 @@ impl Rule for NoNamedAsDefault {
             };
 
             let specifier = import_entry.module_request.name();
-            let remote_module_record = module_record.loaded_modules.read().unwrap();
-            let Some(remote_module_record) = remote_module_record.get(specifier) else {
+            let Some(remote_module_record) = module_record.get_loaded_module(specifier) else {
                 continue;
             };
 

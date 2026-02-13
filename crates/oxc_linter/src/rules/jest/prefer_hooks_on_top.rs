@@ -30,6 +30,14 @@ declare_oxc_lint!(
     /// specific order, which means it can be confusing if they're intermixed with test
     /// cases.
     ///
+    /// ### Why is this bad?
+    ///
+    /// When hooks are mixed with test cases, it becomes harder to understand
+    /// the test setup and execution order. This can lead to confusion about
+    /// which hooks apply to which tests and when they run. Grouping hooks at
+    /// the top of each `describe` block makes the test structure clearer and
+    /// more maintainable.
+    ///
     /// ### Examples
     ///
     /// Examples of **incorrect** code for this rule:
@@ -136,6 +144,17 @@ declare_oxc_lint!(
     ///     });
     /// });
     /// ```
+    ///
+    /// This rule is compatible with [eslint-plugin-vitest](https://github.com/vitest-dev/eslint-plugin-vitest/blob/main/docs/rules/prefer-hooks-on-top.md),
+    /// to use it, add the following configuration to your `.oxlintrc.json`:
+    ///
+    /// ```json
+    /// {
+    ///   "rules": {
+    ///      "vitest/prefer-hooks-on-top": "error"
+    ///   }
+    /// }
+    /// ```
     PreferHooksOnTop,
     jest,
     style,
@@ -145,7 +164,7 @@ impl Rule for PreferHooksOnTop {
     fn run_once(&self, ctx: &LintContext) {
         let mut hooks_contexts: FxHashMap<ScopeId, bool> = FxHashMap::default();
         let mut possibles_jest_nodes = collect_possible_jest_call_node(ctx);
-        possibles_jest_nodes.sort_by_key(|n| n.node.id());
+        possibles_jest_nodes.sort_unstable_by_key(|n| n.node.id());
 
         for possible_jest_node in &possibles_jest_nodes {
             Self::run(possible_jest_node, &mut hooks_contexts, ctx);

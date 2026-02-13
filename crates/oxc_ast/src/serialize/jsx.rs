@@ -24,12 +24,11 @@ impl ESTree for JSXElementOpeningElement<'_, '_> {
 
         let mut state = serializer.serialize_struct();
         state.serialize_field("type", &JsonSafeString("JSXOpeningElement"));
-        state.serialize_field("start", &opening_element.span.start);
-        state.serialize_field("end", &opening_element.span.end);
         state.serialize_field("name", &opening_element.name);
         state.serialize_ts_field("typeArguments", &opening_element.type_arguments);
         state.serialize_field("attributes", &opening_element.attributes);
         state.serialize_field("selfClosing", &element.closing_element.is_none());
+        state.serialize_span(opening_element.span);
         state.end();
     }
 }
@@ -57,14 +56,14 @@ impl ESTree for JSXOpeningElementSelfClosing<'_, '_> {
     ts_type = "JSXIdentifier",
     raw_deser = "
         const ident = DESER[Box<IdentifierReference>](POS);
-        { type: 'JSXIdentifier', start: ident.start, end: ident.end, name: ident.name }
+        { type: 'JSXIdentifier', name: ident.name, start: ident.start, end: ident.end, ...(RANGE && { range: ident.range }), ...(PARENT && { parent }) }
     "
 )]
 pub struct JSXElementIdentifierReference<'a, 'b>(pub &'b IdentifierReference<'a>);
 
 impl ESTree for JSXElementIdentifierReference<'_, '_> {
     fn serialize<S: Serializer>(&self, serializer: S) {
-        JSXIdentifier { span: self.0.span, name: self.0.name }.serialize(serializer);
+        JSXIdentifier { span: self.0.span, name: self.0.name.into() }.serialize(serializer);
     }
 }
 
@@ -76,7 +75,7 @@ impl ESTree for JSXElementIdentifierReference<'_, '_> {
     ts_type = "JSXIdentifier",
     raw_deser = "
         const thisExpr = DESER[Box<ThisExpression>](POS);
-        { type: 'JSXIdentifier', start: thisExpr.start, end: thisExpr.end, name: 'this' }
+        { type: 'JSXIdentifier', name: 'this', start: thisExpr.start, end: thisExpr.end, ...(RANGE && { range: thisExpr.range }), ...(PARENT && { parent }) }
     "
 )]
 pub struct JSXElementThisExpression<'b>(pub &'b ThisExpression);

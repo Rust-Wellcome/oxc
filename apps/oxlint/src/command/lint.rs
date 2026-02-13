@@ -35,16 +35,28 @@ pub struct LintCommand {
     #[bpaf(external)]
     pub output_options: OutputOptions,
 
-    /// list all the rules that are currently registered
+    /// List all the rules that are currently registered
     #[bpaf(long("rules"), switch, hide_usage)]
     pub list_rules: bool,
+
+    /// Start the language server
+    #[bpaf(long("lsp"), switch, hide_usage)]
+    pub lsp: bool,
 
     #[bpaf(external)]
     pub misc_options: MiscOptions,
 
-    /// Disables the automatic loading of nested configuration files.
+    /// Disable the automatic loading of nested configuration files
     #[bpaf(switch, hide_usage)]
     pub disable_nested_config: bool,
+
+    /// Enable rules that require type information
+    #[bpaf(switch, hide_usage)]
+    pub type_aware: bool,
+
+    /// Enable experimental type checking (includes TypeScript compiler diagnostics)
+    #[bpaf(switch, hide_usage)]
+    pub type_check: bool,
 
     #[bpaf(external)]
     pub inline_config_options: InlineConfigOptions,
@@ -56,27 +68,62 @@ pub struct LintCommand {
 
 impl LintCommand {
     pub fn handle_threads(&self) {
-        Self::set_rayon_threads(self.misc_options.threads);
+        Self::init_rayon_thread_pool(self.misc_options.threads);
     }
 
-    fn set_rayon_threads(threads: Option<usize>) {
-        if let Some(threads) = threads {
-            rayon::ThreadPoolBuilder::new().num_threads(threads).build_global().unwrap();
-        }
+    /// Initialize Rayon global thread pool with specified number of threads.
+    ///
+    /// If `--threads` option is not used, or `--threads 0` is given,
+    /// default to the number of available CPU cores.
+    #[expect(clippy::print_stderr)]
+    fn init_rayon_thread_pool(threads: Option<usize>) {
+        // Always initialize thread pool, even if using default thread count,
+        // to ensure thread pool's thread count is locked after this point.
+        // `rayon::current_num_threads()` will always return the same number after this point.
+        //
+        // If you don't initialize the global thread pool explicitly, or don't specify `num_threads`,
+        // Rayon will initialize the thread pool when it's first used, with a thread count of
+        // `std::thread::available_parallelism()`, and that thread count won't change thereafter.
+        // So we don't *need* to initialize the thread pool here if we just want the default thread count.
+        //
+        // However, Rayon's docs state that:
+        // > In the future, the default behavior may change to dynamically add or remove threads as needed.
+        // https://docs.rs/rayon/1.11.0/rayon/struct.ThreadPoolBuilder.html#method.num_threads
+        //
+        // To ensure we continue to have a "locked" thread count, even after future Rayon upgrades,
+        // we always initialize the thread pool and explicitly specify thread count here.
+
+        let thread_count = if let Some(thread_count) = threads
+            && thread_count > 0
+        {
+            thread_count
+        } else if let Ok(thread_count) = std::thread::available_parallelism() {
+            thread_count.get()
+        } else {
+            eprintln!(
+                "Unable to determine available thread count. Defaulting to 1.\nConsider specifying the number of threads explicitly with `--threads` option."
+            );
+            1
+        };
+
+        rayon::ThreadPoolBuilder::new().num_threads(thread_count).build_global().unwrap();
     }
 }
+
 /// Basic Configuration
 #[derive(Debug, Clone, Bpaf)]
 pub struct BasicOptions {
-    /// Oxlint configuration file (experimental)
+    /// Oxlint configuration file
     ///  * only `.json` extension is supported
-    ///  * tries to be compatible with the ESLint v8's format
+    ///  * you can use comments in configuration files.
+    ///  * tries to be compatible with ESLint v8's format
     ///
     /// If not provided, Oxlint will look for `.oxlintrc.json` in the current working directory.
-    #[bpaf(long, short, argument("./oxlintrc.json"))]
+    #[bpaf(long, short, argument("./.oxlintrc.json"))]
     pub config: Option<PathBuf>,
 
-    /// TypeScript `tsconfig.json` path for reading path alias and project references for import plugin
+    /// TypeScript `tsconfig.json` path for reading path alias and project references for import plugin.
+    /// If not provided, will look for `tsconfig.json` in the current working directory.
     #[bpaf(argument("./tsconfig.json"), hide_usage)]
     pub tsconfig: Option<PathBuf>,
 
@@ -87,18 +134,20 @@ pub struct BasicOptions {
 
 // This is formatted according to
 // <https://docs.rs/bpaf/latest/bpaf/params/struct.NamedArg.html#method.help>
+//
 /// Allowing / Denying Multiple Lints
 ///
 /// Accumulate rules and categories from left to right on the command-line.
 ///   For example `-D correctness -A no-debugger` or `-A all -D no-debugger`.
 ///   The categories are:
-///   * `correctness` - code that is outright wrong or useless (default).
-///   * `suspicious`  - code that is most likely wrong or useless.
-///   * `pedantic`    - lints which are rather strict or have occasional false positives.
-///   * `style`       - code that should be written in a more idiomatic way.
-///   * `nursery`     - new lints that are still under development.
-///   * `restriction` - lints which prevent the use of language and library features.
-///   * `all`         - all the categories listed above except nursery. Does not enable plugins automatically.
+///   * `correctness` - Code that is outright wrong or useless (default)
+///   * `suspicious`  - Code that is most likely wrong or useless
+///   * `pedantic`    - Lints which are rather strict or have occasional false positives
+///   * `perf`        - Code that could be written in a more performant way
+///   * `style`       - Code that should be written in a more idiomatic way
+///   * `restriction` - Lints which prevent the use of language and library features
+///   * `nursery`     - New lints that are still under development
+///   * `all`         - All categories listed above except `nursery`. Does not enable plugins automatically.
 ///
 /// Arguments:
 //  ^ This shows up on the website but not from the cli's `--help`.
@@ -134,14 +183,14 @@ impl LintFilter {
 /// Fix Problems
 #[derive(Debug, Clone, Bpaf)]
 pub struct FixOptions {
-    /// Fix as many issues as possible. Only unfixed issues are reported in the output
+    /// Fix as many issues as possible. Only unfixed issues are reported in the output.
     #[bpaf(switch, hide_usage)]
     pub fix: bool,
     /// Apply auto-fixable suggestions. May change program behavior.
     #[bpaf(switch, hide_usage)]
     pub fix_suggestions: bool,
 
-    /// Apply dangerous fixes and suggestions.
+    /// Apply dangerous fixes and suggestions
     #[bpaf(switch, hide_usage)]
     pub fix_dangerously: bool,
 }
@@ -199,7 +248,7 @@ pub struct OutputOptions {
     pub format: OutputFormat,
 }
 
-/// Enable Plugins
+/// Enable/Disable Plugins
 #[expect(clippy::struct_field_names)]
 #[derive(Debug, Default, Clone, Bpaf)]
 pub struct EnablePlugins {
@@ -227,8 +276,9 @@ pub struct EnablePlugins {
     )]
     pub typescript_plugin: OverrideToggle,
 
-    /// Enable the experimental import plugin and detect ESM problems.
-    /// It is recommended to use along side with the `--tsconfig` option.
+    /// Enable import plugin and detect ESM problems.
+    /// It should be used with the `--tsconfig` flag if your project has a
+    /// tsconfig with a name other than `tsconfig.json`.
     #[bpaf(flag(OverrideToggle::Enable, OverrideToggle::NotSet), hide_usage)]
     pub import_plugin: OverrideToggle,
 
@@ -236,7 +286,7 @@ pub struct EnablePlugins {
     #[bpaf(flag(OverrideToggle::Enable, OverrideToggle::NotSet), hide_usage)]
     pub react_plugin: OverrideToggle,
 
-    /// Enable the experimental jsdoc plugin and detect JSDoc problems
+    /// Enable jsdoc plugin and detect JSDoc problems
     #[bpaf(flag(OverrideToggle::Enable, OverrideToggle::NotSet), hide_usage)]
     pub jsdoc_plugin: OverrideToggle,
 
@@ -267,6 +317,10 @@ pub struct EnablePlugins {
     /// Enable the node plugin and detect node usage problems
     #[bpaf(flag(OverrideToggle::Enable, OverrideToggle::NotSet), hide_usage)]
     pub node_plugin: OverrideToggle,
+
+    /// Enable the vue plugin and detect vue usage problems
+    #[bpaf(flag(OverrideToggle::Enable, OverrideToggle::NotSet), hide_usage)]
+    pub vue_plugin: OverrideToggle,
 }
 
 /// Enables or disables a boolean option, or leaves it unset.
@@ -341,6 +395,7 @@ impl EnablePlugins {
         self.react_perf_plugin.inspect(|yes| plugins.set(LintPlugins::REACT_PERF, yes));
         self.promise_plugin.inspect(|yes| plugins.set(LintPlugins::PROMISE, yes));
         self.node_plugin.inspect(|yes| plugins.set(LintPlugins::NODE, yes));
+        self.vue_plugin.inspect(|yes| plugins.set(LintPlugins::VUE, yes));
 
         // Without this, jest plugins adapted to vitest will not be enabled.
         if self.vitest_plugin.is_enabled() && self.jest_plugin.is_not_set() {
@@ -352,7 +407,7 @@ impl EnablePlugins {
 #[derive(Debug, Clone, PartialEq, Eq, Bpaf)]
 pub enum ReportUnusedDirectives {
     WithoutSeverity(
-        /// Report directive comments like `// eslint-disable-line` when no errors would have been reported on that line anyway.
+        /// Report directive comments like `// oxlint-disable-line`, when no errors would have been reported on that line anyway
         // More information at <https://eslint.org/docs/latest/use/command-line-interface#--report-unused-disable-directives>
         #[bpaf(long("report-unused-disable-directives"), switch, hide_usage)]
         bool,
@@ -361,7 +416,7 @@ pub enum ReportUnusedDirectives {
         /// Same as `--report-unused-disable-directives`, but allows you to specify the severity level of the reported errors.
         /// Only one of these two options can be used at a time.
         #[bpaf(
-            long("report-unused-disable-directives-severity"), 
+            long("report-unused-disable-directives-severity"),
             argument::<String>("SEVERITY"),
             guard(|s| AllowWarnDeny::try_from(s.as_str()).is_ok(), "Invalid severity value"),
             map(|s| AllowWarnDeny::try_from(s.as_str()).unwrap()), // guard ensures try_from will be Ok
@@ -554,6 +609,22 @@ mod lint_options {
         assert!(options.disable_nested_config);
         let options = get_lint_options(".");
         assert!(!options.disable_nested_config);
+    }
+
+    #[test]
+    fn type_aware() {
+        let options = get_lint_options("--type-aware");
+        assert!(options.type_aware);
+        let options = get_lint_options(".");
+        assert!(!options.type_aware);
+    }
+
+    #[test]
+    fn type_check() {
+        let options = get_lint_options("--type-check");
+        assert!(options.type_check);
+        let options = get_lint_options(".");
+        assert!(!options.type_check);
     }
 }
 

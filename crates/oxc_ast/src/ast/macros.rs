@@ -448,7 +448,9 @@ macro_rules! inherit_variants {
                 /// Inherited from [`Declaration`]
                 TSModuleDeclaration(Box<'a, TSModuleDeclaration<'a>>) = 38,
                 /// Inherited from [`Declaration`]
-                TSImportEqualsDeclaration(Box<'a, TSImportEqualsDeclaration<'a>>) = 39,
+                TSGlobalDeclaration(Box<'a, TSGlobalDeclaration<'a>>) = 39,
+                /// Inherited from [`Declaration`]
+                TSImportEqualsDeclaration(Box<'a, TSImportEqualsDeclaration<'a>>) = 40,
 
                 $($rest)*
             }
@@ -471,6 +473,7 @@ macro_rules! inherit_variants {
                 TSInterfaceDeclaration,
                 TSEnumDeclaration,
                 TSModuleDeclaration,
+                TSGlobalDeclaration,
                 TSImportEqualsDeclaration,
             ]
         );
@@ -703,6 +706,8 @@ macro_rules! inherit_variants {
                 IdentifierReference(Box<'a, IdentifierReference<'a>>) = 0,
                 /// Inherited from [`TSTypeName`]
                 QualifiedName(Box<'a, TSQualifiedName<'a>>) = 1,
+                /// Inherited from [`TSTypeName`]
+                ThisExpression(Box<'a, ThisExpression>) = 2,
 
                 $($rest)*
             }
@@ -717,7 +722,7 @@ macro_rules! inherit_variants {
             as_ts_type_name_mut,
             to_ts_type_name,
             to_ts_type_name_mut,
-            [IdentifierReference, QualifiedName]
+            [IdentifierReference, QualifiedName, ThisExpression]
         );
     };
 

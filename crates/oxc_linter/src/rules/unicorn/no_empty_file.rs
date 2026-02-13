@@ -1,4 +1,3 @@
-use oxc_ast::AstKind;
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
@@ -37,6 +36,61 @@ declare_oxc_lint!(
     /// Files with no executable or exportable content are typically unintentional
     /// or left over from refactoring. They clutter the codebase and may confuse
     /// tooling or developers by appearing to serve a purpose when they do not.
+    ///
+    /// ### Examples
+    ///
+    /// Examples of **incorrect** code for this rule:
+    ///
+    /// ```js
+    ///
+    /// ```
+    ///
+    /// ```js
+    /// // Comment
+    /// ```
+    ///
+    /// ```js
+    /// /* Comment */
+    /// ```
+    ///
+    /// ```js
+    /// 'use strict';
+    /// ```
+    ///
+    /// ```js
+    /// ;
+    /// ```
+    ///
+    /// ```js
+    /// {
+    /// }
+    /// ```
+    ///
+    /// ```js
+    /// #!/usr/bin/env node
+    /// ```
+    ///
+    /// Examples of **correct** code for this rule:
+    ///
+    /// ```js
+    /// const x = 0;
+    /// ```
+    ///
+    /// ```js
+    /// 'use strict';
+    /// const x = 0;
+    /// ```
+    ///
+    /// ```js
+    /// ;;
+    /// const x = 0;
+    /// ```
+    ///
+    /// ```js
+    /// {
+    ///   const x = 0;
+    /// }
+    /// ```
     NoEmptyFile,
     unicorn,
     correctness,
@@ -44,11 +98,7 @@ declare_oxc_lint!(
 
 impl Rule for NoEmptyFile {
     fn run_once(&self, ctx: &LintContext) {
-        let Some(root) = ctx.nodes().root_node() else {
-            return;
-        };
-
-        let AstKind::Program(program) = root.kind() else { unreachable!() };
+        let program = ctx.nodes().program();
         if program.body.iter().any(|node| !is_empty_stmt(node)) {
             return;
         }
@@ -67,9 +117,8 @@ impl Rule for NoEmptyFile {
     }
 
     fn should_run(&self, ctx: &ContextHost) -> bool {
-        ctx.file_path().extension().is_some_and(|ext| {
-            !LINT_PARTIAL_LOADER_EXTENSIONS.contains(&ext.to_string_lossy().as_ref())
-        })
+        ctx.file_extension()
+            .is_some_and(|ext| !LINT_PARTIAL_LOADER_EXTENSIONS.iter().any(|e| *e == ext))
     }
 }
 
@@ -79,7 +128,9 @@ fn has_triple_slash_directive(ctx: &LintContext<'_>) -> bool {
             continue;
         }
         let text = ctx.source_range(comment.content_span());
-        if text.starts_with("///") {
+
+        // `comment.content_span` doesn't include the leading `//` of the comment
+        if text.starts_with('/') {
             return true;
         }
     }
@@ -115,6 +166,7 @@ fn test() {
         r"(() => {})()",
         "(() => {})();",
         "/* eslint-disable no-empty-file */",
+        r#"/// <reference types="vite/client" />"#,
     ];
 
     let fail = vec![

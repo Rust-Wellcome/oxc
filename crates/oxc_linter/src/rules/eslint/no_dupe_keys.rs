@@ -24,15 +24,15 @@ pub struct NoDupeKeys;
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// Disallow duplicate keys in object literals
+    /// Disallow duplicate keys in object literals.
+    ///
+    /// This rule can be disabled for TypeScript code, as the TypeScript compiler
+    /// enforces this check.
     ///
     /// ### Why is this bad?
     ///
     /// Multiple properties with the same key in object literals can cause
     /// unexpected behavior in your application.
-    ///
-    /// It is safe to disable this rule when using TypeScript because
-    /// TypeScript's compiler enforces this check.
     ///
     /// ### Examples
     ///
@@ -83,14 +83,13 @@ impl Rule for NoDupeKeys {
             let Some(name) = prop.key.static_name() else {
                 return;
             };
-            if let Some((prev_kind, prev_span)) = map.insert(name, (prop.kind, prop.key.span())) {
-                if prev_kind == PropertyKind::Init
+            if let Some((prev_kind, prev_span)) = map.insert(name, (prop.kind, prop.key.span()))
+                && (prev_kind == PropertyKind::Init
                     || prop.kind == PropertyKind::Init
-                    || prev_kind == prop.kind
-                {
-                    let name = prop_key_name(&prop.key, ctx);
-                    ctx.diagnostic(no_dupe_keys_diagnostic(prev_span, prop.key.span(), name));
-                }
+                    || prev_kind == prop.kind)
+            {
+                let name = prop_key_name(&prop.key, ctx);
+                ctx.diagnostic(no_dupe_keys_diagnostic(prev_span, prop.key.span(), name));
             }
         }
     }
@@ -111,42 +110,42 @@ fn test() {
     use crate::tester::Tester;
 
     let pass = vec![
-        ("var foo = { __proto__: 1, two: 2};", None),
-        ("var x = { foo: 1, bar: 2 };", None),
-        ("var x = { '': 1, bar: 2 };", None),
-        ("var x = { '': 1, ' ': 2 };", None),
-        ("var x = { '': 1, [null]: 2 };", None),
-        ("var x = { '': 1, [a]: 2 };", None),
-        ("var x = { [a]: 1, [a]: 2 };", None),
-        ("+{ get a() { }, set a(b) { } };", None),
-        ("var x = { a: b, [a]: b };", None),
-        ("var x = { a: b, ...c }", None),
-        ("var x = { get a() {}, set a (value) {} };", None),
-        ("var x = { a: 1, b: { a: 2 } };", None),
-        ("var x = ({ null: 1, [/(?<zero>0)/]: 2 })", None),
-        ("var {a, a} = obj", None),
+        "var foo = { __proto__: 1, two: 2};",
+        "var x = { foo: 1, bar: 2 };",
+        "var x = { '': 1, bar: 2 };",
+        "var x = { '': 1, ' ': 2 };",
+        "var x = { '': 1, [null]: 2 };",
+        "var x = { '': 1, [a]: 2 };",
+        "var x = { [a]: 1, [a]: 2 };",
+        "+{ get a() { }, set a(b) { } };",
+        "var x = { a: b, [a]: b };",
+        "var x = { a: b, ...c }",
+        "var x = { get a() {}, set a (value) {} };",
+        "var x = { a: 1, b: { a: 2 } };",
+        "var x = ({ null: 1, [/(?<zero>0)/]: 2 })",
+        "var {a, a} = obj",
         // Syntax:error: the '0' prefixed octal literals is not allowed.
-        // ("var x = { 012: 1, 12: 2 };", None),
-        ("var x = { 1_0: 1, 1: 2 };", None),
+        // "var x = { 012: 1, 12: 2 };"
+        "var x = { 1_0: 1, 1: 2 };",
     ];
 
     let fail = vec![
-        ("var x = { a: b, ['a']: b };", None),
-        ("var x = { y: 1, y: 2 };", None),
-        ("var x = { '': 1, '': 2 };", None),
-        ("var x = { '': 1, [``]: 2 };", None),
-        ("var foo = { 0x1: 1, 1: 2};", None),
-        ("var x = { 012: 1, 10: 2 };", None),
-        ("var x = { 0b1: 1, 1: 2 };", None),
-        ("var x = { 0o1: 1, 1: 2 };", None),
-        ("var x = { 1_0: 1, 10: 2 };", None),
-        ("var x = { 1n: 1, 1: 2 };", None),
-        ("var x = { \"z\": 1, z: 2 };", None),
-        ("var foo = {\n  bar: 1,\n  bar: 1,\n}", None),
-        ("var x = { a: 1, get a() {} };", None),
-        ("var x = { a: 1, set a(value) {} };", None),
-        ("var x = { a: 1, b: { a: 2 }, get b() {} };", None),
-        ("var x = ({ '/(?<zero>0)/': 1, [/(?<zero>0)/]: 2 })", None),
+        "var x = { a: b, ['a']: b };",
+        "var x = { y: 1, y: 2 };",
+        "var x = { '': 1, '': 2 };",
+        "var x = { '': 1, [``]: 2 };",
+        "var foo = { 0x1: 1, 1: 2};",
+        "var x = { 012: 1, 10: 2 };",
+        "var x = { 0b1: 1, 1: 2 };",
+        "var x = { 0o1: 1, 1: 2 };",
+        "var x = { 1_0: 1, 10: 2 };",
+        "var x = { 1n: 1, 1: 2 };",
+        "var x = { \"z\": 1, z: 2 };",
+        "var foo = {\n  bar: 1,\n  bar: 1,\n}",
+        "var x = { a: 1, get a() {} };",
+        "var x = { a: 1, set a(value) {} };",
+        "var x = { a: 1, b: { a: 2 }, get b() {} };",
+        "var x = ({ '/(?<zero>0)/': 1, [/(?<zero>0)/]: 2 })",
     ];
 
     Tester::new(NoDupeKeys::NAME, NoDupeKeys::PLUGIN, pass, fail).test_and_snapshot();

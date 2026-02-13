@@ -6,7 +6,7 @@ use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
 
-use crate::{AstNode, context::LintContext, rule::Rule};
+use crate::{AstNode, context::LintContext, rule::Rule, utils::BUILT_IN_ERRORS};
 
 fn missing_message(ctor_name: &str, span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn(format!("Pass a message to the {ctor_name:1} constructor."))
@@ -56,7 +56,7 @@ declare_oxc_lint!(
 
 impl Rule for ErrorMessage {
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
-        let (callee, span, args) = match &node.kind() {
+        let (callee, span, args) = match node.kind() {
             AstKind::NewExpression(NewExpression {
                 callee: Expression::Identifier(id),
                 span,
@@ -104,19 +104,6 @@ impl Rule for ErrorMessage {
         ctx.diagnostic(diagnostic);
     }
 }
-
-// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error#Error_types
-const BUILT_IN_ERRORS: [&str; 9] = [
-    "Error",
-    "EvalError",
-    "RangeError",
-    "ReferenceError",
-    "SyntaxError",
-    "TypeError",
-    "URIError",
-    "InternalError",
-    "AggregateError",
-];
 
 #[test]
 fn test() {

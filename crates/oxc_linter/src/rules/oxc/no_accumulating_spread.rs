@@ -1,8 +1,8 @@
 use oxc_ast::{
     AstKind,
     ast::{
-        Argument, BindingPatternKind, CallExpression, Expression, ForInStatement, ForOfStatement,
-        ForStatement, VariableDeclarationKind,
+        Argument, AssignmentTarget, BindingPattern, CallExpression, Expression, ForInStatement,
+        ForOfStatement, ForStatement, VariableDeclarationKind,
     },
 };
 use oxc_diagnostics::OxcDiagnostic;
@@ -19,7 +19,8 @@ use crate::{
 
 fn reduce_likely_array_spread_diagnostic(spread_span: Span, reduce_span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Do not spread accumulators in Array.prototype.reduce()")
-        .with_help("It looks like you're spreading an `Array`. Consider using the `Array.push` or `Array.concat` methods to mutate the accumulator instead.\nUsing spreads within accumulators leads to `O(n^2)` time complexity.")
+        .with_help("It looks like you're spreading an `Array`. Consider using the `Array.push` or `Array.concat` methods to mutate the accumulator instead.")
+        .with_note("Using spreads within accumulators leads to `O(n^2)` time complexity.")
         .with_labels([
             spread_span.label("From this spread"),
             reduce_span.label("For this reduce")
@@ -28,7 +29,8 @@ fn reduce_likely_array_spread_diagnostic(spread_span: Span, reduce_span: Span) -
 
 fn reduce_likely_object_spread_diagnostic(spread_span: Span, reduce_span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Do not spread accumulators in Array.prototype.reduce()")
-        .with_help("It looks like you're spreading an `Object`. Consider using the `Object.assign` or assignment operators to mutate the accumulator instead.\nUsing spreads within accumulators leads to `O(n^2)` time complexity.")
+        .with_help("It looks like you're spreading an `Object`. Consider using the `Object.assign` or assignment operators to mutate the accumulator instead.")
+        .with_note("Using spreads within accumulators leads to `O(n^2)` time complexity.")
         .with_labels([
             spread_span.label("From this spread"),
             reduce_span.label("For this reduce")
@@ -37,7 +39,8 @@ fn reduce_likely_object_spread_diagnostic(spread_span: Span, reduce_span: Span) 
 
 fn reduce_unknown(spread_span: Span, reduce_span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Do not spread accumulators in Array.prototype.reduce()")
-        .with_help("Consider using `Object.assign()` or `Array.prototype.push()` to mutate the accumulator instead.\nUsing spreads within accumulators leads to `O(n^2)` time complexity.")
+        .with_help("Consider using `Object.assign()` or `Array.prototype.push()` to mutate the accumulator instead.")
+        .with_note("Using spreads within accumulators leads to `O(n^2)` time complexity.")
         .with_labels([
             spread_span.label("From this spread"),
             reduce_span.label("For this reduce")
@@ -50,11 +53,12 @@ fn loop_spread_likely_object_diagnostic(
     loop_span: Span,
 ) -> OxcDiagnostic {
     OxcDiagnostic::warn("Do not spread accumulators in loops")
-        .with_help("Consider using `Object.assign()` to mutate the accumulator instead.\nUsing spreads within accumulators leads to `O(n^2)` time complexity.")
+        .with_help("Consider using `Object.assign()` to mutate the accumulator instead.")
+        .with_note("Using spreads within accumulators leads to `O(n^2)` time complexity.")
         .with_labels([
             accumulator_decl_span.label("From this accumulator"),
             spread_span.label("From this spread"),
-            loop_span.label("For this loop")
+            loop_span.label("For this loop"),
         ])
 }
 fn loop_spread_likely_array_diagnostic(
@@ -63,11 +67,12 @@ fn loop_spread_likely_array_diagnostic(
     loop_span: Span,
 ) -> OxcDiagnostic {
     OxcDiagnostic::warn("Do not spread accumulators in loops")
-        .with_help("Consider using `Array.prototype.push()` to mutate the accumulator instead.\nUsing spreads within accumulators leads to `O(n^2)` time complexity.")
+        .with_help("Consider using `Array.prototype.push()` to mutate the accumulator instead.")
+        .with_note("Using spreads within accumulators leads to `O(n^2)` time complexity.")
         .with_labels([
             accumulator_decl_span.label("From this accumulator"),
             spread_span.label("From this spread"),
-            loop_span.label("For this loop")
+            loop_span.label("For this loop"),
         ])
 }
 
@@ -141,11 +146,9 @@ impl Rule for NoAccumulatingSpread {
             return;
         };
         let declaration_id = symbols.symbol_declaration(referenced_symbol_id);
-        let Some(declaration) = ctx.nodes().parent_node(declaration_id) else {
-            return;
-        };
+        let declaration = ctx.nodes().parent_node(declaration_id);
 
-        check_reduce_usage(declaration, referenced_symbol_id, spread.span, ctx);
+        check_reduce_usage(declaration, referenced_symbol_id, spread.span, node.id(), ctx);
         check_loop_usage(
             declaration,
             ctx.nodes().get_node(declaration_id),
@@ -161,6 +164,7 @@ fn check_reduce_usage<'a>(
     declaration: &AstNode<'a>,
     referenced_symbol_id: SymbolId,
     spread_span: Span,
+    spread_node_id: NodeId,
     ctx: &LintContext<'a>,
 ) {
     let AstKind::FormalParameters(params) = declaration.kind() else {
@@ -170,7 +174,7 @@ fn check_reduce_usage<'a>(
     // We're only looking for the first parameter, since that's where acc is.
     // Skip non-parameter or non-first-parameter declarations.
     let first_param_symbol_id =
-        params.items.first().and_then(|item| get_identifier_symbol_id(&item.pattern.kind));
+        params.items.first().and_then(|item| get_identifier_symbol_id(&item.pattern));
     if first_param_symbol_id.is_none_or(|id| id != referenced_symbol_id) {
         return;
     }
@@ -183,10 +187,17 @@ fn check_reduce_usage<'a>(
 
     // Check if the declaration resides within a call to reduce()
     for parent in ctx.nodes().ancestors(declaration.id()) {
-        if let AstKind::CallExpression(call_expr) = parent.kind() {
-            if is_method_call(call_expr, None, Some(&["reduce", "reduceRight"]), Some(1), Some(2)) {
-                ctx.diagnostic(get_reduce_diagnostic(call_expr, spread_span));
-            }
+        if let AstKind::CallExpression(call_expr) = parent.kind()
+            && is_method_call(call_expr, None, Some(&["reduce", "reduceRight"]), Some(1), Some(2))
+            && ctx
+                .nodes()
+                .ancestors(spread_node_id)
+                .take_while(|n| !n.kind().span().contains_inclusive(declaration.span()))
+                .all(|n| {
+                    !matches!(n.kind(), AstKind::ArrowFunctionExpression(_) | AstKind::Function(_))
+                })
+        {
+            ctx.diagnostic(get_reduce_diagnostic(call_expr, spread_span));
             return;
         }
     }
@@ -203,69 +214,125 @@ fn check_loop_usage<'a>(
     let AstKind::VariableDeclaration(declaration) = declaration_node.kind() else {
         return;
     };
-    // if the accumulator's declaration is not a `let`, then we know it's never
-    // reassigned, hence cannot be a violation of the rule
     if !matches!(declaration.kind, VariableDeclarationKind::Let) {
         return;
     }
-
     let AstKind::VariableDeclarator(declarator) = declarator.kind() else {
         return;
     };
 
-    let Some(write_reference) =
-        ctx.semantic().symbol_references(referenced_symbol_id).find(|r| r.is_write())
+    let Some(assignment_expr) = find_assignment_expression(referenced_symbol_id, ctx) else {
+        return;
+    };
+
+    let Some(expression_type) =
+        get_spread_containing_expression_type(&assignment_expr.right, spread_span)
     else {
         return;
     };
 
-    let Some(assignment_target) = ctx.nodes().parent_node(write_reference.node_id()) else {
-        return;
-    };
+    emit_loop_diagnostic_if_in_loop(
+        spread_node_id,
+        declarator.id.span(),
+        spread_span,
+        declaration.span,
+        expression_type,
+        ctx,
+    );
+}
 
-    let AstKind::SimpleAssignmentTarget(_) = assignment_target.kind() else { return };
+/// Find the assignment expression that writes to the referenced symbol
+fn find_assignment_expression<'a>(
+    referenced_symbol_id: SymbolId,
+    ctx: &LintContext<'a>,
+) -> Option<&'a oxc_ast::ast::AssignmentExpression<'a>> {
+    let write_reference =
+        ctx.semantic().symbol_references(referenced_symbol_id).find(|r| r.is_write())?;
+    let parent_node = ctx.nodes().parent_node(write_reference.node_id());
 
-    let Some(assignment_expr) = ctx.nodes().parent_node(assignment_target.id()) else { return };
-    if !matches!(assignment_expr.kind(), AstKind::AssignmentTarget(_)) {
-        return;
+    if let AstKind::AssignmentExpression(expr) = parent_node.kind() {
+        // Verify this assignment is to our symbol
+        if is_assignment_to_symbol(&expr.left, referenced_symbol_id, ctx) {
+            return Some(expr);
+        }
     }
-    let Some(assignment) = ctx.nodes().parent_node(assignment_expr.id()) else { return };
-    let AstKind::AssignmentExpression(assignment_expression) = assignment.kind() else {
-        return;
-    };
+    None
+}
 
-    let assignment_expression_right_inner_expr = assignment_expression.right.get_inner_expression();
-    match assignment_expression_right_inner_expr {
+/// Check if the assignment target is our referenced symbol
+fn is_assignment_to_symbol(
+    assignment_target: &AssignmentTarget,
+    referenced_symbol_id: SymbolId,
+    ctx: &LintContext,
+) -> bool {
+    if let AssignmentTarget::AssignmentTargetIdentifier(ident) = assignment_target {
+        let scoping = ctx.semantic().scoping();
+        let reference = scoping.get_reference(ident.reference_id());
+        reference.symbol_id() == Some(referenced_symbol_id)
+    } else {
+        false
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SpreadExpressionType {
+    Array,
+    Object,
+}
+
+/// Determine if the expression contains the spread and return its type
+fn get_spread_containing_expression_type(
+    expr: &Expression,
+    spread_span: Span,
+) -> Option<SpreadExpressionType> {
+    let inner_expr = expr.get_inner_expression();
+    match inner_expr {
         Expression::ArrayExpression(array_expr)
-            if array_expr.span.contains_inclusive(spread_span) => {}
+            if array_expr.span.contains_inclusive(spread_span) =>
+        {
+            Some(SpreadExpressionType::Array)
+        }
         Expression::ObjectExpression(object_expr)
-            if object_expr.span.contains_inclusive(spread_span) => {}
-        _ => return,
+            if object_expr.span.contains_inclusive(spread_span) =>
+        {
+            Some(SpreadExpressionType::Object)
+        }
+        _ => None,
     }
+}
 
+/// Emit appropriate diagnostic if the spread is within a loop
+fn emit_loop_diagnostic_if_in_loop(
+    spread_node_id: NodeId,
+    declarator_span: Span,
+    spread_span: Span,
+    declaration_span: Span,
+    expression_type: SpreadExpressionType,
+    ctx: &LintContext,
+) {
     for parent in ctx.nodes().ancestors(spread_node_id) {
         if let Some(loop_span) = get_loop_span(parent.kind()) {
-            if !parent.kind().span().contains_inclusive(declaration.span)
-                && parent.kind().span().contains_inclusive(spread_span)
+            let parent_span = parent.kind().span();
+            if !parent_span.contains_inclusive(declaration_span)
+                && parent_span.contains_inclusive(spread_span)
             {
-                match assignment_expression_right_inner_expr {
-                    Expression::ArrayExpression(_) => {
+                match expression_type {
+                    SpreadExpressionType::Array => {
                         ctx.diagnostic(loop_spread_likely_array_diagnostic(
-                            declarator.id.span(),
+                            declarator_span,
                             spread_span,
                             loop_span,
                         ));
                     }
-                    Expression::ObjectExpression(_) => {
+                    SpreadExpressionType::Object => {
                         ctx.diagnostic(loop_spread_likely_object_diagnostic(
-                            declarator.id.span(),
+                            declarator_span,
                             spread_span,
                             loop_span,
                         ));
                     }
-                    // we check above that the expression is either an array or object expression
-                    _ => unreachable!(),
                 }
+                return;
             }
         }
     }
@@ -301,10 +368,10 @@ fn get_reduce_diagnostic<'a>(
     reduce_unknown(spread_span, reduce_call_span)
 }
 
-fn get_identifier_symbol_id(ident: &BindingPatternKind<'_>) -> Option<SymbolId> {
+fn get_identifier_symbol_id(ident: &BindingPattern<'_>) -> Option<SymbolId> {
     match ident {
-        BindingPatternKind::BindingIdentifier(ident) => Some(ident.symbol_id()),
-        BindingPatternKind::AssignmentPattern(ident) => get_identifier_symbol_id(&ident.left.kind),
+        BindingPattern::BindingIdentifier(ident) => Some(ident.symbol_id()),
+        BindingPattern::AssignmentPattern(ident) => get_identifier_symbol_id(&ident.left),
         _ => None,
     }
 }
@@ -395,6 +462,7 @@ fn test() {
         "let foo = {}; for (let i of [1,2,3]) { foo[i] = i; }",
         "let foo = {}; for (const i of [1,2,3]) { foo[i] = i; }",
         "let foo = {}; while (Object.keys(foo).length < 10) { foo[Object.keys(foo).length] = Object.keys(foo).length; }",
+        "function doSomething(list) { return list.reduce((acc, each) => { return each.subList.flatMap((subEach) => { return [...acc, subEach.subList] }) }, []) }",
     ];
 
     let fail = vec![

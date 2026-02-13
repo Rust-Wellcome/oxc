@@ -88,19 +88,19 @@ impl<'a> ParserImpl<'a> {
     /// `StringValue` of `IdentifierName` normalizes any Unicode escape sequences
     /// in `IdentifierName` hence such escapes cannot be used to write an Identifier
     /// whose code point sequence is the same as a `ReservedWord`.
-    #[inline]
-    fn test_escaped_keyword(&mut self, kind: Kind) {
-        if self.cur_token().escaped() && kind.is_any_keyword() {
-            let span = self.cur_token().span();
-            self.error(diagnostics::escaped_keyword(span));
-        }
+    #[cold]
+    fn report_escaped_keyword(&mut self, span: Span) {
+        self.error(diagnostics::escaped_keyword(span));
     }
 
     /// Move to the next token
     /// Checks if the current token is escaped if it is a keyword
     #[inline]
     fn advance(&mut self, kind: Kind) {
-        self.test_escaped_keyword(kind);
+        // Manually inlined escaped keyword check - escaped identifiers are extremely rare
+        if self.token.escaped() && kind.is_any_keyword() {
+            self.report_escaped_keyword(self.token.span());
+        }
         self.prev_token_end = self.token.end();
         self.token = self.lexer.next_token();
     }
@@ -158,16 +158,24 @@ impl<'a> ParserImpl<'a> {
     #[inline]
     pub(crate) fn can_insert_semicolon(&self) -> bool {
         let token = self.cur_token();
-        let kind = token.kind();
-        kind == Kind::Semicolon || kind == Kind::RCurly || kind.is_eof() || token.is_on_new_line()
+        matches!(token.kind(), Kind::Semicolon | Kind::RCurly | Kind::Eof) || token.is_on_new_line()
+    }
+
+    /// Cold path for expect failures - separated to improve branch prediction
+    #[cold]
+    #[inline(never)]
+    fn handle_expect_failure(&mut self, expected_kind: Kind) {
+        let range = self.cur_token().span();
+        let error =
+            diagnostics::expect_token(expected_kind.to_str(), self.cur_kind().to_str(), range);
+        self.set_fatal_error(error);
     }
 
     /// # Errors
+    #[inline]
     pub(crate) fn expect_without_advance(&mut self, kind: Kind) {
         if !self.at(kind) {
-            let range = self.cur_token().span();
-            let error = diagnostics::expect_token(kind.to_str(), self.cur_kind().to_str(), range);
-            self.set_fatal_error(error);
+            self.handle_expect_failure(kind);
         }
     }
 
@@ -175,8 +183,39 @@ impl<'a> ParserImpl<'a> {
     /// # Errors
     #[inline]
     pub(crate) fn expect(&mut self, kind: Kind) {
-        self.expect_without_advance(kind);
+        if !self.at(kind) {
+            self.handle_expect_failure(kind);
+        }
         self.advance(kind);
+    }
+
+    #[inline]
+    pub(crate) fn expect_closing(&mut self, kind: Kind, opening_span: Span) {
+        if !self.at(kind) {
+            let range = self.cur_token().span();
+            let error = diagnostics::expect_closing(
+                kind.to_str(),
+                self.cur_kind().to_str(),
+                range,
+                opening_span,
+            );
+            self.set_fatal_error(error);
+        }
+        self.advance(kind);
+    }
+
+    #[inline]
+    pub(crate) fn expect_conditional_alternative(&mut self, question_span: Span) {
+        if !self.at(Kind::Colon) {
+            let range = self.cur_token().span();
+            let error = diagnostics::expect_conditional_alternative(
+                self.cur_kind().to_str(),
+                range,
+                question_span,
+            );
+            self.set_fatal_error(error);
+        }
+        self.bump_any(); // bump `:`
     }
 
     /// Expect the next next token to be a `JsxChild`, i.e. `<` or `{` or `JSXText`
@@ -229,35 +268,51 @@ impl<'a> ParserImpl<'a> {
         }
     }
 
-    pub(crate) fn re_lex_l_angle(&mut self) -> Kind {
+    pub(crate) fn re_lex_ts_l_angle(&mut self) -> bool {
         if self.fatal_error.is_some() {
-            return Kind::Eof;
+            return false;
         }
         let kind = self.cur_kind();
-        if matches!(kind, Kind::ShiftLeft | Kind::ShiftLeftEq | Kind::LtEq) {
-            self.token = self.lexer.re_lex_as_typescript_l_angle(kind);
-            self.token.kind()
+        if kind == Kind::ShiftLeft || kind == Kind::LtEq {
+            self.token = self.lexer.re_lex_as_typescript_l_angle(2);
+            true
+        } else if kind == Kind::ShiftLeftEq {
+            self.token = self.lexer.re_lex_as_typescript_l_angle(3);
+            true
         } else {
-            kind
+            kind == Kind::LAngle
         }
     }
 
-    pub(crate) fn re_lex_ts_r_angle(&mut self) -> Kind {
+    pub(crate) fn re_lex_ts_r_angle(&mut self) -> bool {
         if self.fatal_error.is_some() {
-            return Kind::Eof;
+            return false;
         }
         let kind = self.cur_kind();
-        if matches!(kind, Kind::ShiftRight | Kind::ShiftRight3) {
-            self.token = self.lexer.re_lex_as_typescript_r_angle(kind);
-            self.token.kind()
+        if kind == Kind::ShiftRight {
+            self.token = self.lexer.re_lex_as_typescript_r_angle(2);
+            true
+        } else if kind == Kind::ShiftRight3 {
+            self.token = self.lexer.re_lex_as_typescript_r_angle(3);
+            true
         } else {
-            kind
+            kind == Kind::RAngle
         }
     }
 
     pub(crate) fn checkpoint(&mut self) -> ParserCheckpoint<'a> {
         ParserCheckpoint {
             lexer: self.lexer.checkpoint(),
+            cur_token: self.token,
+            prev_span_end: self.prev_token_end,
+            errors_pos: self.errors.len(),
+            fatal_error: self.fatal_error.take(),
+        }
+    }
+
+    pub(crate) fn checkpoint_with_error_recovery(&mut self) -> ParserCheckpoint<'a> {
+        ParserCheckpoint {
+            lexer: self.lexer.checkpoint_with_error_recovery(),
             cur_token: self.token,
             prev_span_end: self.prev_token_end,
             errors_pos: self.errors.len(),
@@ -280,7 +335,7 @@ impl<'a> ParserImpl<'a> {
         &mut self,
         func: impl FnOnce(&mut ParserImpl<'a>) -> T,
     ) -> Option<T> {
-        let checkpoint = self.checkpoint();
+        let checkpoint = self.checkpoint_with_error_recovery();
         let ctx = self.ctx;
         let node = func(self);
         if self.fatal_error.is_none() {
@@ -301,6 +356,32 @@ impl<'a> ParserImpl<'a> {
 
     #[expect(clippy::inline_always)]
     #[inline(always)] // inline because this is always on a hot path
+    pub(crate) fn context_add<F, T>(&mut self, add_flags: Context, cb: F) -> T
+    where
+        F: FnOnce(&mut Self) -> T,
+    {
+        let ctx = self.ctx;
+        self.ctx = ctx.union(add_flags);
+        let result = cb(self);
+        self.ctx = ctx;
+        result
+    }
+
+    #[expect(clippy::inline_always)]
+    #[inline(always)] // inline because this is always on a hot path
+    pub(crate) fn context_remove<F, T>(&mut self, remove_flags: Context, cb: F) -> T
+    where
+        F: FnOnce(&mut Self) -> T,
+    {
+        let ctx = self.ctx;
+        self.ctx = ctx.difference(remove_flags);
+        let result = cb(self);
+        self.ctx = ctx;
+        result
+    }
+
+    #[expect(clippy::inline_always)]
+    #[inline(always)] // inline because this is always on a hot path
     pub(crate) fn context<F, T>(&mut self, add_flags: Context, remove_flags: Context, cb: F) -> T
     where
         F: FnOnce(&mut Self) -> T,
@@ -314,25 +395,48 @@ impl<'a> ParserImpl<'a> {
 
     pub(crate) fn parse_normal_list<F, T>(&mut self, open: Kind, close: Kind, f: F) -> Vec<'a, T>
     where
-        F: Fn(&mut Self) -> Option<T>,
+        F: Fn(&mut Self) -> T,
     {
+        let opening_span = self.cur_token().span();
         self.expect(open);
         let mut list = self.ast.vec();
         loop {
             let kind = self.cur_kind();
-            if kind == close || self.has_fatal_error() {
+            if kind == close
+                || matches!(kind, Kind::Eof | Kind::Undetermined)
+                || self.fatal_error.is_some()
+            {
                 break;
             }
-            match f(self) {
-                Some(e) => {
-                    list.push(e);
-                }
-                None => {
-                    break;
-                }
+            list.push(f(self));
+        }
+        self.expect_closing(close, opening_span);
+        list
+    }
+
+    pub(crate) fn parse_normal_list_breakable<F, T>(
+        &mut self,
+        open: Kind,
+        close: Kind,
+        f: F,
+    ) -> Vec<'a, T>
+    where
+        F: Fn(&mut Self) -> Option<T>,
+    {
+        let opening_span = self.cur_token().span();
+        self.expect(open);
+        let mut list = self.ast.vec();
+        loop {
+            if self.at(close) || self.has_fatal_error() {
+                break;
+            }
+            if let Some(e) = f(self) {
+                list.push(e);
+            } else {
+                break;
             }
         }
-        self.expect(close);
+        self.expect_closing(close, opening_span);
         list
     }
 
@@ -340,22 +444,42 @@ impl<'a> ParserImpl<'a> {
         &mut self,
         close: Kind,
         separator: Kind,
-        f: F,
+        opening_span: Span,
+        mut f: F,
     ) -> (Vec<'a, T>, Option<u32>)
     where
-        F: Fn(&mut Self) -> T,
+        F: FnMut(&mut Self) -> T,
     {
         let mut list = self.ast.vec();
-        if self.at(close) || self.has_fatal_error() {
+        // Cache cur_kind() to avoid redundant calls in compound checks
+        let kind = self.cur_kind();
+        if kind == close
+            || matches!(kind, Kind::Eof | Kind::Undetermined)
+            || self.fatal_error.is_some()
+        {
             return (list, None);
         }
         list.push(f(self));
         loop {
-            if self.at(close) || self.has_fatal_error() {
+            let kind = self.cur_kind();
+            if kind == close
+                || matches!(kind, Kind::Eof | Kind::Undetermined)
+                || self.fatal_error.is_some()
+            {
                 return (list, None);
             }
-            self.expect(separator);
-            if self.at(close) {
+            if !self.at(separator) {
+                self.set_fatal_error(diagnostics::expect_closing_or_separator(
+                    close.to_str(),
+                    separator.to_str(),
+                    kind.to_str(),
+                    self.cur_token().span(),
+                    opening_span,
+                ));
+                return (list, None);
+            }
+            self.advance(separator);
+            if self.cur_kind() == close {
                 let trailing_separator = self.prev_token_end - 1;
                 return (list, Some(trailing_separator));
             }
@@ -363,14 +487,17 @@ impl<'a> ParserImpl<'a> {
         }
     }
 
-    pub(crate) fn parse_delimited_list_with_rest<E, A, D>(
+    pub(crate) fn parse_delimited_list_with_rest<E, A, R, D>(
         &mut self,
         close: Kind,
+        opening_span: Span,
         parse_element: E,
+        parse_rest: R,
         rest_last_diagnostic: D,
     ) -> (Vec<'a, A>, Option<BindingRestElement<'a>>)
     where
         E: Fn(&mut Self) -> A,
+        R: Fn(&mut Self) -> BindingRestElement<'a>,
         D: Fn(Span) -> OxcDiagnostic,
     {
         let mut list = self.ast.vec();
@@ -378,10 +505,10 @@ impl<'a> ParserImpl<'a> {
         let mut first = true;
         loop {
             let kind = self.cur_kind();
-            if self.has_fatal_error() {
-                break;
-            }
-            if kind == close {
+            if kind == close
+                || matches!(kind, Kind::Eof | Kind::Undetermined)
+                || self.fatal_error.is_some()
+            {
                 break;
             }
 
@@ -389,17 +516,20 @@ impl<'a> ParserImpl<'a> {
                 first = false;
             } else {
                 let comma_span = self.cur_token().span();
-                if !self.at(Kind::Comma) {
-                    let error = diagnostics::expect_token(
+                if kind != Kind::Comma {
+                    let error = diagnostics::expect_closing_or_separator(
+                        close.to_str(),
                         Kind::Comma.to_str(),
-                        self.cur_kind().to_str(),
+                        kind.to_str(),
                         comma_span,
+                        opening_span,
                     );
                     self.set_fatal_error(error);
                     break;
                 }
                 self.bump_any();
-                if self.at(close) {
+                let kind = self.cur_kind();
+                if kind == close {
                     if rest.is_some() && !self.ctx.has_ambient() {
                         self.error(diagnostics::rest_element_trailing_comma(comma_span));
                     }
@@ -412,9 +542,10 @@ impl<'a> ParserImpl<'a> {
                 break;
             }
 
-            if self.at(Kind::Dot3) {
-                let r = self.parse_rest_element();
-                rest.replace(r);
+            // Re-capture kind to get the current token (may have changed after else branch)
+            let kind = self.cur_kind();
+            if kind == Kind::Dot3 {
+                rest.replace(parse_rest(self));
             } else {
                 list.push(parse_element(self));
             }

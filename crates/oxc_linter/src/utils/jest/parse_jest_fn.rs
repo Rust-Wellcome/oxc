@@ -13,7 +13,7 @@ use oxc_span::Span;
 
 use crate::{
     context::LintContext,
-    utils::jest::{JestFnKind, JestGeneralFnKind, PossibleJestNode, is_pure_string},
+    utils::jest::{JestFnKind, JestGeneralFnKind, PossibleJestNode},
     utils::valid_vitest_fn::is_valid_vitest_call,
 };
 
@@ -84,14 +84,12 @@ pub fn parse_jest_fn_call<'a>(
         // Ensure that we're at the "top" of the function call chain otherwise when
         // parsing e.g. x().y.z(), we'll incorrectly find & parse "x()" even though
         // the full chain is not a valid jest function call chain
-        if ctx.nodes().parent_node(node.id()).is_some_and(|parent_node| {
-            matches!(
-                parent_node.kind(),
-                AstKind::CallExpression(_)
-                    | AstKind::StaticMemberExpression(_)
-                    | AstKind::ComputedMemberExpression(_)
-            )
-        }) {
+        if matches!(
+            ctx.nodes().parent_kind(node.id()),
+            AstKind::CallExpression(_)
+                | AstKind::StaticMemberExpression(_)
+                | AstKind::ComputedMemberExpression(_)
+        ) {
             return None;
         }
 
@@ -108,12 +106,23 @@ pub fn parse_jest_fn_call<'a>(
         let mut call_chains = Vec::from([Cow::Borrowed(name)]);
         call_chains.extend(members.iter().filter_map(KnownMemberExpressionProperty::name));
 
-        if ctx.frameworks().is_jest() && !is_valid_jest_call(&call_chains) {
-            return None;
-        }
-
-        if ctx.frameworks().is_vitest() && !is_valid_vitest_call(&call_chains) {
-            return None;
+        match (ctx.frameworks().is_jest(), ctx.frameworks().is_vitest()) {
+            (true, true) => {
+                if !is_valid_jest_call(&call_chains) && !is_valid_vitest_call(&call_chains) {
+                    return None;
+                }
+            }
+            (true, false) => {
+                if !is_valid_jest_call(&call_chains) {
+                    return None;
+                }
+            }
+            (false, true) => {
+                if !is_valid_vitest_call(&call_chains) {
+                    return None;
+                }
+            }
+            (false, false) => {}
         }
 
         return Some(ParsedJestFnCall::GeneralJest(ParsedGeneralJestFnCall {
@@ -146,15 +155,24 @@ fn parse_jest_expect_fn_call<'a>(
     if matches!(expect_error, Some(ExpectError::MatcherNotFound)) {
         // If the parent is a member expression, we can assume that the matcher
         // is not called, so we can set the error to `MatcherNotCalled`.
-        match ctx.nodes().parent_kind(node.id())? {
-            AstKind::StaticMemberExpression(_) | AstKind::ComputedMemberExpression(_) => {
-                expect_error = Some(ExpectError::MatcherNotCalled);
-            }
-            _ => {}
+        if matches!(
+            ctx.nodes().parent_kind(node.id()),
+            AstKind::StaticMemberExpression(_) | AstKind::ComputedMemberExpression(_)
+        ) {
+            expect_error = Some(ExpectError::MatcherNotCalled);
         }
     }
 
     let kind = if is_type_of { JestFnKind::ExpectTypeOf } else { JestFnKind::Expect };
+    let expect_arguments = head.parent.and_then(|parent| {
+        if let Expression::CallExpression(parent) = parent {
+            return Some(&parent.arguments);
+        }
+        None
+    });
+
+    let matcher_arguments =
+        matcher.and_then(|matcher| members.get(matcher)).map(|_| &call_expr.arguments);
 
     let parsed_expect_fn = ParsedExpectFnCall {
         kind,
@@ -166,6 +184,8 @@ fn parse_jest_expect_fn_call<'a>(
         matcher_index: matcher,
         modifier_indices: modifiers,
         expect_error,
+        expect_arguments,
+        matcher_arguments,
     };
 
     Some(if is_type_of {
@@ -244,9 +264,7 @@ fn is_top_most_call_expr<'a, 'b>(node: &'b AstNode<'a>, ctx: &'b LintContext<'a>
     let mut node = node;
 
     loop {
-        let Some(parent) = ctx.nodes().parent_node(node.id()) else {
-            return true;
-        };
+        let parent = ctx.nodes().parent_node(node.id());
 
         match parent.kind() {
             AstKind::CallExpression(_) => return false,
@@ -267,7 +285,7 @@ fn parse_jest_jest_fn_call<'a>(
 ) -> Option<ParsedJestFnCall<'a>> {
     let lowercase_name = name.cow_to_ascii_lowercase();
 
-    if !(lowercase_name == "jest" || lowercase_name == "vi") {
+    if !(lowercase_name == "jest" || lowercase_name == "vi" || lowercase_name == "vitest") {
         return None;
     }
 
@@ -371,6 +389,9 @@ pub struct ParsedExpectFnCall<'a> {
     pub name: Cow<'a, str>,
     pub local: Cow<'a, str>,
     pub head: KnownMemberExpressionProperty<'a>,
+    /// this args changed bases on condition
+    /// In `expect(fn).toBeCalledTimes(2)`, it will be `[2]`
+    /// In `expect(fn)`, it will be `fn`
     pub args: &'a oxc_allocator::Vec<'a, Argument<'a>>,
     // In `expect(1).not.resolved.toBe()`, "not", "resolved" will be modifier
     // it save a group of modifier index from members
@@ -379,6 +400,14 @@ pub struct ParsedExpectFnCall<'a> {
     // it save the matcher index from members
     pub matcher_index: Option<usize>,
     pub expect_error: Option<ExpectError>,
+
+    /// the arguments passed to the expect function
+    /// In `expect(1).toBe(2)`, it will be `[1]`
+    pub expect_arguments: Option<&'a oxc_allocator::Vec<'a, Argument<'a>>>,
+    /// the arguments passed to the matcher function
+    /// In `expect(1).toBe(2)`, it will be `[2]
+    /// In `expect(1)`, it will be `None`
+    pub matcher_arguments: Option<&'a oxc_allocator::Vec<'a, Argument<'a>>>,
 }
 
 impl<'a> ParsedExpectFnCall<'a> {
@@ -422,7 +451,7 @@ impl<'a> KnownMemberExpressionProperty<'a> {
                     Some(Cow::Borrowed(string_literal.value.as_str()))
                 }
                 Expression::TemplateLiteral(template_literal) => Some(Cow::Borrowed(
-                    template_literal.quasi().expect("get string content").as_str(),
+                    template_literal.single_quasi().expect("get string content").as_str(),
                 )),
                 _ => None,
             },
@@ -558,7 +587,9 @@ fn recurse_extend_node_chain<'a>(
                 span: string_literal.span,
             });
         }
-        Expression::TemplateLiteral(template_literal) if is_pure_string(template_literal) => {
+        Expression::TemplateLiteral(template_literal)
+            if template_literal.is_no_substitution_template() =>
+        {
             chain.push(KnownMemberExpressionProperty {
                 element: MemberExpressionElement::Expression(expr),
                 parent: *parent,
@@ -572,7 +603,7 @@ fn recurse_extend_node_chain<'a>(
 }
 
 // sorted list for binary search.
-const VALID_JEST_FN_CALL_CHAINS: [[&str; 4]; 52] = [
+static VALID_JEST_FN_CALL_CHAINS: &[[&str; 4]] = &[
     ["afterAll", "", "", ""],
     ["afterEach", "", "", ""],
     ["beforeAll", "", "", ""],
@@ -589,6 +620,7 @@ const VALID_JEST_FN_CALL_CHAINS: [[&str; 4]; 52] = [
     ["fit", "", "", ""],
     ["fit", "each", "", ""],
     ["fit", "failing", "", ""],
+    ["fit", "fails", "", ""],
     ["it", "", "", ""],
     ["it", "concurrent", "", ""],
     ["it", "concurrent", "each", ""],
@@ -596,12 +628,15 @@ const VALID_JEST_FN_CALL_CHAINS: [[&str; 4]; 52] = [
     ["it", "concurrent", "skip", "each"],
     ["it", "each", "", ""],
     ["it", "failing", "", ""],
+    ["it", "fails", "", ""],
     ["it", "only", "", ""],
     ["it", "only", "each", ""],
     ["it", "only", "failing", ""],
+    ["it", "only", "fails", ""],
     ["it", "skip", "", ""],
     ["it", "skip", "each", ""],
     ["it", "skip", "failing", ""],
+    ["it", "skip", "fails", ""],
     ["it", "todo", "", ""],
     ["test", "", "", ""],
     ["test", "concurrent", "", ""],
@@ -610,19 +645,24 @@ const VALID_JEST_FN_CALL_CHAINS: [[&str; 4]; 52] = [
     ["test", "concurrent", "skip", "each"],
     ["test", "each", "", ""],
     ["test", "failing", "", ""],
+    ["test", "fails", "", ""],
     ["test", "only", "", ""],
     ["test", "only", "each", ""],
     ["test", "only", "failing", ""],
+    ["test", "only", "fails", ""],
     ["test", "skip", "", ""],
     ["test", "skip", "each", ""],
     ["test", "skip", "failing", ""],
+    ["test", "skip", "fails", ""],
     ["test", "todo", "", ""],
     ["xdescribe", "", "", ""],
     ["xdescribe", "each", "", ""],
     ["xit", "", "", ""],
     ["xit", "each", "", ""],
     ["xit", "failing", "", ""],
+    ["xit", "fails", "", ""],
     ["xtest", "", "", ""],
     ["xtest", "each", "", ""],
     ["xtest", "failing", "", ""],
+    ["xtest", "fails", "", ""],
 ];

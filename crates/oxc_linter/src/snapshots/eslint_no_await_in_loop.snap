@@ -1,6 +1,7 @@
 ---
 source: crates/oxc_linter/src/tester.rs
 ---
+
   ⚠ eslint(no-await-in-loop): Unexpected `await` inside a loop.
    ╭─[no_await_in_loop.tsx:1:38]
  1 │ async function foo() { while (baz) { await bar; } }
@@ -83,4 +84,22 @@ source: crates/oxc_linter/src/tester.rs
    ╭─[no_await_in_loop.tsx:1:60]
  1 │ async function foo() { for await (var x of xs) { while (1) await f(x) } }
    ·                                                            ─────
+   ╰────
+
+  ⚠ eslint(no-await-in-loop): Unexpected `await` inside a loop.
+   ╭─[no_await_in_loop.tsx:1:16]
+ 1 │ while (true) { await using resource = getResource(); }
+   ·                ─────
+   ╰────
+
+  ⚠ eslint(no-await-in-loop): Unexpected `await` inside a loop.
+   ╭─[no_await_in_loop.tsx:1:12]
+ 1 │ for (;;) { await using resource = getResource(); }
+   ·            ─────
+   ╰────
+
+  ⚠ eslint(no-await-in-loop): Unexpected `await` inside a loop.
+   ╭─[no_await_in_loop.tsx:1:6]
+ 1 │ for (await using resource of resources) {}
+   ·      ─────
    ╰────

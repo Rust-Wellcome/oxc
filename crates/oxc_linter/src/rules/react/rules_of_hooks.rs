@@ -10,6 +10,7 @@ use oxc_cfg::{
 };
 use oxc_macros::declare_oxc_lint;
 use oxc_semantic::{AstNodes, NodeId};
+use oxc_span::GetSpan;
 use oxc_syntax::operator::AssignmentOperator;
 
 use crate::{
@@ -24,14 +25,22 @@ mod diagnostics {
     use oxc_span::Span;
     const SCOPE: &str = "eslint-plugin-react-hooks";
 
-    pub(super) fn function_error(span: Span, hook_name: &str, func_name: &str) -> OxcDiagnostic {
+    pub(super) fn function_error(
+        react_hook_span: Span,
+        outer_function_span: Span,
+        hook_name: &str,
+        func_name: &str,
+    ) -> OxcDiagnostic {
         OxcDiagnostic::warn(format!(
             "React Hook {hook_name:?} is called in function {func_name:?} that is neither \
             a React function component nor a custom React Hook function. \
             React component names must start with an uppercase letter. \
             React Hook names must start with the word \"use\".",
         ))
-        .with_label(span)
+        .with_labels(vec![
+            react_hook_span.primary_label("Hook is called here"),
+            outer_function_span.label("Outer function"),
+        ])
         .with_error_code_scope(SCOPE)
     }
 
@@ -99,9 +108,60 @@ pub struct RulesOfHooks;
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// This enforces the Rules of Hooks
+    /// Enforces the Rules of Hooks, ensuring that React Hooks are only called
+    /// in valid contexts and in the correct order.
     ///
-    /// <https://reactjs.org/docs/hooks-rules.html>
+    /// ### Why is this bad?
+    ///
+    /// React Hooks must follow specific rules to ensure they work correctly:
+    /// 1. Only call Hooks at the top level (never inside loops, conditions,
+    ///    or nested functions)
+    /// 2. Only call Hooks from React function components or custom Hooks
+    /// 3. Hooks must be called in the same order every time a component renders
+    ///
+    /// Breaking these rules can lead to bugs where state gets corrupted or
+    /// component behavior becomes unpredictable.
+    ///
+    /// ### Examples
+    ///
+    /// Examples of **incorrect** code for this rule:
+    /// ```javascript
+    /// // Don't call Hooks inside loops, conditions, or nested functions
+    /// function BadComponent() {
+    ///   if (condition) {
+    ///     const [state, setState] = useState(); // ❌ Hook in condition
+    ///   }
+    ///
+    ///   for (let i = 0; i < 10; i++) {
+    ///     useEffect(() => {}); // ❌ Hook in loop
+    ///   }
+    /// }
+    ///
+    /// // Don't call Hooks from regular JavaScript functions
+    /// function regularFunction() {
+    ///   const [state, setState] = useState(); // ❌ Hook in regular function
+    /// }
+    /// ```
+    ///
+    /// Examples of **correct** code for this rule:
+    /// ```javascript
+    /// // ✅ Call Hooks at the top level of a React component
+    /// function GoodComponent() {
+    ///   const [state, setState] = useState();
+    ///
+    ///   useEffect(() => {
+    ///     // Effect logic here
+    ///   });
+    ///
+    ///   return <div>{state}</div>;
+    /// }
+    ///
+    /// // ✅ Call Hooks from custom Hooks
+    /// function useCustomHook() {
+    ///   const [state, setState] = useState();
+    ///   return state;
+    /// }
+    /// ```
     ///
     RulesOfHooks,
     react,
@@ -113,7 +173,7 @@ impl Rule for RulesOfHooks {
         // disable this rule in vue/nuxt and svelte(kit) files
         // react hook can be build in only `.ts` files,
         // but `useX` functions are popular and can be false positive in other frameworks
-        !ctx.file_path().extension().is_some_and(|ext| ext == "vue" || ext == "svelte")
+        !ctx.file_extension().is_some_and(|ext| ext == "vue" || ext == "svelte")
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -140,11 +200,7 @@ impl Rule for RulesOfHooks {
         // Check if our parent function is part of a class.
         if matches!(
             nodes.parent_kind(parent_func.id()),
-            Some(
-                AstKind::MethodDefinition(_)
-                    | AstKind::StaticBlock(_)
-                    | AstKind::PropertyDefinition(_)
-            )
+            AstKind::MethodDefinition(_) | AstKind::StaticBlock(_) | AstKind::PropertyDefinition(_)
         ) {
             return ctx.diagnostic(diagnostics::class_component(span, hook_name));
         }
@@ -155,6 +211,7 @@ impl Rule for RulesOfHooks {
                 if !is_react_component_or_hook_name(&id.name) =>
             {
                 return ctx.diagnostic(diagnostics::function_error(
+                    call.callee.span(),
                     id.span,
                     hook_name,
                     id.name.as_str(),
@@ -162,6 +219,7 @@ impl Rule for RulesOfHooks {
             }
             // Hooks are allowed inside of unnamed functions used as arguments. As long as they are
             // not used as a callback inside of components or hooks.
+            // This includes JSX render props like <Foo>{() => { ... }}</Foo>
             AstKind::Function(Function { id: None, .. }) | AstKind::ArrowFunctionExpression(_)
                 if is_non_react_func_arg(nodes, parent_func.id()) =>
             {
@@ -200,6 +258,7 @@ impl Rule for RulesOfHooks {
                 // }
                 if ident.is_some_and(|name| !is_react_component_or_hook_name(&name)) {
                     return ctx.diagnostic(diagnostics::function_error(
+                        call.callee.span(),
                         *span,
                         hook_name,
                         "Anonymous",
@@ -228,8 +287,8 @@ impl Rule for RulesOfHooks {
             return;
         }
 
-        let node_cfg_id = node.cfg_id();
-        let func_cfg_id = parent_func.cfg_id();
+        let node_cfg_id = ctx.nodes().cfg_id(node.id());
+        let func_cfg_id = ctx.nodes().cfg_id(parent_func.id());
 
         // there is no branch between us and our parent function
         if node_cfg_id == func_cfg_id {
@@ -249,7 +308,7 @@ impl Rule for RulesOfHooks {
             return ctx.diagnostic(diagnostics::loop_hook(span, hook_name));
         }
 
-        if has_conditional_path_accept_throw(cfg, parent_func, node) {
+        if has_conditional_path_accept_throw(ctx.nodes(), cfg, parent_func, node) {
             #[expect(clippy::needless_return)]
             return ctx.diagnostic(diagnostics::conditional_hook(span, hook_name));
         }
@@ -257,12 +316,13 @@ impl Rule for RulesOfHooks {
 }
 
 fn has_conditional_path_accept_throw(
+    nodes: &AstNodes<'_>,
     cfg: &ControlFlowGraph,
     from: &AstNode<'_>,
     to: &AstNode<'_>,
 ) -> bool {
-    let from_graph_id = from.cfg_id();
-    let to_graph_id = to.cfg_id();
+    let from_graph_id = nodes.cfg_id(from.id());
+    let to_graph_id = nodes.cfg_id(to.id());
     let graph = cfg.graph();
     if graph
         .edges(to_graph_id)
@@ -328,33 +388,30 @@ fn has_conditional_path_accept_throw(
 }
 
 fn parent_func<'a>(nodes: &'a AstNodes<'a>, node: &AstNode) -> Option<&'a AstNode<'a>> {
-    nodes
-        .ancestor_ids(node.id())
-        .map(|id| nodes.get_node(id))
-        .find(|it| it.kind().is_function_like())
+    nodes.ancestors(node.id()).find(|node| node.kind().is_function_like())
 }
 
-/// Checks if the `node_id` is a callback argument,
+/// Checks if the `node_id` is a callback argument (including JSX render props),
 /// And that function isn't a `React.memo` or `React.forwardRef`.
-/// Returns `true` if this node is a function argument and that isn't a React special function.
+/// Returns `true` if this node is a function argument/render prop and that isn't a React special function.
 /// Otherwise it would return `false`.
 fn is_non_react_func_arg(nodes: &AstNodes, node_id: NodeId) -> bool {
-    let argument = match nodes.parent_node(node_id) {
-        Some(parent) if matches!(parent.kind(), AstKind::Argument(_)) => parent,
-        _ => return false,
-    };
+    let parent = nodes.parent_node(node_id);
 
-    let Some(AstKind::CallExpression(call)) = nodes.parent_kind(argument.id()) else {
-        return false;
-    };
-
-    !(is_react_function_call(call, "forwardRef") || is_react_function_call(call, "memo"))
+    match parent.kind() {
+        // Callback passed as argument to a function call
+        AstKind::CallExpression(call) => {
+            !(is_react_function_call(call, "forwardRef") || is_react_function_call(call, "memo"))
+        }
+        // Callback passed as JSX expression: <Foo>{() => { ... }}</Foo> or <Foo render={() => { ... }} />
+        AstKind::JSXExpressionContainer(_) => true,
+        _ => false,
+    }
 }
 
 fn is_somewhere_inside_component_or_hook(nodes: &AstNodes, node_id: NodeId) -> bool {
     nodes
-        .ancestor_ids(node_id)
-        .map(|id| nodes.get_node(id))
+        .ancestors(node_id)
         .filter(|node| node.kind().is_function_like())
         .map(|node| {
             (
@@ -390,10 +447,7 @@ fn get_declaration_identifier<'a>(
             Some(Cow::Borrowed(id.name.as_str()))
         }
         AstKind::Function(_) | AstKind::ArrowFunctionExpression(_) => {
-            let parent =
-                nodes.ancestor_ids(node_id).skip(1).map(|node| nodes.get_node(node)).next()?;
-
-            match parent.kind() {
+            match nodes.parent_kind(node_id) {
                 AstKind::VariableDeclarator(decl) => {
                     decl.id.get_identifier_name().map(|id| Cow::Borrowed(id.as_str()))
                 }
@@ -421,7 +475,7 @@ fn get_declaration_identifier<'a>(
 /// # Panics
 /// `node_id` should always point to a valid `Function`.
 fn is_memo_or_forward_ref_callback(nodes: &AstNodes, node_id: NodeId) -> bool {
-    nodes.ancestor_ids(node_id).map(|id| nodes.get_node(id)).any(|node| {
+    nodes.ancestors(node_id).any(|node| {
         if let AstKind::CallExpression(call) = node.kind() {
             call.callee_name().is_some_and(|name| matches!(name, "forwardRef" | "memo"))
         } else {
@@ -1010,7 +1064,8 @@ fn test() {
     // https://github.com/oxc-project/oxc/issues/6651
     r"const MyComponent = makeComponent(() => { useHook(); });",
     r"const MyComponent2 = makeComponent(function () { useHook(); });",
-    r"const MyComponent4 = makeComponent(function InnerComponent() { useHook(); });"
+    r"const MyComponent4 = makeComponent(function InnerComponent() { useHook(); });",
+    r"const Foo = hoc((props) => { if (props.cond) { const [_a, _b] = useState(false); } });"
     ];
 
     let fail = vec![
@@ -1678,6 +1733,30 @@ fn test() {
         // " ,
         // https://github.com/oxc-project/oxc/issues/6651
         r"const MyComponent3 = makeComponent(function foo () { useHook(); });",
+        // https://github.com/oxc-project/oxc/issues/17961
+        // Invalid because hooks are called inside JSX children render props
+        r"
+            function Component() {
+                return <Foo>{() => { useState(); }}</Foo>;
+            }
+        ",
+        r"
+            function Component() {
+                return <Foo>{props => { useMemo(() => {}, []); }}</Foo>;
+            }
+        ",
+        // Invalid because hooks are called inside JSX attribute render props
+        r"
+            function Component() {
+                return <Foo render={() => { useState(); }} />;
+            }
+        ",
+        r"
+            function Component() {
+                return <Foo render={props => { useCallback(() => {}, []); }} />;
+            }
+        ",
+        r"const Foo3 = hoc(function NamedComp(props) { if (props.cond) { const [_a, _b] = useState(false); } });",
     ];
 
     Tester::new(RulesOfHooks::NAME, RulesOfHooks::PLUGIN, pass, fail).test_and_snapshot();

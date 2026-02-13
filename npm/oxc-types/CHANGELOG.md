@@ -4,6 +4,118 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.111.0] - 2026-01-26
+
+### 🐛 Bug Fixes
+
+- c205b0d ast: Remove `ThisExpression` from `TSModuleReference` (#18489) (Boshen)
+
+## [0.109.0] - 2026-01-19
+
+### 🚀 Features
+
+- 08dad63 span: Add `sourceType: 'commonjs'` support (#18089) (Boshen)
+
+## [0.100.0] - 2025-12-01
+
+### 🐛 Bug Fixes
+
+- 91eb3f2 ast/estree: Convert `TSImportType` `argument` field to `Literal` (#16109) (overlookmotel)
+
+## [0.99.0] - 2025-11-24
+
+### 💥 BREAKING CHANGES
+
+- cbb27fd ast: [**BREAKING**] Add `TSGlobalDeclaration` type (#15712) (overlookmotel)
+
+## [0.97.0] - 2025-11-11
+
+### 🐛 Bug Fixes
+
+- 40231a6 linter/plugins, napi/parser: Add `parent` field to `FormalParameterRest` and `TSParameterProperty` in TS type defs (#15337) (overlookmotel)
+
+## [0.96.0] - 2025-10-30
+
+### 🐛 Bug Fixes
+
+- 597340e ast-tools: Use oxfmt to format generated code (#15064) (camc314)
+
+
+
+## [0.94.0] - 2025-10-06
+
+### 🚀 Features
+
+- 7e4d04f napi/parser: Add option to add `parent` prop to AST nodes with raw transfer (#14344) (overlookmotel)
+
+
+
+
+## [0.91.0] - 2025-09-22
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
+
+## [0.90.0] - 2025-09-18
+
+### 🚀 Features
+
+- 89e9f5f npm/oxc-types: Convert to ES modules (#13875) (Boshen)
+
+
+
+
+
+
+
+
+
+
+
+
+## [0.82.0] - 2025-08-12
+
+### 🚜 Refactor
+
+- bf9ae3b ast/estree: Remove custom serializer for `TSImportTypeQualifier` (#12961) (overlookmotel)
+
+
+## [0.81.0] - 2025-08-06
+
+### 💥 BREAKING CHANGES
+
+- 50b91ac ast: [**BREAKING**] Remove `IdentifierReference` from `qualifier` field of `TSImportType` (#12799) (camc314)
+
+### 🐛 Bug Fixes
+
+- 47e2c59 estree: Fix serialization of `TSImportTypeQualifier` (#12801) (camc314)
+
+
+
+
+
+
+
+
+## [0.77.1] - 2025-07-16
+
+### 🚀 Features
+
+- 9b14fbc ast: Add `ThisExpression` to `TSTypeName` (#12156) (Boshen)
+
+
+
+
+## [0.75.1] - 2025-07-03
+
+### 🐛 Bug Fixes
+
+- d7076b3 ast/estree: Add optional `range` field to `Span` in TS type defs (#12014) (overlookmotel)
+
+
 
 
 

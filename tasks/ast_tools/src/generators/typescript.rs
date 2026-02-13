@@ -3,15 +3,16 @@
 use std::borrow::Cow;
 
 use itertools::Itertools;
+use lazy_regex::{Captures, Lazy, Regex, lazy_regex, regex::Replacer};
 
 use crate::{
-    Codegen, Generator, TYPESCRIPT_DEFINITIONS_PATH,
+    Codegen, Generator, OXLINT_APP_PATH, TYPESCRIPT_DEFINITIONS_PATH,
     derives::estree::{
         get_fieldless_variant_value, get_struct_field_name, should_flatten_field,
         should_skip_enum_variant, should_skip_field,
     },
     output::Output,
-    schema::{Def, EnumDef, FieldDef, Schema, StructDef, TypeDef},
+    schema::{Def, EnumDef, FieldDef, Schema, StructDef, TypeDef, TypeId},
     utils::{FxIndexSet, format_cow, write_it},
 };
 
@@ -24,25 +25,45 @@ define_generator!(TypescriptGenerator);
 
 impl Generator for TypescriptGenerator {
     /// Generate Typescript type definitions for all AST types.
-    fn generate(&self, schema: &Schema, codegen: &Codegen) -> Output {
-        let estree_derive_id = codegen.get_derive_id_by_name("ESTree");
+    fn generate_many(&self, schema: &Schema, codegen: &Codegen) -> Vec<Output> {
+        let code = generate_ts_type_defs(schema, codegen);
 
-        let mut code = String::new();
-        let mut ast_node_names: Vec<String> = vec![];
-        for type_def in &schema.types {
-            if type_def.generates_derive(estree_derive_id) {
-                generate_ts_type_def(type_def, &mut code, &mut ast_node_names, schema);
-            }
-        }
+        let standard_code = amend_standard_types(&code);
+        let oxlint_code = amend_oxlint_types(&code);
 
-        // Manually append `ParamPattern`, which is generated via `add_ts_def`.
-        // `ParamPattern` is a union type of other `add_ts_def`ed types.
-        // TODO: Should not be hard-coded here.
-        let ast_node_union = ast_node_names.join(" | ");
-        write_it!(code, "export type Node = {ast_node_union} | ParamPattern;\n\n");
-
-        Output::Javascript { path: TYPESCRIPT_DEFINITIONS_PATH.to_string(), code }
+        vec![
+            Output::Javascript {
+                path: TYPESCRIPT_DEFINITIONS_PATH.to_string(),
+                code: standard_code,
+            },
+            Output::Javascript {
+                path: format!("{OXLINT_APP_PATH}/src-js/generated/types.d.ts"),
+                code: oxlint_code,
+            },
+        ]
     }
+}
+
+/// Generate Typescript type definitions for all types.
+fn generate_ts_type_defs(schema: &Schema, codegen: &Codegen) -> String {
+    let estree_derive_id = codegen.get_derive_id_by_name("ESTree");
+    let program_type_id = schema.type_names["Program"];
+
+    let mut code = String::new();
+    let mut ast_node_names: Vec<String> = vec![];
+    for type_def in &schema.types {
+        if type_def.generates_derive(estree_derive_id) {
+            generate_ts_type_def(type_def, &mut code, &mut ast_node_names, program_type_id, schema);
+        }
+    }
+
+    // Manually append `ParamPattern`, which is generated via `add_ts_def`.
+    // `ParamPattern` is a union type of other `add_ts_def`ed types.
+    // TODO: Should not be hard-coded here.
+    let ast_node_union = ast_node_names.join(" | ");
+    write_it!(code, "export type Node = {ast_node_union} | ParamPattern;\n\n");
+
+    code
 }
 
 /// Generate Typescript type definition for a struct or enum.
@@ -52,6 +73,7 @@ fn generate_ts_type_def(
     type_def: &TypeDef,
     code: &mut String,
     ast_node_names: &mut Vec<String>,
+    program_type_id: TypeId,
     schema: &Schema,
 ) {
     // Skip TS def generation if `#[estree(no_ts_def)]` attribute
@@ -64,7 +86,7 @@ fn generate_ts_type_def(
     if !no_ts_def {
         let ts_def = match type_def {
             TypeDef::Struct(struct_def) => {
-                generate_ts_type_def_for_struct(struct_def, ast_node_names, schema)
+                generate_ts_type_def_for_struct(struct_def, ast_node_names, program_type_id, schema)
             }
             TypeDef::Enum(enum_def) => generate_ts_type_def_for_enum(enum_def, schema),
             _ => unreachable!(),
@@ -90,6 +112,7 @@ fn generate_ts_type_def(
 fn generate_ts_type_def_for_struct(
     struct_def: &StructDef,
     ast_node_names: &mut Vec<String>,
+    program_type_id: TypeId,
     schema: &Schema,
 ) -> Option<String> {
     // If struct marked with `#[estree(ts_alias = "...")]`, then it needs no type def
@@ -99,10 +122,10 @@ fn generate_ts_type_def_for_struct(
 
     // If struct has a converter defined with `#[estree(via = Converter)]` and that converter defines
     // a type alias, then it needs no type def
-    if let Some(converter_name) = &struct_def.estree.via {
-        if get_ts_type_for_converter(converter_name, schema).is_some() {
-            return None;
-        }
+    if let Some(converter_name) = &struct_def.estree.via
+        && get_ts_type_for_converter(converter_name, schema).is_some()
+    {
+        return None;
     }
 
     // If struct is marked as `#[estree(flatten)]`, and only has a single field which isn't skipped,
@@ -148,6 +171,11 @@ fn generate_ts_type_def_for_struct(
                 schema,
             );
         }
+    }
+
+    if !struct_def.estree.no_type {
+        let parent_type = if struct_def.id == program_type_id { "null" } else { "Node" };
+        write_it!(fields_str, "\n\tparent/* IF !LINTER */?/* END IF */: {parent_type};");
     }
 
     let ts_def = if extends.is_empty() {
@@ -248,26 +276,25 @@ fn generate_ts_type_def_for_struct_field_impl<'s>(
     };
 
     if should_flatten_field(field, schema) {
-        if let TypeDef::Struct(field_type) = field.type_def(schema) {
-            if let Some(flatten_field) = get_single_field(field_type, schema) {
-                // Only one field to flatten. Add it as a field on the parent type, instead of extending.
-                generate_ts_type_def_for_struct_field_impl(
-                    field_type,
-                    flatten_field,
-                    fields_str,
-                    extends,
-                    output_as_type,
-                    schema,
-                );
-                return;
+        if let TypeDef::Struct(field_type) = field.type_def(schema)
+            && let Some(flatten_field) = get_single_field(field_type, schema)
+        {
+            // Only one field to flatten. Add it as a field on the parent type, instead of extending.
+            generate_ts_type_def_for_struct_field_impl(
+                field_type,
+                flatten_field,
+                fields_str,
+                extends,
+                output_as_type,
+                schema,
+            );
+        } else {
+            // Need `type` instead of `interface` when flattening BindingPattern
+            if field_type_name.contains('|') || field_type_name == "BindingPattern" {
+                *output_as_type = true;
             }
+            extends.push(field_type_name);
         }
-
-        // need `type` instead of `interface` when flattening BindingPattern
-        if field_type_name.contains('|') || field_type_name == "BindingPattern" {
-            *output_as_type = true;
-        }
-        extends.push(field_type_name);
         return;
     }
 
@@ -310,10 +337,10 @@ fn generate_ts_type_def_for_enum(enum_def: &EnumDef, schema: &Schema) -> Option<
 
     // If enum has a converter defined with `#[estree(via = Converter)]` and that converter defines
     // a type alias, then it needs no type def
-    if let Some(converter_name) = &enum_def.estree.via {
-        if get_ts_type_for_converter(converter_name, schema).is_some() {
-            return None;
-        }
+    if let Some(converter_name) = &enum_def.estree.via
+        && get_ts_type_for_converter(converter_name, schema).is_some()
+    {
+        return None;
     }
 
     // Get variant type names.
@@ -349,24 +376,22 @@ fn ts_type_name<'s>(type_def: &'s TypeDef, schema: &'s Schema) -> Cow<'s, str> {
         TypeDef::Struct(struct_def) => {
             if let Some(ts_alias) = &struct_def.estree.ts_alias {
                 Cow::Borrowed(ts_alias)
+            } else if let Some(converter_name) = &struct_def.estree.via
+                && let Some(type_name) = get_ts_type_for_converter(converter_name, schema)
+            {
+                Cow::Borrowed(type_name)
             } else {
-                if let Some(converter_name) = &struct_def.estree.via {
-                    if let Some(type_name) = get_ts_type_for_converter(converter_name, schema) {
-                        return Cow::Borrowed(type_name);
-                    }
-                }
                 Cow::Borrowed(struct_def.name())
             }
         }
         TypeDef::Enum(enum_def) => {
             if let Some(ts_alias) = &enum_def.estree.ts_alias {
                 Cow::Borrowed(ts_alias)
+            } else if let Some(converter_name) = &enum_def.estree.via
+                && let Some(type_name) = get_ts_type_for_converter(converter_name, schema)
+            {
+                Cow::Borrowed(type_name)
             } else {
-                if let Some(converter_name) = &enum_def.estree.via {
-                    if let Some(type_name) = get_ts_type_for_converter(converter_name, schema) {
-                        return Cow::Borrowed(type_name);
-                    }
-                }
                 Cow::Borrowed(enum_def.name())
             }
         }
@@ -376,7 +401,7 @@ fn ts_type_name<'s>(type_def: &'s TypeDef, schema: &'s Schema) -> Cow<'s, str> {
             | "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
             | "f32" | "f64" => "number",
             "bool" => "boolean",
-            "&str" | "Atom" => "string",
+            "&str" | "Atom" | "Ident" => "string",
             name => name,
         }),
         TypeDef::Option(option_def) => {
@@ -387,6 +412,7 @@ fn ts_type_name<'s>(type_def: &'s TypeDef, schema: &'s Schema) -> Cow<'s, str> {
         }
         TypeDef::Box(box_def) => ts_type_name(box_def.inner_type(schema), schema),
         TypeDef::Cell(cell_def) => ts_type_name(cell_def.inner_type(schema), schema),
+        TypeDef::Pointer(pointer_def) => ts_type_name(pointer_def.inner_type(schema), schema),
     }
 }
 
@@ -422,10 +448,55 @@ fn get_single_field<'s>(struct_def: &'s StructDef, schema: &Schema) -> Option<&'
     let mut fields_which_are_not_skipped =
         struct_def.fields.iter().filter(|field| !should_skip_field(field, schema));
 
-    if let Some(field) = fields_which_are_not_skipped.next() {
-        if fields_which_are_not_skipped.next().is_none() {
-            return Some(field);
+    if let Some(field) = fields_which_are_not_skipped.next()
+        && fields_which_are_not_skipped.next().is_none()
+    {
+        Some(field)
+    } else {
+        None
+    }
+}
+
+/// Amend version of types for usages other than Oxlint.
+fn amend_standard_types(code: &str) -> String {
+    // Remove comments on parent fields
+    #[expect(clippy::disallowed_methods)]
+    code.replace("/* IF !LINTER */?/* END IF */", "?")
+}
+
+/// Amend version of types for Oxlint.
+fn amend_oxlint_types(code: &str) -> String {
+    // Remove `export interface Span`, and instead import local version of same interface,
+    // which includes non-optional `range` and `loc` fields.
+    static SPAN_REGEX: Lazy<Regex> = lazy_regex!(r"export interface Span \{.+?\}");
+
+    struct SpanReplacer;
+    impl Replacer for SpanReplacer {
+        fn replace_append(&mut self, _caps: &Captures, _dst: &mut String) {
+            // Remove it
         }
     }
-    None
+
+    let mut code = SPAN_REGEX.replace(code, SpanReplacer).into_owned();
+
+    // Add `comments` and `tokens` fields to `Program`
+    #[expect(clippy::items_after_statements)]
+    const HASHBANG_FIELD: &str = "hashbang: Hashbang | null;";
+    let index = code.find(HASHBANG_FIELD).unwrap();
+    code.insert_str(index + HASHBANG_FIELD.len(), "comments: Comment[]; tokens: Token[];");
+
+    // Make `parent` fields non-optional
+    #[expect(clippy::disallowed_methods)]
+    let mut code = code.replace("/* IF !LINTER */?/* END IF */", "");
+
+    #[rustfmt::skip]
+    code.insert_str(0, "
+        import { Span } from '../plugins/location.ts';
+        import { Token } from '../plugins/tokens.ts';
+        import { Comment } from '../plugins/types.ts';
+        export { Span, Comment, Token };
+
+    ");
+
+    code
 }

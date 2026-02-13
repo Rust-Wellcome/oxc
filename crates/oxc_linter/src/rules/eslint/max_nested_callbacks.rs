@@ -3,6 +3,7 @@ use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_semantic::Semantic;
 use oxc_span::{GetSpan, Span};
+use schemars::JsonSchema;
 use serde_json::Value;
 
 use crate::{
@@ -18,8 +19,10 @@ fn max_nested_callbacks_diagnostic(num: usize, max: usize, span: Span) -> OxcDia
         .with_label(span)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
 pub struct MaxNestedCallbacks {
+    /// The `max` enforces a maximum depth that callbacks can be nested.
     max: usize,
 }
 
@@ -80,36 +83,23 @@ declare_oxc_lint!(
     ///     foo5();
     /// }
     /// ```
-    ///
-    /// ### Options
-    ///
-    /// #### max
-    ///
-    /// `{ type: number, default: 10 }`
-    ///
-    /// The `max` enforces a maximum depth that callbacks can be nested.
-    ///
-    /// Example:
-    ///
-    /// ```json
-    /// "eslint/max-nested-callbacks": ["error", 10]
-    ///
-    /// "eslint/max-nested-callbacks": [
-    ///   "error",
-    ///   {
-    ///     max: 10
-    ///   }
-    /// ]
-    /// ```
     MaxNestedCallbacks,
     eslint,
-    pedantic
+    pedantic,
+    config = MaxNestedCallbacks,
 );
 
 impl Rule for MaxNestedCallbacks {
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
-        if is_function_node(node) {
-            let depth = ctx
+        match node.kind() {
+            AstKind::Function(f) if f.is_function_declaration() => {}
+            AstKind::Function(f) if f.is_expression() => {}
+            AstKind::ArrowFunctionExpression(_) => {}
+            _ => return,
+        }
+
+        if is_callback(node, ctx) {
+            let depth = 1 + ctx
                 .semantic()
                 .nodes()
                 .ancestors(node.id())
@@ -121,7 +111,7 @@ impl Rule for MaxNestedCallbacks {
         }
     }
 
-    fn from_configuration(value: serde_json::Value) -> Self {
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
         let config = value.get(0);
         let max = if let Some(max) = config
             .and_then(Value::as_number)
@@ -138,13 +128,16 @@ impl Rule for MaxNestedCallbacks {
                     usize::try_from(v).unwrap_or(DEFAULT_MAX_NESTED_CALLBACKS)
                 })
         };
-        Self { max }
+        Ok(Self { max })
     }
 }
 
 fn is_callback<'a>(node: &AstNode<'a>, semantic: &Semantic<'a>) -> bool {
     is_function_node(node)
-        && matches!(iter_outer_expressions(semantic, node.id()).next(), Some(AstKind::Argument(_)))
+        && matches!(
+            iter_outer_expressions(semantic.nodes(), node.id()).next(),
+            Some(AstKind::CallExpression(_))
+        )
 }
 
 #[test]

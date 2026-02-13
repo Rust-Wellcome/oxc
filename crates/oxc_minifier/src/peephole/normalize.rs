@@ -1,17 +1,24 @@
 use oxc_allocator::{TakeIn, Vec};
 use oxc_ast::ast::*;
-use oxc_ecmascript::constant_evaluation::{DetermineValueType, ValueType};
+use oxc_ecmascript::{
+    constant_evaluation::{DetermineValueType, ValueType},
+    side_effects::is_valid_regexp,
+};
 use oxc_semantic::IsGlobalReference;
 use oxc_span::GetSpan;
 use oxc_syntax::scope::ScopeFlags;
 use oxc_traverse::{Ancestor, ReusableTraverseCtx, Traverse, traverse_mut_with_ctx};
 
-use crate::ctx::{Ctx, MinifierState, TraverseCtx};
+use crate::{
+    ctx::{Ctx, TraverseCtx},
+    state::MinifierState,
+};
 
 #[derive(Default)]
 pub struct NormalizeOptions {
     pub convert_while_to_fors: bool,
     pub convert_const_to_let: bool,
+    pub remove_unnecessary_use_strict: bool,
 }
 
 /// Normalize AST
@@ -27,6 +34,7 @@ pub struct NormalizeOptions {
 /// * convert `var x; void x` to `void 0`
 /// * convert `undefined` to `void 0`
 /// * apply `pure` to side-effect free global constructors (e.g. `new WeakMap()`)
+/// * remove unnecessary 'use strict' directive
 ///
 /// Also
 ///
@@ -48,6 +56,12 @@ impl<'a> Normalize {
 }
 
 impl<'a> Traverse<'a, MinifierState<'a>> for Normalize {
+    fn exit_program(&mut self, node: &mut Program<'a>, _ctx: &mut TraverseCtx<'a>) {
+        if self.options.remove_unnecessary_use_strict && node.source_type.is_module() {
+            node.directives.drain_filter(|d| d.directive.as_str() == "use strict");
+        }
+    }
+
     fn exit_statements(&mut self, stmts: &mut Vec<'a, Statement<'a>>, ctx: &mut TraverseCtx<'a>) {
         stmts.retain(|stmt| {
             !(matches!(stmt, Statement::EmptyStatement(_))
@@ -90,7 +104,7 @@ impl<'a> Traverse<'a, MinifierState<'a>> for Normalize {
                 None
             }
             Expression::CallExpression(_) if ctx.state.options.drop_console => {
-                self.compress_console(expr, ctx)
+                Self::compress_console(expr, ctx)
             }
             Expression::StaticMemberExpression(e) => Self::fold_number_nan_to_nan(e, ctx),
             _ => None,
@@ -106,6 +120,12 @@ impl<'a> Traverse<'a, MinifierState<'a>> for Normalize {
     fn exit_new_expression(&mut self, e: &mut NewExpression<'a>, ctx: &mut TraverseCtx<'a>) {
         Self::set_pure_or_no_side_effects_to_new_expr(e, ctx);
     }
+
+    fn exit_function_body(&mut self, body: &mut FunctionBody<'a>, ctx: &mut TraverseCtx<'a>) {
+        if self.options.remove_unnecessary_use_strict {
+            Self::remove_unused_use_strict_directive(body, ctx);
+        }
+    }
 }
 
 impl<'a> Normalize {
@@ -120,11 +140,7 @@ impl<'a> Normalize {
         matches!(stmt, Statement::DebuggerStatement(_)) && ctx.state.options.drop_debugger
     }
 
-    fn compress_console(
-        &self,
-        expr: &Expression<'a>,
-        ctx: &TraverseCtx<'a>,
-    ) -> Option<Expression<'a>> {
+    fn compress_console(expr: &Expression<'a>, ctx: &TraverseCtx<'a>) -> Option<Expression<'a>> {
         debug_assert!(ctx.state.options.drop_console);
         Self::is_console(expr).then(|| ctx.ast.void_0(expr.span()))
     }
@@ -168,18 +184,24 @@ impl<'a> Normalize {
     fn convert_const_to_let(decl: &mut VariableDeclaration<'a>, ctx: &TraverseCtx<'a>) {
         // checking whether the current scope is the root scope instead of
         // checking whether any variables are exposed to outside (e.g. `export` in ESM)
-        if decl.kind.is_const() && ctx.current_scope_id() != ctx.scoping().root_scope_id() {
-            let all_declarations_are_only_read =
-                decl.declarations.iter().flat_map(|d| d.id.get_binding_identifiers()).all(|id| {
+        if decl.kind.is_const()
+            && ctx.current_scope_id() != ctx.scoping().root_scope_id()
+            // direct eval may have a assignment inside
+            && !ctx.current_scope_flags().contains_direct_eval()
+        {
+            let all_declarations_are_only_read = decl.declarations.iter().all(|d| {
+                d.id.all_binding_identifiers(&mut |id| {
                     ctx.scoping()
                         .get_resolved_references(id.symbol_id())
                         .all(|reference| reference.flags().is_read_only())
-                });
+                })
+            });
             if all_declarations_are_only_read {
+                // mark all declarations as `let`
                 decl.kind = VariableDeclarationKind::Let;
-            }
-            for decl in &mut decl.declarations {
-                decl.kind = VariableDeclarationKind::Let;
+                for decl in &mut decl.declarations {
+                    decl.kind = VariableDeclarationKind::Let;
+                }
             }
         }
     }
@@ -345,9 +367,14 @@ impl<'a> Normalize {
                 ],
             ),
             "ArrayBuffer" | "Date" => (false, false, &[ValueType::BigInt]),
-            "Boolean" | "Error" | "EvalError" | "RangeError" | "ReferenceError" | "RegExp"
-            | "SyntaxError" | "TypeError" | "URIError" | "Number" | "Object" | "String" => {
-                (false, false, &[])
+            "Boolean" | "Error" | "EvalError" | "RangeError" | "ReferenceError" | "SyntaxError"
+            | "TypeError" | "URIError" | "Number" | "Object" | "String" => (false, false, &[]),
+            // RegExp needs special validation using the regex parser
+            "RegExp" => {
+                if Self::can_set_pure(ident, &ctx) && is_valid_regexp(&new_expr.arguments) {
+                    new_expr.pure = true;
+                }
+                return;
             }
             _ => return,
         };
@@ -387,257 +414,16 @@ impl<'a> Normalize {
             // Throw is never pure.
             && !matches!(ctx.parent(), Ancestor::ThrowStatementArgument(_))
     }
-}
 
-#[cfg(test)]
-mod test {
-    use crate::tester::{test, test_same};
-
-    #[test]
-    fn test_while() {
-        // Verify while loops are converted to FOR loops.
-        test("while(c < b) foo()", "for(; c < b;) foo()");
-    }
-
-    #[test]
-    fn test_const_to_let() {
-        test_same("const x = 1"); // keep top-level (can be replaced with "let" if it's ESM and not exported)
-        test("{ const x = 1 }", "{ let x = 1 }");
-        test_same("{ const x = 1; x = 2 }"); // keep assign error
-        test("{ const x = 1, y = 2 }", "{ let x = 1, y = 2 }");
-        test("{ const { x } = { x: 1 } }", "{ let { x } = { x: 1 } }");
-        test("{ const [x] = [1] }", "{ let [x] = [1] }");
-        test("{ const [x = 1] = [] }", "{ let [x = 1] = [] }");
-        test("for (const x in y);", "for (let x in y);");
-        // TypeError: Assignment to constant variable.
-        test_same("for (const i = 0; i < 1; i++);");
-        test_same("for (const x in [1, 2, 3]) x++");
-        test_same("for (const x of [1, 2, 3]) x++");
-        test("{ let foo; const bar = undefined; }", "{ let foo, bar; }");
-    }
-
-    #[test]
-    fn test_void_ident() {
-        test("var x; void x", "var x");
-        test("void x", "x"); // reference error
-    }
-
-    #[test]
-    fn parens() {
-        test("(((x)))", "x");
-        test("(((a + b))) * c", "(a + b) * c");
-    }
-
-    #[test]
-    fn drop_console() {
-        test("console.log()", "");
-        test("(() => console.log())()", "");
-        test(
-            "(() => { try { return console.log() } catch {} })()",
-            "(() => { try { return } catch {} })()",
-        );
-    }
-
-    #[test]
-    fn drop_debugger() {
-        test("debugger", "");
-    }
-
-    #[test]
-    fn fold_number_nan() {
-        test("foo(Number.NaN)", "foo(NaN)");
-        test_same("let Number; foo(Number.NaN)");
-    }
-
-    #[test]
-    fn pure_constructors() {
-        test("new AggregateError", "AggregateError()");
-        test("new ArrayBuffer", "");
-        test("new Boolean", "");
-        test("new DataView", "new DataView()");
-        test("new Date", "");
-        test("new Error", "");
-        test("new EvalError", "");
-        test("new Map", "");
-        test("new Number", "");
-        test("new Object", "");
-        test("new RangeError", "");
-        test("new ReferenceError", "");
-        test("new RegExp", "");
-        test("new Set", "");
-        test("new String", "");
-        test("new SyntaxError", "");
-        test("new TypeError", "");
-        test("new URIError", "");
-        test("new WeakMap", "");
-        test("new WeakSet", "");
-
-        test("new AggregateError(null)", "AggregateError(null)");
-        test("new ArrayBuffer(null)", "");
-        test("new Boolean(null)", "");
-        test_same("new DataView(null)");
-        test("new Date(null)", "");
-        test("new Error(null)", "");
-        test("new EvalError(null)", "");
-        test("new Map(null)", "");
-        test("new Number(null)", "");
-        test("new Object(null)", "");
-        test("new RangeError(null)", "");
-        test("new ReferenceError(null)", "");
-        test("new RegExp(null)", "");
-        test("new Set(null)", "");
-        test("new String(null)", "");
-        test("new SyntaxError(null)", "");
-        test("new TypeError(null)", "");
-        test("new URIError(null)", "");
-        test("new WeakMap(null)", "");
-        test("new WeakSet(null)", "");
-
-        test("new AggregateError(undefined)", "AggregateError(void 0)");
-        test("new ArrayBuffer(undefined)", "");
-        test("new Boolean(undefined)", "");
-        test_same("new DataView(void 0)");
-        test("new Date(undefined)", "");
-        test("new Error(undefined)", "");
-        test("new EvalError(undefined)", "");
-        test("new Map(undefined)", "");
-        test("new Number(undefined)", "");
-        test("new Object(undefined)", "");
-        test("new RangeError(undefined)", "");
-        test("new ReferenceError(undefined)", "");
-        test("new RegExp(undefined)", "");
-        test("new Set(undefined)", "");
-        test("new String(undefined)", "");
-        test("new SyntaxError(undefined)", "");
-        test("new TypeError(undefined)", "");
-        test("new URIError(undefined)", "");
-        test("new WeakMap(undefined)", "");
-        test("new WeakSet(undefined)", "");
-
-        test("new AggregateError(0)", "AggregateError(0)");
-        test("new ArrayBuffer(0)", "");
-        test("new Boolean(0)", "");
-        test_same("new DataView(0)");
-        test("new Date(0)", "");
-        test("new Error(0)", "");
-        test("new EvalError(0)", "");
-        test_same("new Map(0)");
-        test("new Number(0)", "");
-        test("new Object(0)", "");
-        test("new RangeError(0)", "");
-        test("new ReferenceError(0)", "");
-        test("new RegExp(0)", "");
-        test_same("new Set(0)");
-        test("new String(0)", "");
-        test("new SyntaxError(0)", "");
-        test("new TypeError(0)", "");
-        test("new URIError(0)", "");
-        test_same("new WeakMap(0)");
-        test_same("new WeakSet(0)");
-
-        test("new AggregateError(10n)", "AggregateError(10n)");
-        test_same("new ArrayBuffer(10n)");
-        test("new Boolean(10n)", "");
-        test_same("new DataView(10n)");
-        test_same("new Date(10n)");
-        test("new Error(10n)", "");
-        test("new EvalError(10n)", "");
-        test_same("new Map(10n)");
-        test("new Number(10n)", "");
-        test("new Object(10n)", "");
-        test("new RangeError(10n)", "");
-        test("new ReferenceError(10n)", "");
-        test("new RegExp(10n)", "");
-        test_same("new Set(10n)");
-        test("new String(10n)", "");
-        test("new SyntaxError(10n)", "");
-        test("new TypeError(10n)", "");
-        test("new URIError(10n)", "");
-        test_same("new WeakMap(10n)");
-        test_same("new WeakSet(10n)");
-
-        test("new AggregateError('')", "");
-        test("new ArrayBuffer('')", "");
-        test("new Boolean('')", "");
-        test_same("new DataView('')");
-        test("new Date('')", "");
-        test("new Error('')", "");
-        test("new EvalError('')", "");
-        test("new Map('')", "");
-        test("new Number('')", "");
-        test("new Object('')", "");
-        test("new RangeError('')", "");
-        test("new ReferenceError('')", "");
-        test("new RegExp('')", "");
-        test("new Set('')", "");
-        test("new String('')", "");
-        test("new SyntaxError('')", "");
-        test("new TypeError('')", "");
-        test("new URIError('')", "");
-        test("new WeakMap('')", "");
-        test("new WeakSet('')", "");
-
-        test("new AggregateError(!0)", "AggregateError(!0)");
-        test("new ArrayBuffer(!0)", "");
-        test("new Boolean(!0)", "");
-        test_same("new DataView(!0)");
-        test("new Date(!0)", "");
-        test("new Error(!0)", "");
-        test("new EvalError(!0)", "");
-        test_same("new Map(!0)");
-        test("new Number(!0)", "");
-        test("new Object(!0)", "");
-        test("new RangeError(!0)", "");
-        test("new ReferenceError(!0)", "");
-        test("new RegExp(!0)", "");
-        test_same("new Set(!0)");
-        test("new String(!0)", "");
-        test("new SyntaxError(!0)", "");
-        test("new TypeError(!0)", "");
-        test("new URIError(!0)", "");
-        test_same("new WeakMap(!0)");
-        test_same("new WeakSet(!0)");
-
-        test("new AggregateError([])", "");
-        test("new ArrayBuffer([])", "");
-        test("new Boolean([])", "");
-        test_same("new DataView([])");
-        test("new Date([])", "");
-        test("new Error([])", "");
-        test("new EvalError([])", "");
-        test("new Map([])", "");
-        test("new Number([])", "");
-        test("new Object([])", "");
-        test("new RangeError([])", "");
-        test("new ReferenceError([])", "");
-        test("new RegExp([])", "");
-        test("new Set([])", "");
-        test("new String([])", "");
-        test("new SyntaxError([])", "");
-        test("new TypeError([])", "");
-        test("new URIError([])", "");
-        test("new WeakMap([])", "");
-        test("new WeakSet([])", "");
-
-        test("new AggregateError(a)", "AggregateError(a)");
-        test_same("new ArrayBuffer(a)");
-        test_same("new Boolean(a)");
-        test_same("new DataView(a)");
-        test_same("new Date(a)");
-        test("new Error(a)", "Error(a)");
-        test("new EvalError(a)", "EvalError(a)");
-        test_same("new Map(a)");
-        test_same("new Number(a)");
-        test_same("new Object(a)");
-        test("new RangeError(a)", "RangeError(a)");
-        test("new ReferenceError(a)", "ReferenceError(a)");
-        test_same("new RegExp(a)");
-        test_same("new Set(a)");
-        test_same("new String(a)");
-        test("new SyntaxError(a)", "SyntaxError(a)");
-        test("new TypeError(a)", "TypeError(a)");
-        test("new URIError(a)", "URIError(a)");
-        test_same("new WeakMap(a)");
-        test_same("new WeakSet(a)");
+    fn remove_unused_use_strict_directive(body: &mut FunctionBody<'a>, ctx: &TraverseCtx<'a>) {
+        if !body.directives.is_empty()
+            && ctx
+                .scoping()
+                .scope_parent_id(ctx.current_scope_id())
+                .map(|scope_id| ctx.scoping().scope_flags(scope_id))
+                .is_some_and(ScopeFlags::is_strict_mode)
+        {
+            body.directives.drain_filter(|d| d.directive.as_str() == "use strict");
+        }
     }
 }

@@ -6,9 +6,8 @@ use oxc_allocator::Box;
 use oxc_ast::{
     AstKind,
     ast::{
-        Argument, BindingPattern, Expression, FormalParameter, ObjectExpression,
-        ObjectPropertyKind, PropertyKey, TSLiteral, TSLiteralType, TSType, TSTypeAnnotation,
-        TemplateLiteral,
+        Argument, Expression, FormalParameter, ObjectExpression, ObjectPropertyKind, PropertyKey,
+        TSLiteral, TSLiteralType, TSType, TSTypeAnnotation, TemplateLiteral,
     },
 };
 use oxc_diagnostics::OxcDiagnostic;
@@ -59,29 +58,30 @@ declare_oxc_lint!(
 
 impl Rule for NoInvalidFetchOptions {
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
-        let arg = match node.kind() {
+        match node.kind() {
             AstKind::CallExpression(call_expr) => {
                 if !call_expr.callee.is_specific_id("fetch") || call_expr.arguments.len() < 2 {
                     return;
                 }
 
-                &call_expr.arguments[1]
+                if let Argument::ObjectExpression(expr) = &call_expr.arguments[1]
+                    && let Some((method_name, body_span)) = is_invalid_fetch_options(expr, ctx)
+                {
+                    ctx.diagnostic(no_invalid_fetch_options_diagnostic(body_span, &method_name));
+                }
             }
             AstKind::NewExpression(new_expr) => {
                 if !is_new_expression(new_expr, &["Request"], Some(2), None) {
                     return;
                 }
 
-                &new_expr.arguments[1]
+                if let Argument::ObjectExpression(expr) = &new_expr.arguments[1]
+                    && let Some((method_name, body_span)) = is_invalid_fetch_options(expr, ctx)
+                {
+                    ctx.diagnostic(no_invalid_fetch_options_diagnostic(body_span, &method_name));
+                }
             }
-            _ => return,
-        };
-
-        let Argument::ObjectExpression(expr) = arg else { return };
-        let result = is_invalid_fetch_options(expr, ctx);
-
-        if let Some((method_name, body_span)) = result {
-            ctx.diagnostic(no_invalid_fetch_options_diagnostic(body_span, &method_name));
+            _ => {}
         }
     }
 }
@@ -122,6 +122,7 @@ fn is_invalid_fetch_options<'a>(
                 Expression::StaticMemberExpression(s) => {
                     let symbols = ctx.scoping();
                     let Expression::Identifier(ident_ref) = &s.object else {
+                        method_name = UNKNOWN_METHOD_NAME;
                         continue;
                     };
                     let reference_id = ident_ref.reference_id();
@@ -129,30 +130,32 @@ fn is_invalid_fetch_options<'a>(
                     // for the enum value being referenced.
                     let reference = symbols.get_reference(reference_id);
 
-                    if let Some(symbol_id) = reference.symbol_id() {
-                        if ctx.scoping().symbol_flags(symbol_id).is_enum() {
-                            let decl = ctx.semantic().symbol_declaration(symbol_id);
-                            let enum_member_res: Option<CompactStr> = match decl.kind() {
-                                AstKind::TSEnumDeclaration(enum_decl) => {
-                                    let member_string_lit: Option<CompactStr> =
-                                        enum_decl.body.members.iter().find_map(|m| {
-                                            if let Some(Expression::StringLiteral(str_lit)) =
-                                                &m.initializer
-                                            {
-                                                Some(str_lit.value.to_compact_str())
-                                            } else {
-                                                None
-                                            }
-                                        });
-                                    member_string_lit
-                                }
-                                _ => None,
-                            };
-
-                            if let Some(value_ident) = enum_member_res {
-                                method_name = value_ident.into();
+                    if let Some(symbol_id) = reference.symbol_id()
+                        && ctx.scoping().symbol_flags(symbol_id).is_enum()
+                    {
+                        let decl = ctx.semantic().symbol_declaration(symbol_id);
+                        let enum_member_res: Option<CompactStr> = match decl.kind() {
+                            AstKind::TSEnumDeclaration(enum_decl) => {
+                                let member_string_lit: Option<CompactStr> =
+                                    enum_decl.body.members.iter().find_map(|m| {
+                                        if let Some(Expression::StringLiteral(str_lit)) =
+                                            &m.initializer
+                                        {
+                                            Some(str_lit.value.to_compact_str())
+                                        } else {
+                                            None
+                                        }
+                                    });
+                                member_string_lit
                             }
+                            _ => None,
+                        };
+
+                        if let Some(value_ident) = enum_member_res {
+                            method_name = value_ident.into();
                         }
+                    } else {
+                        method_name = UNKNOWN_METHOD_NAME;
                     }
                 }
                 Expression::StringLiteral(value_ident) => {
@@ -166,6 +169,7 @@ fn is_invalid_fetch_options<'a>(
                     let reference_id = value_ident.reference_id();
 
                     let Some(symbol_id) = symbols.get_reference(reference_id).symbol_id() else {
+                        method_name = UNKNOWN_METHOD_NAME;
                         continue;
                     };
 
@@ -185,7 +189,7 @@ fn is_invalid_fetch_options<'a>(
                             }
                         },
                         AstKind::FormalParameter(FormalParameter {
-                            pattern: BindingPattern { type_annotation: Some(annotation), .. },
+                            type_annotation: Some(annotation),
                             ..
                         }) => {
                             let TSTypeAnnotation { type_annotation, .. } = &**annotation;
@@ -220,7 +224,9 @@ fn is_invalid_fetch_options<'a>(
                         _ => {}
                     }
                 }
-                _ => {}
+                _ => {
+                    method_name = UNKNOWN_METHOD_NAME;
+                }
             }
         }
     }
@@ -293,6 +299,18 @@ fn test() {
          method: Method.Post,
          body: "",
         });"#,
+        ("const response = await fetch('', { method, headers, body, });"),
+        (r#"fetch("/url", { method: logic ? "PATCH" : "POST", body: "some body" });"#),
+        (r#"new Request("/url", { method: logic ? "PATCH" : "POST", body: "some body" });"#),
+        (r#"fetch("/url", { method: getMethod(), body: "some body" });"#),
+        (r"const method = 'POST' as const; await fetch('some-url', { method, body: '' });"),
+        (r"const options = { method: 'POST' } as const; await fetch('some-url', { method: options.method, body: '' });"),
+        (r"const options = { method: 'POST' }; await fetch('some-url', { method: options.method, body: '' });"),
+        (r"const options = { method: 'POST' } as const; new Request('some-url', { method: options.method, body: '' });"),
+        (r#"fetch("/url", { method: getOptions().method, body: "some body" });"#),
+        (r#"new Request("/url", { method: getOptions().method, body: "some body" });"#),
+        (r#"fetch("/url", { method: (options).method, body: "some body" });"#),
+        (r#"new Request("/url", { method: (options).method, body: "some body" });"#),
     ];
 
     let fail = vec![
@@ -335,5 +353,6 @@ fn test() {
     ];
 
     Tester::new(NoInvalidFetchOptions::NAME, NoInvalidFetchOptions::PLUGIN, pass, fail)
+        .change_rule_path_extension("mts")
         .test_and_snapshot();
 }

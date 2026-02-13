@@ -29,10 +29,8 @@ declare_oxc_lint!(
     ///
     /// ### Examples
     ///
-    /// Examples of **incorrect** code for this rule
+    /// Examples of **incorrect** code for this rule:
     /// ```javascript
-    /// /*eslint no-script-url: "error"*/
-    ///
     /// location.href = "javascript:void(0)";
     ///
     /// location.href = `javascript:void(0)`;
@@ -74,7 +72,7 @@ impl Rule for NoScriptUrl {
 fn is_tagged_template_expression(ctx: &LintContext, node: &AstNode, literal_span: Span) -> bool {
     matches!(
         ctx.nodes().parent_kind(node.id()),
-        Some(AstKind::TaggedTemplateExpression(expr)) if expr.quasi.span == literal_span
+        AstKind::TaggedTemplateExpression(expr) if expr.quasi.span == literal_span
     )
 }
 

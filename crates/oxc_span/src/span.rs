@@ -12,6 +12,9 @@ use oxc_allocator::{Allocator, CloneIn, Dummy};
 use oxc_ast_macros::ast;
 use oxc_estree::ESTree;
 
+#[cfg(feature = "serialize")]
+use oxc_estree::ESTreeSpan;
+
 /// An empty span.
 ///
 /// Should be used for newly created new AST nodes.
@@ -78,7 +81,12 @@ pub const SPAN: Span = Span::new(0, 0);
 #[generate_derive(ESTree)]
 #[builder(skip)]
 #[content_eq(skip)]
-#[estree(no_type, flatten)]
+#[estree(
+    no_type,
+    flatten,
+    no_ts_def,
+    add_ts_def = "interface Span { start: number; end: number; range?: [number, number]; }"
+)]
 pub struct Span {
     /// The zero-based start offset of the span
     pub start: u32,
@@ -216,6 +224,28 @@ impl Span {
     #[must_use]
     pub fn merge(self, other: Self) -> Self {
         Self::new(self.start.min(other.start), self.end.max(other.end))
+    }
+
+    /// Create a [`Span`] covering the maximum range of two [`Span`]s if that range is within the specified `within` [`Span`].
+    ///
+    /// # Example
+    /// ```
+    /// use oxc_span::Span;
+    ///
+    /// let span1 = Span::new(0, 3);
+    /// let span2 = Span::new(3, 8);
+    /// let merged_span = span1.merge_within(span2, Span::new(0, 12));
+    /// assert_eq!(merged_span, Some(Span::new(0, 8)));
+    ///
+    /// let span1 = Span::new(0, 1);
+    /// let span2 = Span::new(5, 8);
+    /// let merged_span = span1.merge_within(span2, Span::new(0, 4));
+    /// assert_eq!(merged_span, None);
+    /// ```
+    #[must_use]
+    pub fn merge_within(self, other: Self, within: Self) -> Option<Self> {
+        let merged = self.merge(other);
+        if within.contains_inclusive(merged) { Some(merged) } else { None }
     }
 
     /// Create a [`Span`] that is grown by `offset` on either side.
@@ -379,6 +409,63 @@ impl Span {
         Self::new(self.start, end)
     }
 
+    /// Create a [`Span`] that has its start and end position moved to the left by
+    /// `offset` bytes.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use oxc_span::Span;
+    ///
+    /// let a = Span::new(5, 10);
+    /// let moved = a.move_left(5);
+    /// assert_eq!(moved, Span::new(0, 5));
+    ///
+    /// // Moving the start over 0 is logical error that will panic in debug builds.
+    /// std::panic::catch_unwind(|| {
+    ///    moved.move_left(5);
+    /// });
+    /// ```
+    #[must_use]
+    pub const fn move_left(self, offset: u32) -> Self {
+        let start = self.start.saturating_sub(offset);
+        #[cfg(debug_assertions)]
+        if start == 0 {
+            debug_assert!(self.start == offset, "Cannot move span past zero length");
+        }
+        Self::new(start, self.end.saturating_sub(offset))
+    }
+
+    /// Create a [`Span`] that has its start and end position moved to the right by
+    /// `offset` bytes.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use oxc_span::Span;
+    ///
+    /// let a = Span::new(5, 10);
+    /// let moved = a.move_right(5);
+    /// assert_eq!(moved, Span::new(10, 15));
+    ///
+    /// // Moving the end over `u32::MAX` is logical error that will panic in debug builds.
+    /// std::panic::catch_unwind(|| {
+    ///    moved.move_right(u32::MAX);
+    /// });
+    /// ```
+    #[must_use]
+    pub const fn move_right(self, offset: u32) -> Self {
+        let end = self.end.saturating_add(offset);
+        #[cfg(debug_assertions)]
+        if end == u32::MAX {
+            debug_assert!(
+                u32::MAX.saturating_sub(offset) == self.end,
+                "Cannot move span past `u32::MAX` length"
+            );
+        }
+        Self::new(self.start.saturating_add(offset), end)
+    }
+
     /// Get a snippet of text from a source string that the [`Span`] covers.
     ///
     /// # Example
@@ -406,6 +493,12 @@ impl Span {
     #[must_use]
     pub fn primary_label<S: Into<String>>(self, label: S) -> LabeledSpan {
         LabeledSpan::new_primary_with_span(Some(label.into()), self)
+    }
+
+    /// Creates a primary [`LabeledSpan`] covering this [`Span`].
+    #[must_use]
+    pub fn primary(self) -> LabeledSpan {
+        LabeledSpan::new_primary_with_span(None, self)
     }
 
     /// Convert [`Span`] to a single `u64`.
@@ -564,6 +657,15 @@ impl Serialize for Span {
     }
 }
 
+#[cfg(feature = "serialize")]
+impl ESTreeSpan for Span {
+    #[expect(clippy::inline_always)] // `#[inline(always)]` because it's a no-op
+    #[inline(always)]
+    fn range(self) -> [u32; 2] {
+        [self.start, self.end]
+    }
+}
+
 /// Zero-sized type which has pointer alignment (8 on 64-bit, 4 on 32-bit).
 #[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
@@ -691,6 +793,39 @@ mod test {
     fn test_shrink_past_start() {
         let span = Span::new(5, 10);
         let _ = span.shrink(5);
+    }
+
+    #[test]
+    fn test_move_left() {
+        let span = Span::new(5, 10);
+        assert_eq!(span.move_left(1), Span::new(4, 9));
+        assert_eq!(span.move_left(2), Span::new(3, 8));
+        assert_eq!(span.move_left(5), Span::new(0, 5));
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot move span past zero length")]
+    fn test_move_past_start() {
+        let span = Span::new(5, 10);
+        let _ = span.move_left(6);
+    }
+
+    #[test]
+    fn test_move_right() {
+        let span: Span = Span::new(5, 10);
+        assert_eq!(span.move_right(1), Span::new(6, 11));
+        assert_eq!(span.move_right(2), Span::new(7, 12));
+        assert_eq!(
+            span.move_right(u32::MAX.saturating_sub(10)),
+            Span::new(u32::MAX.saturating_sub(5), u32::MAX)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot move span past `u32::MAX` length")]
+    fn test_move_past_end() {
+        let span = Span::new(u32::MAX.saturating_sub(2), u32::MAX.saturating_sub(1));
+        let _ = span.move_right(2);
     }
 }
 

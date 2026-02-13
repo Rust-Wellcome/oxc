@@ -1,16 +1,17 @@
+use oxc_allocator::{GetAddress, UnstableAddress};
 use oxc_ast::{
     AstKind,
     ast::{Expression, MemberExpression},
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
-use oxc_span::{GetSpan, Span};
+use oxc_span::Span;
 
 use crate::{AstNode, ast_util::outermost_paren_parent, context::LintContext, rule::Rule};
 
 fn prefer_regexp_test_diagnostic(span: Span) -> OxcDiagnostic {
-    OxcDiagnostic::warn("Prefer RegExp#test() over String#match() and RegExp#exec()")
-        .with_help("RegExp#test() exclusively returns a boolean and therefore is more efficient")
+    OxcDiagnostic::warn("Prefer `RegExp#test()` over `String#match()` and `RegExp#exec()`.")
+        .with_help("`RegExp#test()` exclusively returns a boolean and therefore is more efficient.")
         .with_label(span)
 }
 
@@ -24,7 +25,11 @@ declare_oxc_lint!(
     ///
     /// ### Why is this bad?
     ///
-    /// When you want to know whether a pattern is found in a string, use [`RegExp#test()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/test) instead of [`String#match()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/match) and [`RegExp#exec()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/exec), as it exclusively returns a boolean and therefore is more efficient.
+    /// When you want to know whether a pattern is found in a string, use
+    /// [`RegExp#test()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/test)
+    /// instead of [`String#match()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/match)
+    /// or [`RegExp#exec()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/exec),
+    /// as it exclusively returns a boolean and therefore is more efficient.
     ///
     /// ### Examples
     ///
@@ -86,7 +91,7 @@ impl Rule for PreferRegexpTest {
                 };
 
                 // Check if the `test` of the for statement is the same node as the call expression.
-                if !std::ptr::eq(call_expr2.as_ref(), call_expr) {
+                if call_expr2.address() != call_expr.unstable_address() {
                     return;
                 }
             }
@@ -96,20 +101,11 @@ impl Rule for PreferRegexpTest {
                 };
 
                 // Check if the `test` of the conditional expression is the same node as the call expression.
-                if !std::ptr::eq(call_expr2.as_ref(), call_expr) {
+                if call_expr2.address() != call_expr.unstable_address() {
                     return;
                 }
             }
-
-            AstKind::Argument(_) => {
-                let Some(parent) = outermost_paren_parent(parent, ctx) else {
-                    return;
-                };
-
-                let AstKind::CallExpression(call_expr) = parent.kind() else {
-                    return;
-                };
-
+            AstKind::CallExpression(call_expr) => {
                 let Expression::Identifier(ident) = &call_expr.callee else {
                     return;
                 };
@@ -133,10 +129,11 @@ impl Rule for PreferRegexpTest {
                     return;
                 }
 
-                if let Some(expr) = call_expr.arguments[0].as_expression() {
-                    if expr.is_literal() && !matches!(expr, Expression::RegExpLiteral(_)) {
-                        return;
-                    }
+                if let Some(expr) = call_expr.arguments[0].as_expression()
+                    && expr.is_literal()
+                    && !matches!(expr, Expression::RegExpLiteral(_))
+                {
+                    return;
                 }
             }
             "exec" => {
@@ -156,16 +153,8 @@ impl Rule for PreferRegexpTest {
             let mut fix = fixer.new_fix_with_capacity(3);
 
             fix.push(fixer.replace(span, "test"));
-
-            fix.push(fixer.replace(
-                call_expr.arguments[0].span(),
-                fixer.source_range(member_expr.object().span()),
-            ));
-
-            fix.push(fixer.replace(
-                member_expr.object().span(),
-                fixer.source_range(call_expr.arguments[0].span()),
-            ));
+            fix.push(fixer.replace_with(&call_expr.arguments[0], member_expr.object()));
+            fix.push(fixer.replace_with(member_expr.object(), &call_expr.arguments[0]));
 
             fix.with_message("Replace with `RegExp.test()`")
         });

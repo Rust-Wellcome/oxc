@@ -1,8 +1,11 @@
+use std::fmt::Display;
+
 use bitflags::bitflags;
+use cow_utils::CowUtils;
 use oxc_allocator::Vec;
 use oxc_ast::ast::TSAccessibility;
 use oxc_diagnostics::OxcDiagnostic;
-use oxc_span::{GetSpan, SPAN, Span};
+use oxc_span::Span;
 
 use crate::{
     ParserImpl, diagnostics,
@@ -28,12 +31,13 @@ bitflags! {
       const OUT           = 1 << 11;
       const DEFAULT       = 1 << 13;
       const ACCESSOR      = 1 << 14;
+      const EXPORT        = 1 << 15;
       const ACCESSIBILITY = Self::PRIVATE.bits() | Self::PROTECTED.bits() | Self::PUBLIC.bits();
-      // NOTE: `export` and `default` are not handled here, they are parsed explicitly in the parser.
+      const TYPE_PARAM    = Self::CONST.bits() | Self::IN.bits() | Self::OUT.bits();
   }
 }
 
-/// It is the caller's safety to always check by `Kind::is_modifier_kind`
+/// It is the caller's responsibility to always check by `Kind::is_modifier_kind`
 /// before converting [`Kind`] to [`ModifierFlags`] so that we can assume here that
 /// the conversion always succeeds.
 impl From<Kind> for ModifierFlags {
@@ -52,6 +56,8 @@ impl From<Kind> for ModifierFlags {
             Kind::In => Self::IN,
             Kind::Out => Self::OUT,
             Kind::Accessor => Self::ACCESSOR,
+            Kind::Default => Self::DEFAULT,
+            Kind::Export => Self::EXPORT,
             _ => unreachable!(),
         }
     }
@@ -73,6 +79,8 @@ impl From<ModifierKind> for ModifierFlags {
             ModifierKind::In => Self::IN,
             ModifierKind::Out => Self::OUT,
             ModifierKind::Accessor => Self::ACCESSOR,
+            ModifierKind::Default => Self::DEFAULT,
+            ModifierKind::Export => Self::EXPORT,
         }
     }
 }
@@ -90,6 +98,18 @@ impl ModifierFlags {
             return Some(TSAccessibility::Private);
         }
         None
+    }
+}
+
+impl Display for ModifierFlags {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, (name, _)) in self.iter_names().enumerate() {
+            if i != 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", name.cow_to_lowercase())?;
+        }
+        Ok(())
     }
 }
 
@@ -155,12 +175,23 @@ impl<'a> Modifiers<'a> {
     ///  `modifiers`. E.g., if `modifiers` is empty, then so is `flags``.
     #[must_use]
     pub(crate) fn new(modifiers: Option<Vec<'a, Modifier>>, flags: ModifierFlags) -> Self {
-        if let Some(modifiers) = modifiers {
-            Self { modifiers: Some(modifiers), flags }
-        } else {
-            debug_assert!(flags.is_empty());
-            Self { modifiers: None, flags: ModifierFlags::empty() }
+        // Debug check that `modifiers` and `flags` are consistent with each other
+        #[cfg(debug_assertions)]
+        {
+            if let Some(modifiers) = &modifiers {
+                assert!(!modifiers.is_empty());
+
+                let mut found_flags = ModifierFlags::empty();
+                for modifier in modifiers {
+                    found_flags |= ModifierFlags::from(modifier.kind);
+                }
+                assert_eq!(found_flags, flags);
+            } else {
+                assert!(flags.is_empty());
+            }
         }
+
+        Self { modifiers, flags }
     }
 
     pub fn empty() -> Self {
@@ -210,16 +241,6 @@ impl<'a> Modifiers<'a> {
     }
 }
 
-impl GetSpan for Modifiers<'_> {
-    fn span(&self) -> Span {
-        let Some(modifiers) = &self.modifiers else { return SPAN };
-        debug_assert!(!modifiers.is_empty());
-        // SAFETY: One of Modifier's invariants is that Some(modifiers) always
-        // contains a non-empty Vec; otherwise it must be `None`.
-        unsafe { modifiers.iter().map(|m| m.span).reduce(Span::merge).unwrap_unchecked() }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModifierKind {
     Abstract,
@@ -235,6 +256,8 @@ pub enum ModifierKind {
     Static,
     Out,
     Override,
+    Default,
+    Export,
 }
 
 impl ModifierKind {
@@ -253,9 +276,12 @@ impl ModifierKind {
             Self::Static => "static",
             Self::Out => "out",
             Self::Override => "override",
+            Self::Default => "default",
+            Self::Export => "export",
         }
     }
 }
+
 impl TryFrom<Kind> for ModifierKind {
     type Error = ();
 
@@ -274,6 +300,8 @@ impl TryFrom<Kind> for ModifierKind {
             Kind::In => Ok(Self::In),
             Kind::Out => Ok(Self::Out),
             Kind::Accessor => Ok(Self::Accessor),
+            Kind::Default => Ok(Self::Default),
+            Kind::Export => Ok(Self::Export),
             _ => Err(()),
         }
     }
@@ -287,10 +315,10 @@ impl std::fmt::Display for ModifierKind {
 
 impl<'a> ParserImpl<'a> {
     pub(crate) fn eat_modifiers_before_declaration(&mut self) -> Modifiers<'a> {
-        let mut flags = ModifierFlags::empty();
         if !self.at_modifier() {
-            return Modifiers::new(None, flags);
+            return Modifiers::empty();
         }
+        let mut flags = ModifierFlags::empty();
         let mut modifiers = self.ast.vec();
         while self.at_modifier() {
             let span = self.start_span();
@@ -298,7 +326,7 @@ impl<'a> ParserImpl<'a> {
             let kind = self.cur_kind();
             self.bump_any();
             let modifier = self.modifier(kind, self.end_span(span));
-            self.check_for_duplicate_modifiers(flags, &modifier);
+            self.check_modifier(flags, &modifier);
             flags.set(modifier_flags, true);
             modifiers.push(modifier);
         }
@@ -357,7 +385,7 @@ impl<'a> ParserImpl<'a> {
             if modifier.is_static() {
                 has_seen_static_modifier = true;
             }
-            self.check_for_duplicate_modifiers(modifier_flags, &modifier);
+            self.check_modifier(modifier_flags, &modifier);
             modifier_flags.set(modifier.kind.into(), true);
             modifiers.get_or_insert_with(|| self.ast.vec()).push(modifier);
         }
@@ -374,7 +402,7 @@ impl<'a> ParserImpl<'a> {
         let span = self.start_span();
         let kind = self.cur_kind();
 
-        if matches!(self.cur_kind(), Kind::Const) {
+        if kind == Kind::Const {
             if !permit_const_as_modifier {
                 return None;
             }
@@ -386,21 +414,16 @@ impl<'a> ParserImpl<'a> {
         } else if
         // we're at the start of a static block
         (stop_on_start_of_class_static_block
-            && matches!(self.cur_kind(), Kind::Static)
-            && self.lookahead(Self::next_token_is_open_brace))
+            && kind == Kind::Static
+            && self.lexer.peek_token().kind() == Kind::LCurly)
             // we may be at the start of a static block
-            || (has_seen_static_modifier && matches!(self.cur_kind(), Kind::Static))
+            || (has_seen_static_modifier && kind == Kind::Static)
             // next token is not a modifier
             || (!self.parse_any_contextual_modifier())
         {
             return None;
         }
         Some(self.modifier(kind, self.end_span(span)))
-    }
-
-    pub(crate) fn next_token_is_open_brace(&mut self) -> bool {
-        self.bump_any();
-        self.at(Kind::LCurly)
     }
 
     pub(crate) fn parse_contextual_modifier(&mut self, kind: Kind) -> bool {
@@ -459,24 +482,167 @@ impl<'a> ParserImpl<'a> {
         kind == Kind::LBrack || kind == Kind::PrivateIdentifier || kind.is_literal_property_name()
     }
 
-    fn check_for_duplicate_modifiers(&mut self, seen_flags: ModifierFlags, modifier: &Modifier) {
-        if seen_flags.contains(modifier.kind.into()) {
-            self.error(diagnostics::modifier_already_seen(modifier));
+    fn check_modifier(&mut self, flags: ModifierFlags, modifier: &Modifier) {
+        match modifier.kind {
+            ModifierKind::Public | ModifierKind::Private | ModifierKind::Protected => {
+                if flags.intersects(ModifierFlags::ACCESSIBILITY) {
+                    self.error(diagnostics::accessibility_modifier_already_seen(modifier));
+                } else if flags.contains(ModifierFlags::OVERRIDE) {
+                    self.error(diagnostics::modifier_must_precede_other_modifier(
+                        modifier,
+                        ModifierKind::Override,
+                    ));
+                } else if flags.contains(ModifierFlags::STATIC) {
+                    self.error(diagnostics::modifier_must_precede_other_modifier(
+                        modifier,
+                        ModifierKind::Static,
+                    ));
+                } else if flags.contains(ModifierFlags::ACCESSOR) {
+                    self.error(diagnostics::modifier_must_precede_other_modifier(
+                        modifier,
+                        ModifierKind::Accessor,
+                    ));
+                } else if flags.contains(ModifierFlags::READONLY) {
+                    self.error(diagnostics::modifier_must_precede_other_modifier(
+                        modifier,
+                        ModifierKind::Readonly,
+                    ));
+                } else if flags.contains(ModifierFlags::ASYNC) {
+                    self.error(diagnostics::modifier_must_precede_other_modifier(
+                        modifier,
+                        ModifierKind::Async,
+                    ));
+                } else if flags.contains(ModifierFlags::ABSTRACT) {
+                    self.error(diagnostics::modifier_must_precede_other_modifier(
+                        modifier,
+                        ModifierKind::Abstract,
+                    ));
+                }
+            }
+            ModifierKind::Static => {
+                if flags.contains(ModifierFlags::STATIC) {
+                    self.error(diagnostics::modifier_already_seen(modifier));
+                } else if flags.contains(ModifierFlags::READONLY) {
+                    self.error(diagnostics::modifier_must_precede_other_modifier(
+                        modifier,
+                        ModifierKind::Readonly,
+                    ));
+                } else if flags.contains(ModifierFlags::ASYNC) {
+                    self.error(diagnostics::modifier_must_precede_other_modifier(
+                        modifier,
+                        ModifierKind::Async,
+                    ));
+                } else if flags.contains(ModifierFlags::ACCESSOR) {
+                    self.error(diagnostics::modifier_must_precede_other_modifier(
+                        modifier,
+                        ModifierKind::Accessor,
+                    ));
+                } else if flags.contains(ModifierFlags::OVERRIDE) {
+                    self.error(diagnostics::modifier_must_precede_other_modifier(
+                        modifier,
+                        ModifierKind::Override,
+                    ));
+                }
+            }
+            ModifierKind::Override => {
+                if flags.contains(ModifierFlags::OVERRIDE) {
+                    self.error(diagnostics::modifier_already_seen(modifier));
+                } else if flags.contains(ModifierFlags::READONLY) {
+                    self.error(diagnostics::modifier_must_precede_other_modifier(
+                        modifier,
+                        ModifierKind::Readonly,
+                    ));
+                } else if flags.contains(ModifierFlags::ACCESSOR) {
+                    self.error(diagnostics::modifier_must_precede_other_modifier(
+                        modifier,
+                        ModifierKind::Accessor,
+                    ));
+                } else if flags.contains(ModifierFlags::ASYNC) {
+                    self.error(diagnostics::modifier_must_precede_other_modifier(
+                        modifier,
+                        ModifierKind::Async,
+                    ));
+                }
+            }
+            ModifierKind::Abstract => {
+                if flags.contains(ModifierFlags::ABSTRACT) {
+                    self.error(diagnostics::modifier_already_seen(modifier));
+                } else if flags.contains(ModifierFlags::OVERRIDE) {
+                    self.error(diagnostics::modifier_must_precede_other_modifier(
+                        modifier,
+                        ModifierKind::Override,
+                    ));
+                } else if flags.contains(ModifierFlags::ACCESSOR) {
+                    self.error(diagnostics::modifier_must_precede_other_modifier(
+                        modifier,
+                        ModifierKind::Accessor,
+                    ));
+                }
+            }
+            ModifierKind::Export => {
+                if flags.contains(ModifierFlags::EXPORT) {
+                    self.error(diagnostics::modifier_already_seen(modifier));
+                } else if flags.contains(ModifierFlags::DECLARE) {
+                    self.error(diagnostics::modifier_must_precede_other_modifier(
+                        modifier,
+                        ModifierKind::Declare,
+                    ));
+                } else if flags.contains(ModifierFlags::ABSTRACT) {
+                    self.error(diagnostics::modifier_must_precede_other_modifier(
+                        modifier,
+                        ModifierKind::Abstract,
+                    ));
+                } else if flags.contains(ModifierFlags::ASYNC) {
+                    self.error(diagnostics::modifier_must_precede_other_modifier(
+                        modifier,
+                        ModifierKind::Async,
+                    ));
+                }
+            }
+            _ => {
+                if flags.contains(modifier.kind.into()) {
+                    self.error(diagnostics::modifier_already_seen(modifier));
+                }
+            }
         }
     }
 
+    #[inline]
     pub(crate) fn verify_modifiers<F>(
         &mut self,
         modifiers: &Modifiers<'a>,
         allowed: ModifierFlags,
-        diagnose: F,
+        // If `true`, `allowed` is exact match; if `false`, `allowed` is a superset.
+        // Used for whether to pass `allowed` to `create_diagnostic` function.
+        strict: bool,
+        create_diagnostic: F,
     ) where
-        F: Fn(&Modifier) -> OxcDiagnostic,
+        F: Fn(&Modifier, Option<ModifierFlags>) -> OxcDiagnostic,
     {
-        for modifier in modifiers.iter() {
-            if !allowed.contains(modifier.kind.into()) {
-                self.error(diagnose(modifier));
+        if modifiers.flags.intersects(!allowed) {
+            // Invalid modifiers are rare, so handle this case in `#[cold]` function.
+            // Also `#[inline(never)]` to help `verify_modifiers` to get inlined.
+            #[cold]
+            #[inline(never)]
+            fn report<'a, F>(
+                parser: &mut ParserImpl<'a>,
+                modifiers: &Modifiers<'a>,
+                allowed: ModifierFlags,
+                strict: bool,
+                create_diagnostic: F,
+            ) where
+                F: Fn(&Modifier, Option<ModifierFlags>) -> OxcDiagnostic,
+            {
+                let mut found_invalid_modifier = false;
+                for modifier in modifiers.iter() {
+                    if !allowed.contains(ModifierFlags::from(modifier.kind)) {
+                        parser.error(create_diagnostic(modifier, strict.then_some(allowed)));
+                        found_invalid_modifier = true;
+                    }
+                }
+                debug_assert!(found_invalid_modifier);
             }
+            report(self, modifiers, allowed, strict, create_diagnostic);
         }
     }
 }

@@ -34,8 +34,8 @@ pub fn as_endpoint_registration<'a, 'n>(
         Expression::StringLiteral(path) => {
             Some((Some(path.value), &call.arguments.as_slice()[1..]))
         }
-        Expression::TemplateLiteral(template) if template.is_no_substitution_template() => {
-            Some((template.quasi(), &call.arguments.as_slice()[1..]))
+        Expression::TemplateLiteral(template) => {
+            template.single_quasi().map(|quasi| (Some(quasi), &call.arguments.as_slice()[1..]))
         }
         _ => Some((None, call.arguments.as_slice())),
     }
@@ -100,4 +100,9 @@ fn is_next_param(param: &FormalParameter) -> bool {
 const COMMON_ERROR_NAMES: [&str; 4] = ["e", "err", "error", "exception"];
 fn is_error_param(param: &FormalParameter) -> bool {
     param.pattern.get_identifier_name().is_some_and(|id| COMMON_ERROR_NAMES.contains(&id.as_str()))
+}
+
+#[test]
+fn test_array_is_sorted() {
+    assert!(ROUTER_HANDLER_METHOD_NAMES.is_sorted());
 }

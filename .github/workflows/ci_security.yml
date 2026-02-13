@@ -17,13 +17,13 @@ on:
 jobs:
   zizmor:
     name: zizmor
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     permissions:
       security-events: write
     steps:
-      - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
 
-      - uses: taiki-e/install-action@9ba3ac3fd006a70c6e186a683577abc1ccf0ff3a # v2.54.0
+      - uses: taiki-e/install-action@650c5ca14212efbbf3e580844b04bdccf68dac31 # v2.67.18
         with:
           tool: zizmor
 
@@ -33,7 +33,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@ce28f5bb42b7a9f2c824e633a3f6ee835bab6858 # v3.29.0
+        uses: github/codeql-action/upload-sarif@b20883b0cd1f46c72ae0ba6d1090936928f9fa30 # v4.32.0
         with:
           sarif_file: results.sarif
           category: zizmor

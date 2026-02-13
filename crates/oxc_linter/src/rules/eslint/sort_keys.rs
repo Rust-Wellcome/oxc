@@ -7,25 +7,37 @@ use oxc_ast::{AstKind, ast::ObjectPropertyKind};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, Span};
+use schemars::JsonSchema;
+use serde::Deserialize;
 
-use crate::{AstNode, context::LintContext, rule::Rule};
+use crate::{
+    AstNode,
+    context::LintContext,
+    rule::{Rule, TupleRuleConfig},
+};
 
-#[derive(Debug, Default, Clone)]
-pub struct SortKeys(Box<SortKeysOptions>);
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct SortKeys(Box<SortKeysConfig>);
 
-#[derive(Debug, Default, Clone, Eq, PartialEq)]
+#[derive(Debug, Default, Clone, Eq, PartialEq, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+/// Sorting order for keys. Accepts "asc" for ascending or "desc" for descending.
 pub enum SortOrder {
     Desc,
     #[default]
     Asc,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct SortKeysOptions {
-    sort_order: SortOrder,
+    /// Whether the sort comparison is case-sensitive (A < a when true).
     case_sensitive: bool,
+    /// Use natural sort order so that, for example, "a2" comes before "a10".
     natural: bool,
+    /// Minimum number of properties required in an object before sorting is enforced.
     min_keys: usize,
+    /// When true, groups of properties separated by a blank line are sorted independently.
     allow_line_separated_groups: bool,
 }
 
@@ -33,7 +45,6 @@ impl Default for SortKeysOptions {
     fn default() -> Self {
         // we follow the eslint defaults
         Self {
-            sort_order: SortOrder::Asc,
             case_sensitive: true,
             natural: false,
             min_keys: 2,
@@ -42,13 +53,9 @@ impl Default for SortKeysOptions {
     }
 }
 
-impl std::ops::Deref for SortKeys {
-    type Target = SortKeysOptions;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
+#[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
+#[serde(default)]
+pub struct SortKeysConfig(SortOrder, SortKeysOptions);
 
 fn sort_properties_diagnostic(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Object keys should be sorted").with_label(span)
@@ -84,54 +91,20 @@ declare_oxc_lint!(
     SortKeys,
     eslint,
     style,
-    pending
+    conditional_fix,
+    config = SortKeysConfig
 );
 
 impl Rule for SortKeys {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let Some(config_array) = value.as_array() else {
-            return Self::default();
-        };
-
-        let sort_order = if config_array.is_empty() {
-            SortOrder::Asc
-        } else {
-            config_array[0].as_str().map_or(SortOrder::Asc, |s| match s {
-                "desc" => SortOrder::Desc,
-                _ => SortOrder::Asc,
-            })
-        };
-
-        let config = if config_array.len() > 1 {
-            config_array[1].as_object().unwrap()
-        } else {
-            &serde_json::Map::new()
-        };
-
-        let case_sensitive =
-            config.get("caseSensitive").and_then(serde_json::Value::as_bool).unwrap_or(true);
-        let natural = config.get("natural").and_then(serde_json::Value::as_bool).unwrap_or(false);
-        let min_keys = config
-            .get("minKeys")
-            .and_then(serde_json::Value::as_u64)
-            .map_or(2, |n| n.try_into().unwrap_or(2));
-        let allow_line_separated_groups = config
-            .get("allowLineSeparatedGroups")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
-
-        Self(Box::new(SortKeysOptions {
-            sort_order,
-            case_sensitive,
-            natural,
-            min_keys,
-            allow_line_separated_groups,
-        }))
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<TupleRuleConfig<Self>>(value).map(TupleRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
         if let AstKind::ObjectExpression(dec) = node.kind() {
-            if dec.properties.len() < self.min_keys {
+            let SortKeysConfig(sort_order, options) = &*self.0;
+
+            if dec.properties.len() < options.min_keys {
                 return;
             }
 
@@ -147,7 +120,7 @@ impl Rule for SortKeys {
                     }
                     ObjectPropertyKind::ObjectProperty(obj) => {
                         let Some(key) = obj.key.static_name() else { continue };
-                        if i != dec.properties.len() - 1 && self.allow_line_separated_groups {
+                        if i != dec.properties.len() - 1 && options.allow_line_separated_groups {
                             let text_between = extract_text_between_spans(
                                 source_text,
                                 prop.span(),
@@ -165,7 +138,7 @@ impl Rule for SortKeys {
                 }
             }
 
-            if !self.case_sensitive {
+            if !options.case_sensitive {
                 for group in &mut property_groups {
                     *group = group
                         .iter()
@@ -176,13 +149,13 @@ impl Rule for SortKeys {
 
             let mut sorted_property_groups = property_groups.clone();
             for group in &mut sorted_property_groups {
-                if self.natural {
+                if options.natural {
                     natural_sort(group);
                 } else {
                     alphanumeric_sort(group);
                 }
 
-                if self.sort_order == SortOrder::Desc {
+                if sort_order == &SortOrder::Desc {
                     group.reverse();
                 }
             }
@@ -191,6 +164,174 @@ impl Rule for SortKeys {
                 all(property_groups.iter().zip(&sorted_property_groups), |(a, b)| a == b);
 
             if !is_sorted {
+                // Try to provide a safe autofix when possible.
+                // Conditions for providing a fix:
+                // - No in-between spread properties (reordering spreads is unsafe)
+                // - All properties have a static key name
+                // - No comments between adjacent properties
+                // - No special grouping markers (we only support a single contiguous group)
+                enum SpreadPos {
+                    Start,
+                    CanEnd,
+                    End,
+                }
+
+                let all_props = &dec.properties;
+                let mut can_fix = true;
+                let mut spread_pos = SpreadPos::Start;
+                let mut props: Vec<(String, Span)> = Vec::with_capacity(all_props.len());
+
+                for (i, prop) in all_props.iter().enumerate() {
+                    match prop {
+                        ObjectPropertyKind::SpreadProperty(_) => {
+                            if let Some(next_prop) = all_props.get(i + 1)
+                                && let ObjectPropertyKind::ObjectProperty(_) = next_prop
+                                && ctx.has_comments_between(Span::new(
+                                    prop.span().end,
+                                    next_prop.span().start,
+                                ))
+                            {
+                                can_fix = false;
+                                break;
+                            }
+
+                            match spread_pos {
+                                SpreadPos::Start | SpreadPos::End => {}
+                                SpreadPos::CanEnd => spread_pos = SpreadPos::End,
+                            }
+                        }
+                        ObjectPropertyKind::ObjectProperty(obj) => {
+                            match spread_pos {
+                                SpreadPos::Start => spread_pos = SpreadPos::CanEnd,
+                                SpreadPos::CanEnd => {}
+                                SpreadPos::End => {
+                                    can_fix = false;
+                                    break;
+                                }
+                            }
+
+                            let Some(key) = obj.key.static_name() else {
+                                can_fix = false;
+                                break;
+                            };
+                            props.push((key.to_string(), prop.span()));
+                            // check comments between this and next
+                            if i + 1 < all_props.len() {
+                                let next_span = all_props[i + 1].span();
+                                let between = Span::new(prop.span().end, next_span.start);
+                                if ctx.has_comments_between(between) {
+                                    can_fix = false;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let static_groups_count = property_groups
+                    .iter()
+                    .filter(|g| !g.is_empty() && !g.iter().any(|s| s.starts_with('<')))
+                    .count();
+
+                if can_fix && !props.is_empty() && static_groups_count == 1 {
+                    // Prepare keys for comparison according to options
+                    let keys_for_cmp: Vec<String> = props
+                        .iter()
+                        .map(|(k, _)| {
+                            if options.case_sensitive {
+                                k.clone()
+                            } else {
+                                k.cow_to_ascii_lowercase().to_string()
+                            }
+                        })
+                        .collect();
+
+                    // Compute the sorted key order using the same helpers as the main rule
+                    // so the autofix ordering matches the diagnostic ordering.
+                    let mut sorted_keys = keys_for_cmp.clone();
+                    if options.natural {
+                        natural_sort(&mut sorted_keys);
+                    } else {
+                        alphanumeric_sort(&mut sorted_keys);
+                    }
+                    if sort_order == &SortOrder::Desc {
+                        sorted_keys.reverse();
+                    }
+
+                    // Map sorted keys back to indices in the original list. For duplicate
+                    // keys we consume the first unused occurrence.
+                    let mut used = vec![false; keys_for_cmp.len()];
+                    let mut indices: Vec<usize> = Vec::with_capacity(keys_for_cmp.len());
+
+                    for sk in &sorted_keys {
+                        if let Some(pos) = keys_for_cmp
+                            .iter()
+                            .enumerate()
+                            .find(|(idx, k)| !used[*idx] && k.as_str() == sk.as_str())
+                            .map(|(i, _)| i)
+                        {
+                            used[pos] = true;
+                            indices.push(pos);
+                        }
+                    }
+
+                    // Build sorted text by concatenating the property values with
+                    // preserved separators. We extract the separator (comma + whitespace)
+                    // from between original properties and reuse them to maintain
+                    // formatting (e.g., newlines between properties).
+
+                    // Extract separators between consecutive properties in the original order.
+                    // separator[i] is the text between property i and property i+1.
+                    let mut separators: Vec<String> = Vec::with_capacity(props.len());
+                    for i in 0..props.len() {
+                        if i + 1 < props.len() {
+                            let sep_start = props[i].1.end;
+                            let sep_end = props[i + 1].1.start;
+                            separators
+                                .push(ctx.source_range(Span::new(sep_start, sep_end)).to_string());
+                        } else {
+                            // Last property has no separator after it
+                            separators.push(String::new());
+                        }
+                    }
+
+                    // Get the property text (just the property itself, not including trailing separator)
+                    let prop_only_texts: Vec<String> =
+                        props.iter().map(|(_, span)| ctx.source_range(*span).to_string()).collect();
+
+                    let mut sorted_text = String::new();
+
+                    for (pos, &idx) in indices.iter().enumerate() {
+                        let is_last_in_new = pos + 1 == indices.len();
+
+                        // Add the property text
+                        sorted_text.push_str(&prop_only_texts[idx]);
+
+                        if !is_last_in_new {
+                            // Use separator from original position `pos` (not `idx`) to maintain
+                            // the same spacing pattern as the original code.
+                            // If original separator is empty/missing, fall back to ", ".
+                            let sep = if pos < separators.len() && !separators[pos].is_empty() {
+                                &separators[pos]
+                            } else {
+                                ", "
+                            };
+                            sorted_text.push_str(sep);
+                        }
+                    }
+
+                    // Replace the full properties range
+                    let replace_span = Span::new(props[0].1.start, props[props.len() - 1].1.end);
+
+                    ctx.diagnostic_with_fix(sort_properties_diagnostic(node.span()), |fixer| {
+                        fixer.replace(replace_span, sorted_text)
+                    });
+
+                    // we've emitted a fix for this node; stop processing this node
+                    return;
+                }
+
+                // Fallback: still emit diagnostic if we couldn't produce a safe fix
                 ctx.diagnostic(sort_properties_diagnostic(node.span()));
             }
         }
@@ -202,14 +343,16 @@ fn alphanumeric_sort(arr: &mut [String]) {
 }
 
 fn natural_sort(arr: &mut [String]) {
-    arr.sort_by(|a, b| {
+    arr.sort_unstable_by(|a, b| {
         let mut a_chars = a.chars();
         let mut b_chars = b.chars();
 
         loop {
             match (a_chars.next(), b_chars.next()) {
                 (Some(a_char), Some(b_char)) if a_char == b_char => {}
-                (Some(a_char), Some(b_char)) if a_char.is_numeric() && b_char.is_numeric() => {
+                (Some(a_char), Some(b_char))
+                    if a_char.is_ascii_digit() && b_char.is_ascii_digit() =>
+                {
                     let n1 = take_numeric(&mut a_chars, a_char);
                     let n2 = take_numeric(&mut b_chars, b_char);
                     match n1.cmp(&n2) {
@@ -355,6 +498,7 @@ fn test() {
             "var obj = {'#':1, 'Z':2, À:3, è:4}",
             Some(serde_json::json!(["asc", { "natural": true }])),
         ),
+        ("var obj = {'a²': 1, 'b³': 2}", Some(serde_json::json!(["asc", { "natural": true }]))),
         (
             "var obj = {b_:1, a:2, b:3}",
             Some(serde_json::json!(["asc", { "natural": true, "minKeys": 4 }])),
@@ -1024,5 +1168,67 @@ fn test() {
         ), // { "ecmaVersion": 2018 }
     ];
 
-    Tester::new(SortKeys::NAME, SortKeys::PLUGIN, pass, fail).test_and_snapshot();
+    // Add comprehensive fixer tests: the rule now advertises conditional fixes,
+    // so provide expect_fix cases.
+    let fix = vec![
+        // Basic alphabetical sorting
+        ("var obj = {b:1, a:2}", "var obj = {a:2, b:1}"),
+        // Case sensitivity - lowercase comes after uppercase, so a:2 should come after B:1
+        ("var obj = {a:1, B:2}", "var obj = {B:2, a:1}"),
+        // Trailing commas preserved
+        ("var obj = {b:1, a:2,}", "var obj = {a:2, b:1,}"),
+        // With spaces and various formatting
+        ("var obj = { z: 1, a: 2 }", "var obj = { a: 2, z: 1 }"),
+        // Three properties
+        ("var obj = {c:1, a:2, b:3}", "var obj = {a:2, b:3, c:1}"),
+        // Mixed types
+        ("var obj = {2:1, a:2, 1:3}", "var obj = {1:3, 2:1, a:2}"),
+        // Spreading at the start
+        ("var obj = {...z, b:1, a:2}", "var obj = {...z, a:2, b:1}"),
+        // Spreading at the start when one of the keys is the empty string
+        ("var obj = {...z, a:1, '':2}", "var obj = {...z, '':2, a:1}"),
+        // No fix when a leading spread has a trailing comment
+        ("var obj = {...z, /*c*/ b:1, a:2}", "var obj = {...z, /*c*/ b:1, a:2}"),
+        // Spreading multiple times at the start
+        ("var obj = {...z, ...y, b:1, a:2,}", "var obj = {...z, ...y, a:2, b:1,}"),
+        // Spreading at the end
+        ("var obj = { b:1, a:2, ...z}", "var obj = { a:2, b:1, ...z}"),
+        // Spreading multiple times at the end
+        ("var obj = {b:1, a:2, ...z, ...y}", "var obj = {a:2, b:1, ...z, ...y}"),
+        // Spreading at both the start and end
+        ("var obj = {...z, b:1, a:2, ...y}", "var obj = {...z, a:2, b:1, ...y}"),
+        // Spreading multiple times at both the start and end
+        (
+            "var obj = { ...z, ...y, b:1, a:2, ...x, ...w, }",
+            "var obj = { ...z, ...y, a:2, b:1, ...x, ...w, }",
+        ),
+        // Multi-line formatting should be preserved (issue #16391)
+        (
+            "const obj = {
+    val: 'germany',
+    key: 'de',
+    id: 123,
+}",
+            "const obj = {
+    id: 123,
+    key: 'de',
+    val: 'germany',
+}",
+        ),
+        // Multi-line with different indentation
+        (
+            "var obj = {
+  c: 1,
+  a: 2,
+  b: 3
+}",
+            "var obj = {
+  a: 2,
+  b: 3,
+  c: 1
+}",
+        ),
+    ];
+
+    Tester::new(SortKeys::NAME, SortKeys::PLUGIN, pass, fail).expect_fix(fix).test_and_snapshot();
 }

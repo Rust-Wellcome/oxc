@@ -4,7 +4,7 @@ use std::{
     fmt::{self, Display},
 };
 
-use oxc_span::{Atom, Span};
+use oxc_span::{Atom, GetSpan, Ident, Span};
 use oxc_syntax::{operator::UnaryOperator, scope::ScopeFlags};
 
 use crate::ast::*;
@@ -91,6 +91,7 @@ impl<'a> Expression<'a> {
     /// Returns `true` for [string literals](StringLiteral) matching the
     /// expected value. Note that [non-substitution template
     /// literals](TemplateLiteral) are not considered.
+    #[inline]
     pub fn is_specific_string_literal(&self, string: &str) -> bool {
         match self {
             Self::StringLiteral(s) => s.value == string,
@@ -163,8 +164,8 @@ impl<'a> Expression<'a> {
     /// Remove nested parentheses from this expression.
     pub fn without_parentheses(&self) -> &Self {
         let mut expr = self;
-        while let Expression::ParenthesizedExpression(paran_expr) = expr {
-            expr = &paran_expr.expression;
+        while let Expression::ParenthesizedExpression(paren_expr) = expr {
+            expr = &paren_expr.expression;
         }
         expr
     }
@@ -296,7 +297,7 @@ impl<'a> Expression<'a> {
     }
 
     /// Returns the [`IdentifierReference`] if this expression is an [`Expression::Identifier`],
-    /// or contains an [`Expression::Identifier`] and reurns `None` otherwise.
+    /// or contains an [`Expression::Identifier`] and reruns `None` otherwise.
     pub fn get_identifier_reference(&self) -> Option<&IdentifierReference<'a>> {
         match self.get_inner_expression() {
             Expression::Identifier(ident) => Some(ident),
@@ -314,7 +315,7 @@ impl<'a> Expression<'a> {
     /// Note that this includes [`Class`]s.
     /// <https://262.ecma-international.org/15.0/#sec-isanonymousfunctiondefinition>
     pub fn is_anonymous_function_definition(&self) -> bool {
-        match self {
+        match self.without_parentheses() {
             Self::ArrowFunctionExpression(_) => true,
             Self::FunctionExpression(func) => func.name().is_none(),
             Self::ClassExpression(class) => class.name().is_none(),
@@ -341,7 +342,7 @@ impl<'a> Expression<'a> {
     /// or [`ImportExpression`].
     pub fn is_call_like_expression(&self) -> bool {
         self.is_call_expression()
-            && matches!(self, Expression::NewExpression(_) | Expression::ImportExpression(_))
+            || matches!(self, Expression::NewExpression(_) | Expression::ImportExpression(_))
     }
 
     /// Returns `true` if this [`Expression`] is a [`BinaryExpression`] or [`LogicalExpression`].
@@ -373,8 +374,11 @@ impl<'a> Expression<'a> {
 
     /// Is identifier or `a.b` expression where `a` is an identifier.
     pub fn is_entity_name_expression(&self) -> bool {
-        matches!(self.without_parentheses(), Expression::Identifier(_))
-            || self.is_property_access_entity_name_expression()
+        // Special case: treat `this.B` like `this` was an identifier
+        matches!(
+            self.without_parentheses(),
+            Expression::Identifier(_) | Expression::ThisExpression(_)
+        ) || self.is_property_access_entity_name_expression()
     }
 
     /// `a.b` expression where `a` is an identifier.
@@ -384,6 +388,11 @@ impl<'a> Expression<'a> {
         } else {
             false
         }
+    }
+
+    /// Returns `true` if this [`Expression`] is a [`JSXElement`] or [`JSXFragment`].
+    pub fn is_jsx(&self) -> bool {
+        matches!(self, Self::JSXElement(_) | Self::JSXFragment(_))
     }
 }
 
@@ -426,16 +435,25 @@ impl<'a> From<Argument<'a>> for ArrayExpressionElement<'a> {
     fn from(argument: Argument<'a>) -> Self {
         match argument {
             Argument::SpreadElement(spread) => Self::SpreadElement(spread),
-            match_expression!(Argument) => Self::from(argument.into_expression()),
+            _ => Self::from(argument.into_expression()),
         }
     }
 }
 
-impl ObjectPropertyKind<'_> {
+impl<'a> ObjectPropertyKind<'a> {
     /// Returns `true` if this object property is a [spread](SpreadElement).
     #[inline]
     pub fn is_spread(&self) -> bool {
         matches!(self, Self::SpreadProperty(_))
+    }
+
+    /// Returns [`Some`] for non-spread [object properties](ObjectProperty).
+    #[inline]
+    pub fn as_property(&self) -> Option<&ObjectProperty<'a>> {
+        match self {
+            Self::ObjectProperty(prop) => Some(prop),
+            Self::SpreadProperty(_) => None,
+        }
     }
 }
 
@@ -456,9 +474,7 @@ impl<'a> PropertyKey<'a> {
             Self::NumericLiteral(lit) => Some(Cow::Owned(lit.value.to_string())),
             Self::BigIntLiteral(lit) => Some(Cow::Borrowed(lit.value.as_str())),
             Self::NullLiteral(_) => Some(Cow::Borrowed("null")),
-            Self::TemplateLiteral(lit) => {
-                lit.expressions.is_empty().then(|| lit.quasi()).flatten().map(Into::into)
-            }
+            Self::TemplateLiteral(lit) => lit.single_quasi().map(Into::into),
             _ => None,
         }
     }
@@ -486,7 +502,7 @@ impl<'a> PropertyKey<'a> {
     ///
     /// - `#a: 1` in `class C { #a: 1 }` would return `a`
     /// - `a: 1` in `{ a: 1 }` would return `None`
-    pub fn private_name(&self) -> Option<Atom<'a>> {
+    pub fn private_name(&self) -> Option<Ident<'a>> {
         match self {
             Self::PrivateIdentifier(ident) => Some(ident.name),
             _ => None,
@@ -541,12 +557,12 @@ impl<'a> TemplateLiteral<'a> {
     /// - `` `foo` `` => `true`
     /// - `` `foo${bar}qux` `` => `false`
     pub fn is_no_substitution_template(&self) -> bool {
-        self.expressions.is_empty() && self.quasis.len() == 1
+        self.quasis.len() == 1
     }
 
     /// Get single quasi from `template`
-    pub fn quasi(&self) -> Option<Atom<'a>> {
-        self.quasis.first().and_then(|quasi| quasi.value.cooked)
+    pub fn single_quasi(&self) -> Option<Atom<'a>> {
+        if self.is_no_substitution_template() { self.quasis[0].value.cooked } else { None }
     }
 }
 
@@ -723,6 +739,18 @@ impl<'a> ChainElement<'a> {
     }
 }
 
+impl<'a> From<ChainElement<'a>> for Expression<'a> {
+    fn from(value: ChainElement<'a>) -> Self {
+        match value {
+            ChainElement::CallExpression(e) => Expression::CallExpression(e),
+            ChainElement::TSNonNullExpression(e) => Expression::TSNonNullExpression(e),
+            match_member_expression!(ChainElement) => {
+                Expression::from(value.into_member_expression())
+            }
+        }
+    }
+}
+
 impl CallExpression<'_> {
     /// Returns the static name of the callee, if it has one, or `None` otherwise.
     pub fn callee_name(&self) -> Option<&str> {
@@ -776,7 +804,7 @@ impl CallExpression<'_> {
     /// require() // => false
     /// require(123) // => false
     /// ```
-    pub fn common_js_require(&self) -> Option<&StringLiteral> {
+    pub fn common_js_require(&self) -> Option<&StringLiteral<'_>> {
         if !(self.callee.is_specific_id("require") && self.arguments.len() == 1) {
             return None;
         }
@@ -784,6 +812,50 @@ impl CallExpression<'_> {
             Argument::StringLiteral(str_literal) => Some(str_literal),
             _ => None,
         }
+    }
+
+    /// Returns the span covering **all** arguments in this call expression.
+    ///
+    /// The span starts at the beginning of the first argument and ends at the end
+    /// of the last argument (inclusive).
+    ///
+    /// # Examples
+    /// ```ts
+    /// foo(bar, baz);
+    /// //  ^^^^^^^^  <- arguments_span() covers this range
+    /// ```
+    ///
+    /// If the call expression has no arguments, [`None`] is returned.
+    pub fn arguments_span(&self) -> Option<Span> {
+        self.arguments.first().map(|first| {
+            // The below will never panic since the len of `self.arguments` must be >= 1
+            #[expect(clippy::missing_panics_doc)]
+            let last = self.arguments.last().unwrap();
+            Span::new(first.span().start, last.span().end)
+        })
+    }
+}
+
+impl NewExpression<'_> {
+    /// Returns the span covering **all** arguments in this new call expression.
+    ///
+    /// The span starts at the beginning of the first argument and ends at the end
+    /// of the last argument (inclusive).
+    ///
+    /// # Examples
+    /// ```ts
+    /// new Foo(bar, baz);
+    /// //      ^^^^^^^^  <- arguments_span() covers this range
+    /// ```
+    ///
+    /// If the new expression has no arguments, [`None`] is returned.
+    pub fn arguments_span(&self) -> Option<Span> {
+        self.arguments.first().map(|first| {
+            // The below will never panic since the len of `self.arguments` must be >= 1
+            #[expect(clippy::missing_panics_doc)]
+            let last = self.arguments.last().unwrap();
+            Span::new(first.span().start, last.span().end)
+        })
     }
 }
 
@@ -929,6 +1001,21 @@ impl<'a> AssignmentTargetMaybeDefault<'a> {
             _ => None,
         }
     }
+
+    /// Returns mut identifier bound by this assignment target.
+    pub fn identifier_mut(&mut self) -> Option<&mut IdentifierReference<'a>> {
+        match self {
+            AssignmentTargetMaybeDefault::AssignmentTargetIdentifier(id) => Some(id),
+            Self::AssignmentTargetWithDefault(target) => {
+                if let AssignmentTarget::AssignmentTargetIdentifier(id) = &mut target.binding {
+                    Some(id)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
 }
 
 impl Statement<'_> {
@@ -1031,6 +1118,7 @@ impl<'a> Declaration<'a> {
     /// const x = 1; // None. may change in the future.
     /// class Foo {} // Some(IdentifierReference { name: "Foo", .. })
     /// enum Bar {} // Some(IdentifierReference { name: "Bar", .. })
+    /// declare global {} // None
     /// ```
     pub fn id(&self) -> Option<&BindingIdentifier<'a>> {
         match self {
@@ -1047,7 +1135,7 @@ impl<'a> Declaration<'a> {
                     None
                 }
             }
-            Declaration::VariableDeclaration(_) => None,
+            Declaration::TSGlobalDeclaration(_) | Declaration::VariableDeclaration(_) => None,
         }
     }
 
@@ -1060,6 +1148,7 @@ impl<'a> Declaration<'a> {
             Declaration::TSEnumDeclaration(decl) => decl.declare,
             Declaration::TSTypeAliasDeclaration(decl) => decl.declare,
             Declaration::TSModuleDeclaration(decl) => decl.declare,
+            Declaration::TSGlobalDeclaration(decl) => decl.declare,
             Declaration::TSInterfaceDeclaration(decl) => decl.declare,
             Declaration::TSImportEqualsDeclaration(_) => false,
         }
@@ -1097,6 +1186,11 @@ impl VariableDeclarationKind {
     /// Returns `true` if declared using `let`, `const` or `using` (such as `let x` or `const x`)
     pub fn is_lexical(self) -> bool {
         matches!(self, Self::Const | Self::Let | Self::Using | Self::AwaitUsing)
+    }
+
+    /// Returns `true` if declared with `using` (such as `using x` or `await using x`)
+    pub fn is_using(self) -> bool {
+        self == Self::Using || self == Self::AwaitUsing
     }
 
     /// Returns `true` if declared using `await using` (such as `await using x`)
@@ -1165,44 +1259,7 @@ impl<'a> BindingPattern<'a> {
     /// - calling on `a = 1` in `let a = 1` would return `Some("a")`
     /// - calling on `a = 1` in `let {a = 1} = c` would return `Some("a")`
     /// - calling on `a: b` in `let {a: b} = c` would return `None`
-    pub fn get_identifier_name(&self) -> Option<Atom<'a>> {
-        self.kind.get_identifier_name()
-    }
-
-    /// Returns the bound identifier in this binding pattern, if it has one, or `None` otherwise.
-    ///
-    /// To just get the name of the bound identifier, use [`BindingPattern::get_identifier_name`].
-    ///
-    /// ## Example
-    ///
-    /// - calling on `a = 1` in `let a = 1` would return `Some(BindingIdentifier { name: "a", .. })`
-    /// - calling on `a = 1` in `let {a = 1} = c` would return `Some(BindingIdentifier { name: "a", .. })`
-    /// - calling on `a: b` in `let {a: b} = c` would return `None`
-    pub fn get_binding_identifier(&self) -> Option<&BindingIdentifier<'a>> {
-        self.kind.get_binding_identifier()
-    }
-
-    /// Returns the bound identifiers in this binding pattern.
-    ///
-    /// ## Example
-    ///
-    /// - `let {} = obj` would return `[]`
-    /// - `let {a, b} = obj` would return `[a, b]`
-    /// - `let {a = 1, b: c} = obj` would return `[a, c]`
-    pub fn get_binding_identifiers(&self) -> std::vec::Vec<&BindingIdentifier<'a>> {
-        self.kind.get_binding_identifiers()
-    }
-}
-
-impl<'a> BindingPatternKind<'a> {
-    /// Returns the name of the bound identifier in this binding pattern, if it has one, or `None` otherwise.
-    ///
-    /// ## Example
-    ///
-    /// - calling on `a = 1` in `let a = 1` would return `Some("a")`
-    /// - calling on `a = 1` in `let {a = 1} = c` would return `Some("a")`
-    /// - calling on `a: b` in `let {a: b} = c` would return `None`
-    pub fn get_identifier_name(&self) -> Option<Atom<'a>> {
+    pub fn get_identifier_name(&self) -> Option<Ident<'a>> {
         match self {
             Self::BindingIdentifier(ident) => Some(ident.name),
             Self::AssignmentPattern(assign) => assign.left.get_identifier_name(),
@@ -1212,7 +1269,7 @@ impl<'a> BindingPatternKind<'a> {
 
     /// Returns the bound identifier in this binding pattern, if it has one, or `None` otherwise.
     ///
-    /// To just get the name of the bound identifier, use [`BindingPatternKind::get_identifier_name`].
+    /// To just get the name of the bound identifier, use [`BindingPattern::get_identifier_name`].
     ///
     /// ## Example
     ///
@@ -1233,15 +1290,25 @@ impl<'a> BindingPatternKind<'a> {
     ) {
         match self {
             Self::BindingIdentifier(ident) => idents.push(ident),
-            Self::AssignmentPattern(assign) => assign.left.kind.append_binding_identifiers(idents),
-            Self::ArrayPattern(pattern) => pattern
-                .elements
-                .iter()
-                .filter_map(|item| item.as_ref())
-                .for_each(|item| item.kind.append_binding_identifiers(idents)),
-            Self::ObjectPattern(pattern) => pattern.properties.iter().for_each(|item| {
-                item.value.kind.append_binding_identifiers(idents);
-            }),
+            Self::AssignmentPattern(assign) => assign.left.append_binding_identifiers(idents),
+            Self::ArrayPattern(pattern) => {
+                pattern
+                    .elements
+                    .iter()
+                    .filter_map(|item| item.as_ref())
+                    .for_each(|item| item.append_binding_identifiers(idents));
+                if let Some(rest) = &pattern.rest {
+                    rest.argument.append_binding_identifiers(idents);
+                }
+            }
+            Self::ObjectPattern(pattern) => {
+                pattern.properties.iter().for_each(|item| {
+                    item.value.append_binding_identifiers(idents);
+                });
+                if let Some(rest) = &pattern.rest {
+                    rest.argument.append_binding_identifiers(idents);
+                }
+            }
         }
     }
 
@@ -1258,6 +1325,41 @@ impl<'a> BindingPatternKind<'a> {
         idents
     }
 
+    /// Returns `true` if all binding identifiers in this pattern satisfy the given predicate.
+    ///
+    /// This method is more efficient than [`BindingPattern::get_binding_identifiers`] followed by [`Iterator::all`]
+    /// when you only need to check a condition, as it does not allocate a `Vec` and can
+    /// short-circuit on the first `false` result.
+    ///
+    /// If the pattern contains no binding identifiers, returns `true`.
+    pub fn all_binding_identifiers<F>(&self, predicate: &mut F) -> bool
+    where
+        F: FnMut(&BindingIdentifier<'a>) -> bool,
+    {
+        match self {
+            Self::BindingIdentifier(ident) => predicate(ident),
+            Self::AssignmentPattern(assign) => assign.left.all_binding_identifiers(predicate),
+            Self::ArrayPattern(pattern) => {
+                pattern
+                    .elements
+                    .iter()
+                    .filter_map(|item| item.as_ref())
+                    .all(|item| item.all_binding_identifiers(predicate))
+                    && pattern
+                        .rest
+                        .as_ref()
+                        .is_none_or(|rest| rest.argument.all_binding_identifiers(predicate))
+            }
+            Self::ObjectPattern(pattern) => {
+                pattern.properties.iter().all(|item| item.value.all_binding_identifiers(predicate))
+                    && pattern
+                        .rest
+                        .as_ref()
+                        .is_none_or(|rest| rest.argument.all_binding_identifiers(predicate))
+            }
+        }
+    }
+
     /// Returns `true` if this binding pattern is destructuring.
     ///
     /// ## Example
@@ -1269,7 +1371,7 @@ impl<'a> BindingPatternKind<'a> {
     pub fn is_destructuring_pattern(&self) -> bool {
         match self {
             Self::ObjectPattern(_) | Self::ArrayPattern(_) => true,
-            Self::AssignmentPattern(pattern) => pattern.left.kind.is_destructuring_pattern(),
+            Self::AssignmentPattern(pattern) => pattern.left.is_destructuring_pattern(),
             Self::BindingIdentifier(_) => false,
         }
     }
@@ -1322,7 +1424,7 @@ impl ArrayPattern<'_> {
 impl<'a> Function<'a> {
     /// Returns this [`Function`]'s name, if it has one.
     #[inline]
-    pub fn name(&self) -> Option<Atom<'a>> {
+    pub fn name(&self) -> Option<Ident<'a>> {
         self.id.as_ref().map(|id| id.name)
     }
 
@@ -1331,9 +1433,10 @@ impl<'a> Function<'a> {
         self.r#type.is_typescript_syntax() || self.body.is_none() || self.declare
     }
 
-    /// `true` for function expressions
+    /// `true` for both function expressions and typescript empty body function expressions
     pub fn is_expression(&self) -> bool {
         self.r#type == FunctionType::FunctionExpression
+            || self.r#type == FunctionType::TSEmptyBodyFunctionExpression
     }
 
     /// `true` for function declarations
@@ -1375,7 +1478,7 @@ impl<'a> FormalParameters<'a> {
         self.items
             .iter()
             .map(|param| &param.pattern)
-            .chain(self.rest.iter().map(|rest| &rest.argument))
+            .chain(self.rest.iter().map(|param| &param.rest.argument))
     }
 }
 
@@ -1450,20 +1553,20 @@ impl FunctionBody<'_> {
 impl<'a> ArrowFunctionExpression<'a> {
     /// Get expression part of `ArrowFunctionExpression`: `() => expression_part`.
     pub fn get_expression(&self) -> Option<&Expression<'a>> {
-        if self.expression {
-            if let Statement::ExpressionStatement(expr_stmt) = &self.body.statements[0] {
-                return Some(&expr_stmt.expression);
-            }
+        if self.expression
+            && let Statement::ExpressionStatement(expr_stmt) = &self.body.statements[0]
+        {
+            return Some(&expr_stmt.expression);
         }
         None
     }
 
     /// Get expression part of `ArrowFunctionExpression`: `() => expression_part`.
     pub fn get_expression_mut(&mut self) -> Option<&mut Expression<'a>> {
-        if self.expression {
-            if let Statement::ExpressionStatement(expr_stmt) = &mut self.body.statements[0] {
-                return Some(&mut expr_stmt.expression);
-            }
+        if self.expression
+            && let Statement::ExpressionStatement(expr_stmt) = &mut self.body.statements[0]
+        {
+            return Some(&mut expr_stmt.expression);
         }
         None
     }
@@ -1477,7 +1580,7 @@ impl<'a> ArrowFunctionExpression<'a> {
 impl<'a> Class<'a> {
     /// Returns this [`Class`]'s name, if it has one.
     #[inline]
-    pub fn name(&self) -> Option<Atom<'a>> {
+    pub fn name(&self) -> Option<Ident<'a>> {
         self.id.as_ref().map(|id| id.name)
     }
 
@@ -1824,7 +1927,7 @@ impl<'a> ImportAttributeKey<'a> {
     /// Returns the string value of this import attribute key.
     pub fn as_atom(&self) -> Atom<'a> {
         match self {
-            Self::Identifier(identifier) => identifier.name,
+            Self::Identifier(identifier) => identifier.name.into(),
             Self::StringLiteral(literal) => literal.value,
         }
     }
@@ -1885,8 +1988,8 @@ impl<'a> ModuleExportName<'a> {
     /// - `export { foo as "anything" }` => `"anything"`
     pub fn name(&self) -> Atom<'a> {
         match self {
-            Self::IdentifierName(identifier) => identifier.name,
-            Self::IdentifierReference(identifier) => identifier.name,
+            Self::IdentifierName(identifier) => identifier.name.into(),
+            Self::IdentifierReference(identifier) => identifier.name.into(),
             Self::StringLiteral(literal) => literal.value,
         }
     }
@@ -1898,7 +2001,7 @@ impl<'a> ModuleExportName<'a> {
     /// - `export { foo }` => `Some("foo")`
     /// - `export { foo as bar }` => `Some("bar")`
     /// - `export { foo as "anything" }` => `None`
-    pub fn identifier_name(&self) -> Option<Atom<'a>> {
+    pub fn identifier_name(&self) -> Option<Ident<'a>> {
         match self {
             Self::IdentifierName(identifier) => Some(identifier.name),
             Self::IdentifierReference(identifier) => Some(identifier.name),

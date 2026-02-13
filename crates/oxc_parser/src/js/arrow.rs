@@ -1,10 +1,10 @@
 use oxc_allocator::Box;
 use oxc_ast::{NONE, ast::*};
-use oxc_span::GetSpan;
+use oxc_span::{FileExtension, GetSpan};
 use oxc_syntax::precedence::Precedence;
 
 use super::{FunctionKind, Tristate};
-use crate::{ParserImpl, diagnostics, lexer::Kind};
+use crate::{Context, ParserImpl, diagnostics, lexer::Kind};
 
 struct ArrowFunctionHead<'a> {
     type_parameters: Option<Box<'a, TSTypeParameterDeclaration<'a>>>,
@@ -12,7 +12,6 @@ struct ArrowFunctionHead<'a> {
     return_type: Option<Box<'a, TSTypeAnnotation<'a>>>,
     r#async: bool,
     span: u32,
-    has_return_colon: bool,
 }
 
 impl<'a> ParserImpl<'a> {
@@ -39,9 +38,16 @@ impl<'a> ParserImpl<'a> {
             let span = self.start_span();
             self.bump_any(); // bump `async`
             let expr = self.parse_binary_expression_or_higher(Precedence::Comma);
+            let Expression::Identifier(ident) = &expr else {
+                return self.unexpected();
+            };
+            // It is a Syntax Error if ArrowParameters Contains AwaitExpression is true.
+            if ident.name == "await" {
+                self.error(diagnostics::identifier_async("await", ident.span));
+            }
             return Some(self.parse_simple_arrow_function_expression(
                 span,
-                expr,
+                ident,
                 /* async */ true,
                 allow_return_type_in_arrow_function,
             ));
@@ -63,7 +69,8 @@ impl<'a> ParserImpl<'a> {
             if self.cur_token().is_on_new_line() {
                 return Tristate::False;
             }
-            if !self.at(Kind::LParen) && !self.at(Kind::LAngle) {
+            let kind = self.cur_kind();
+            if kind != Kind::LParen && kind != Kind::LAngle {
                 return Tristate::False;
             }
         }
@@ -193,53 +200,38 @@ impl<'a> ParserImpl<'a> {
     }
 
     fn is_un_parenthesized_async_arrow_function_worker(&mut self) -> bool {
-        let checkpoint = self.checkpoint();
-        self.bump(Kind::Async);
-        // If the "async" is followed by "=>" token then it is not a beginning of an async arrow-function
-        // but instead a simple arrow-function which will be parsed inside "parseAssignmentExpressionOrHigher"
-        if !self.cur_token().is_on_new_line() && self.cur_kind().is_binding_identifier() {
-            // Arrow before newline is checked in `parse_simple_arrow_function_expression`
-            self.bump_any();
-            if self.at(Kind::Arrow) {
-                self.rewind(checkpoint);
-                return true;
+        // Use lookahead to avoid checkpoint/rewind
+        self.lookahead(|parser| {
+            parser.bump(Kind::Async);
+            // If the "async" is followed by "=>" token then it is not a beginning of an async arrow-function
+            // but instead a simple arrow-function which will be parsed inside "parseAssignmentExpressionOrHigher"
+            if !parser.cur_token().is_on_new_line() && parser.cur_kind().is_binding_identifier() {
+                // Arrow before newline is checked in `parse_simple_arrow_function_expression`
+                parser.bump_any();
+                parser.at(Kind::Arrow)
+            } else {
+                false
             }
-        }
-        self.rewind(checkpoint);
-        false
+        })
     }
 
     pub(crate) fn parse_simple_arrow_function_expression(
         &mut self,
         span: u32,
-        ident: Expression<'a>,
+        ident: &IdentifierReference<'a>,
         r#async: bool,
         allow_return_type_in_arrow_function: bool,
     ) -> Expression<'a> {
-        let has_await = self.ctx.has_await();
-        self.ctx = self.ctx.union_await_if(r#async);
-
-        let params = {
-            let ident = match ident {
-                Expression::Identifier(ident) => {
-                    let ident = ident.unbox();
-                    self.ast.alloc_binding_identifier(ident.span, ident.name)
-                }
-                _ => return self.unexpected(),
-            };
-            let params_span = self.end_span(ident.span.start);
-            let ident = BindingPatternKind::BindingIdentifier(ident);
-            let pattern = self.ast.binding_pattern(ident, NONE, false);
-            let formal_parameter = self.ast.plain_formal_parameter(params_span, pattern);
-            self.ast.alloc_formal_parameters(
-                params_span,
-                FormalParameterKind::ArrowFormalParameters,
-                self.ast.vec1(formal_parameter),
-                NONE,
-            )
-        };
-
-        self.ctx = self.ctx.and_await(has_await);
+        let pattern = BindingPattern::BindingIdentifier(
+            self.ast.alloc_binding_identifier(ident.span, ident.name),
+        );
+        let formal_parameter = self.ast.plain_formal_parameter(ident.span, pattern);
+        let params = self.ast.alloc_formal_parameters(
+            ident.span,
+            FormalParameterKind::ArrowFormalParameters,
+            self.ast.vec1(formal_parameter),
+            NONE,
+        );
 
         if self.cur_token().is_on_new_line() {
             self.error(diagnostics::lineterminator_before_arrow(self.cur_token().span()));
@@ -248,14 +240,7 @@ impl<'a> ParserImpl<'a> {
         self.expect(Kind::Arrow);
 
         self.parse_arrow_function_expression_body(
-            ArrowFunctionHead {
-                type_parameters: None,
-                params,
-                return_type: None,
-                r#async,
-                span,
-                has_return_colon: false,
-            },
+            ArrowFunctionHead { type_parameters: None, params, return_type: None, r#async, span },
             allow_return_type_in_arrow_function,
         )
     }
@@ -267,7 +252,17 @@ impl<'a> ParserImpl<'a> {
         let has_await = self.ctx.has_await();
         self.ctx = self.ctx.union_await_if(r#async);
 
-        let type_parameters = self.parse_ts_type_parameters();
+        let (type_parameters, has_trailing_comma) =
+            self.parse_ts_type_parameters_with_trailing_comma();
+
+        if let Some(type_params) = &type_parameters
+            && matches!(self.source_type.extension(), Some(FileExtension::Mts | FileExtension::Cts))
+            && type_params.params.len() == 1
+            && type_params.params[0].constraint.is_none()
+            && !has_trailing_comma
+        {
+            self.error(diagnostics::jsx_type_parameter_in_mts_cts(type_params.params[0].name.span));
+        }
 
         let (this_param, params) = self.parse_formal_parameters(
             FunctionKind::Expression,
@@ -279,8 +274,7 @@ impl<'a> ParserImpl<'a> {
             self.error(diagnostics::ts_arrow_function_this_parameter(this_param.span));
         }
 
-        let has_return_colon = self.is_ts && self.at(Kind::Colon);
-        let return_type = self.parse_ts_return_type_annotation(Kind::Arrow, false);
+        let return_type = if self.is_ts { self.parse_ts_return_type_annotation() } else { None };
 
         self.ctx = self.ctx.and_await(has_await);
 
@@ -290,7 +284,7 @@ impl<'a> ParserImpl<'a> {
 
         self.expect(Kind::Arrow);
 
-        ArrowFunctionHead { type_parameters, params, return_type, r#async, span, has_return_colon }
+        ArrowFunctionHead { type_parameters, params, return_type, r#async, span }
     }
 
     /// [ConciseBody](https://tc39.es/ecma262/#prod-ConciseBody)
@@ -303,7 +297,7 @@ impl<'a> ParserImpl<'a> {
         arrow_function_head: ArrowFunctionHead<'a>,
         allow_return_type_in_arrow_function: bool,
     ) -> Expression<'a> {
-        let ArrowFunctionHead { type_parameters, params, return_type, r#async, span, .. } =
+        let ArrowFunctionHead { type_parameters, params, return_type, r#async, span } =
             arrow_function_head;
         let has_await = self.ctx.has_await();
         let has_yield = self.ctx.has_yield();
@@ -311,8 +305,10 @@ impl<'a> ParserImpl<'a> {
 
         let expression = !self.at(Kind::LCurly);
         let body = if expression {
-            let expr = self
-                .parse_assignment_expression_or_higher_impl(allow_return_type_in_arrow_function);
+            // Remove TopLevel context for arrow function expression body
+            let expr = self.context_remove(Context::TopLevel, |p| {
+                p.parse_assignment_expression_or_higher_impl(allow_return_type_in_arrow_function)
+            });
             let span = expr.span();
             let expr_stmt = self.ast.statement_expression(span, expr);
             self.ast.alloc_function_body(span, self.ast.vec(), self.ast.vec1(expr_stmt))
@@ -353,7 +349,7 @@ impl<'a> ParserImpl<'a> {
             return None;
         }
 
-        let checkpoint = self.checkpoint();
+        let checkpoint = self.checkpoint_with_error_recovery();
 
         let head = self.parse_parenthesized_arrow_function_head();
         if self.has_fatal_error() {
@@ -362,7 +358,7 @@ impl<'a> ParserImpl<'a> {
             return None;
         }
 
-        let has_return_colon = head.has_return_colon;
+        let has_return_type = head.return_type.is_some();
 
         let body =
             self.parse_arrow_function_expression_body(head, allow_return_type_in_arrow_function);
@@ -381,7 +377,7 @@ impl<'a> ParserImpl<'a> {
         //     a() ? (b: number, c?: string): void => d() : e
         // is determined by isParenthesizedArrowFunctionExpression to unambiguously
         // be an arrow expression, so we allow a return type.
-        if !allow_return_type_in_arrow_function && has_return_colon {
+        if !allow_return_type_in_arrow_function && has_return_type {
             // However, if the arrow function we were able to parse is followed by another colon
             // as in:
             //     a ? (x): string => x : null

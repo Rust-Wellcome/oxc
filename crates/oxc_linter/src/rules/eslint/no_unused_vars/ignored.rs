@@ -3,8 +3,7 @@ use oxc_ast::{
     AstKind,
     ast::{
         ArrayAssignmentTarget, AssignmentTarget, AssignmentTargetMaybeDefault,
-        AssignmentTargetProperty, BindingPattern, BindingPatternKind, ClassElement,
-        ObjectAssignmentTarget,
+        AssignmentTargetProperty, BindingPattern, ClassElement, ObjectAssignmentTarget,
     },
 };
 
@@ -56,20 +55,27 @@ impl NoUnusedVars {
     pub(super) fn is_ignored(&self, symbol: &Symbol<'_, '_>) -> bool {
         let declared_binding = symbol.name();
         match symbol.declaration().kind() {
+            m if m.is_module_declaration() => self.is_ignored_var(declared_binding),
             AstKind::BindingRestElement(_)
             | AstKind::ImportDefaultSpecifier(_)
             | AstKind::ImportNamespaceSpecifier(_)
             | AstKind::ImportSpecifier(_)
-            | AstKind::ModuleDeclaration(_)
             | AstKind::TSEnumDeclaration(_)
             | AstKind::TSEnumMember(_)
             | AstKind::TSImportEqualsDeclaration(_)
             | AstKind::TSInterfaceDeclaration(_)
+            | AstKind::TSMappedType(_)
             | AstKind::TSModuleDeclaration(_)
             | AstKind::TSTypeAliasDeclaration(_)
             | AstKind::TSTypeParameter(_) => self.is_ignored_var(declared_binding),
             AstKind::Function(func) => {
-                func.r#type.is_typescript_syntax() || self.is_ignored_var(declared_binding)
+                // Functions with TypeScript syntax are ignored only if they are truly ambient
+                // (i.e., declared or in a declared module). Functions without bodies inside
+                // non-declared namespaces should still be checked.
+                if func.r#type.is_typescript_syntax() || func.body.is_none() {
+                    return func.declare || symbol.is_in_declared_module();
+                }
+                self.is_ignored_var(declared_binding)
             }
             AstKind::Class(class) => {
                 if class.declare
@@ -91,6 +97,10 @@ impl NoUnusedVars {
             AstKind::FormalParameter(param) => {
                 self.is_ignored_arg(declared_binding)
                     || self.is_ignored_binding_pattern(symbol, &param.pattern)
+            }
+            AstKind::FormalParameterRest(param) => {
+                self.is_ignored_arg(declared_binding)
+                    || self.is_ignored_binding_pattern(symbol, &param.rest.argument)
             }
             s => {
                 // panic when running test cases so we can find unsupported node kinds
@@ -141,13 +151,11 @@ impl NoUnusedVars {
         target: &Symbol<'_, 'a>,
         binding: &BindingPattern<'a>,
     ) -> FoundStatus {
-        match &binding.kind {
+        match &binding {
             // if found, not ignored. Ignoring only happens in destructuring patterns.
-            BindingPatternKind::BindingIdentifier(id) => FoundStatus::found(target == id.as_ref()),
-            BindingPatternKind::AssignmentPattern(id) => {
-                self.search_binding_pattern(target, &id.left)
-            }
-            BindingPatternKind::ObjectPattern(obj) => {
+            BindingPattern::BindingIdentifier(id) => FoundStatus::found(target == id.as_ref()),
+            BindingPattern::AssignmentPattern(id) => self.search_binding_pattern(target, &id.left),
+            BindingPattern::ObjectPattern(obj) => {
                 for prop in &obj.properties {
                     // check if the prop is a binding identifier (with or
                     // without an assignment) since ignore_rest_siblings does
@@ -182,7 +190,7 @@ impl NoUnusedVars {
                     self.search_binding_pattern(target, &rest.argument)
                 })
             }
-            BindingPatternKind::ArrayPattern(arr) => {
+            BindingPattern::ArrayPattern(arr) => {
                 for el in arr.elements.iter().flatten() {
                     let status = self.search_binding_pattern(target, el);
                     match el.get_binding_identifier() {
@@ -194,7 +202,7 @@ impl NoUnusedVars {
                         // el is a destructuring pattern containing the target
                         // symbol; our search is done, propegate it upwards
                         None if status.is_found() => {
-                            debug_assert!(el.kind.is_destructuring_pattern());
+                            debug_assert!(el.is_destructuring_pattern());
                             return status;
                         }
                         // el is a simple pattern for a different symbol, or is
@@ -357,7 +365,8 @@ mod test {
                 "caughtErrors": "all",
                 "destructuredArrayIgnorePattern": "^_",
             }
-        ]));
+        ]))
+        .unwrap();
 
         assert!(rule.is_ignored_var("_x"));
         assert!(rule.is_ignored_var(&Atom::from("_x")));
@@ -384,7 +393,8 @@ mod test {
                 "caughtErrorsIgnorePattern": "^_",
                 "caughtErrors": "all",
             }
-        ]));
+        ]))
+        .unwrap();
         assert!(rule.is_ignored_catch_err("_"));
         assert!(rule.is_ignored_catch_err("_err"));
         assert!(!rule.is_ignored_catch_err("err"));
@@ -393,7 +403,8 @@ mod test {
             {
                 "caughtErrors": "none",
             }
-        ]));
+        ]))
+        .unwrap();
         assert!(rule.is_ignored_catch_err("_"));
         assert!(rule.is_ignored_catch_err("_err"));
         assert!(rule.is_ignored_catch_err("err"));

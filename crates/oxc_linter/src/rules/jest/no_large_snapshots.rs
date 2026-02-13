@@ -1,4 +1,4 @@
-use std::{ops::Deref, path::Path};
+use std::ops::Deref;
 
 use lazy_regex::Regex;
 use oxc_ast::{
@@ -9,6 +9,8 @@ use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{CompactStr, GetSpan, Span};
 use rustc_hash::FxHashMap;
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 use crate::{
     context::LintContext,
@@ -19,7 +21,7 @@ use crate::{
 fn no_snapshot(line_count: usize, span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Snapshot is too long.")
         .with_help(format!(
-            "Expected to not encounter a Jest snapshot but one was found that is {line_count} lines long"
+            "Expected to not encounter a Jest or Vitest snapshot but one was found that is {line_count} lines long"
         ))
         .with_label(span)
 }
@@ -27,7 +29,7 @@ fn no_snapshot(line_count: usize, span: Span) -> OxcDiagnostic {
 fn too_long_snapshot(line_limit: usize, line_count: usize, span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Snapshot is too long.")
         .with_help(format!(
-            "Expected Jest snapshot to be no longer than {line_limit} lines but it was {line_count} lines long"
+            "Expected Jest or Vitest snapshot to be no longer than {line_limit} lines but it was {line_count} lines long"
         ))
         .with_label(span)
 }
@@ -35,11 +37,22 @@ fn too_long_snapshot(line_limit: usize, line_count: usize, span: Span) -> OxcDia
 #[derive(Debug, Default, Clone)]
 pub struct NoLargeSnapshots(Box<NoLargeSnapshotsConfig>);
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
 pub struct NoLargeSnapshotsConfig {
+    /// Maximum number of lines allowed for external snapshot files.
     pub max_size: usize,
+    /// Maximum number of lines allowed for inline snapshots.
     pub inline_max_size: usize,
+    /// A map of snapshot file paths to arrays of snapshot names that are allowed to exceed the size limit.
+    /// Snapshot names can be specified as regular expressions.
     pub allowed_snapshots: FxHashMap<CompactStr, Vec<CompactStr>>,
+}
+
+impl Default for NoLargeSnapshotsConfig {
+    fn default() -> Self {
+        Self { max_size: 50, inline_max_size: 50, allowed_snapshots: FxHashMap::default() }
+    }
 }
 
 impl Deref for NoLargeSnapshots {
@@ -63,7 +76,7 @@ declare_oxc_lint!(
     /// good as its review and as such keeping it short, sweet, and readable is
     /// important to allow for thorough reviews.
     ///
-    /// ### Example
+    /// ### Examples
     ///
     /// Examples of **incorrect** code for this rule:
     /// ```javascript
@@ -131,13 +144,25 @@ declare_oxc_lint!(
     /// line 4
     /// `;
     /// ```
+    ///
+    /// This rule is compatible with [eslint-plugin-vitest](https://github.com/vitest-dev/eslint-plugin-vitest/blob/main/docs/rules/no-large-snapshots.md),
+    /// to use it, add the following configuration to your `.oxlintrc.json`:
+    ///
+    /// ```json
+    /// {
+    ///   "rules": {
+    ///      "vitest/no-large-snapshots": "error"
+    ///   }
+    /// }
+    /// ```
     NoLargeSnapshots,
     jest,
     style,
+    config = NoLargeSnapshotsConfig,
 );
 
 impl Rule for NoLargeSnapshots {
-    fn from_configuration(value: serde_json::Value) -> Self {
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
         let config = value.get(0);
 
         let max_size = config
@@ -160,13 +185,11 @@ impl Rule for NoLargeSnapshots {
             .map(Self::compile_allowed_snapshots)
             .unwrap_or_default();
 
-        Self(Box::new(NoLargeSnapshotsConfig { max_size, inline_max_size, allowed_snapshots }))
+        Ok(Self(Box::new(NoLargeSnapshotsConfig { max_size, inline_max_size, allowed_snapshots })))
     }
 
     fn run_once(&self, ctx: &LintContext) {
-        let is_snap = ctx.file_path().to_str().is_some_and(|p| {
-            Path::new(p).extension().is_some_and(|ext| ext.eq_ignore_ascii_case("snap"))
-        });
+        let is_snap = ctx.file_extension().is_some_and(|ext| ext.eq_ignore_ascii_case("snap"));
 
         if is_snap {
             for node in ctx.nodes().iter() {
@@ -367,7 +390,7 @@ fn test() {
     // let twenty_exports_snapshot = generate_exports_snapshot_string(20, None);
     // let fifty_eight_exports_snapshot = generate_exports_snapshot_string(58, None);
 
-    let pass = vec![
+    let mut pass = vec![
         ("expect(something)", None, None, None),
         ("expect(something).toBe(1)", None, None, None),
         ("expect(something).toMatchInlineSnapshot", None, None, None),
@@ -422,7 +445,7 @@ fn test() {
     // ]
     // .join("\n\n");
 
-    let fail = vec![
+    let mut fail = vec![
         (fifty_match_inline_cases.as_str(), None, None, None),
         (fifty_throw_error_match_cases.as_str(), None, None, None),
         (
@@ -495,7 +518,50 @@ fn test() {
         // ),
     ];
 
+    let vitest_pass = vec![
+        ("expect(something)", None, None, None),
+        ("expect(something).toBe(1)", None, None, None),
+        ("expect(something).toMatchInlineSnapshot", None, None, None),
+        ("expect(something).toMatchInlineSnapshot()", None, None, None),
+        (two_match_inline_cases.as_str(), None, None, None),
+        (two_throw_error_match_cases.as_str(), None, None, None),
+        (
+            twenty_match_inline_cases.as_str(),
+            Some(serde_json::json!([{ "maxSize": 19, "inlineMaxSize": 21 }])),
+            None,
+            None,
+        ),
+        (
+            sixty_match_inline_cases.as_str(),
+            Some(serde_json::json!([{ "maxSize": 61 }])),
+            None,
+            None,
+        ),
+        (sixty_cases.as_str(), Some(serde_json::json!([{ "maxSize": 61 }])), None, None),
+    ];
+
+    let vitest_fail = vec![
+        (fifty_match_inline_cases.as_str(), None, None, None),
+        (fifty_throw_error_match_cases.as_str(), None, None, None),
+        (
+            fifty_throw_error_match_cases.as_str(),
+            Some(serde_json::json!([{ "maxSize": 51, "inlineMaxSize": 50 }])),
+            None,
+            None,
+        ),
+        (
+            fifty_throw_error_match_cases.as_str(),
+            Some(serde_json::json!([{ "maxSize": 0 }])),
+            None,
+            None,
+        ),
+    ];
+
+    pass.extend(vitest_pass);
+    fail.extend(vitest_fail);
+
     Tester::new(NoLargeSnapshots::NAME, NoLargeSnapshots::PLUGIN, pass, fail)
         .with_jest_plugin(true)
+        .with_vitest_plugin(true)
         .test_and_snapshot();
 }

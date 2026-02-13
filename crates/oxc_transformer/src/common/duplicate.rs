@@ -1,9 +1,6 @@
 //! Utilities to duplicate expressions.
 
-use std::{
-    mem::{ManuallyDrop, MaybeUninit},
-    ptr,
-};
+use std::array;
 
 use oxc_allocator::CloneIn;
 use oxc_ast::ast::{AssignmentOperator, Expression};
@@ -91,16 +88,15 @@ impl<'a> TransformCtx<'a> {
             Expression::Identifier(ident) => {
                 let reference_id = ident.reference_id();
                 let reference = ctx.scoping().get_reference(reference_id);
-                if let Some(symbol_id) = reference.symbol_id() {
-                    if !mutated_symbol_needs_temp_var || !ctx.scoping().symbol_is_mutated(symbol_id)
-                    {
-                        // Reading bound identifier cannot have side effects, so no need for temp var
-                        let binding = BoundIdentifier::new(ident.name, symbol_id);
-                        let references = create_array(|| {
-                            binding.create_spanned_read_expression(ident.span, ctx)
-                        });
-                        return (expr, references);
-                    }
+                if let Some(symbol_id) = reference.symbol_id()
+                    && (!mutated_symbol_needs_temp_var
+                        || !ctx.scoping().symbol_is_mutated(symbol_id))
+                {
+                    // Reading bound identifier cannot have side effects, so no need for temp var
+                    let binding = BoundIdentifier::new(ident.name.into(), symbol_id);
+                    let references =
+                        array::from_fn(|_| binding.create_spanned_read_expression(ident.span, ctx));
+                    return (expr, references);
                 }
 
                 // Previously `x += 1` (`x` read + write), but moving to `_x = x` (`x` read only)
@@ -118,7 +114,7 @@ impl<'a> TransformCtx<'a> {
             | Expression::BigIntLiteral(_)
             | Expression::RegExpLiteral(_)
             | Expression::StringLiteral(_) => {
-                let references = create_array(|| expr.clone_in(ctx.ast.allocator));
+                let references = array::from_fn(|_| expr.clone_in(ctx.ast.allocator));
                 return (expr, references);
             }
             // Template literal cannot have side effects if it has no expressions.
@@ -127,7 +123,7 @@ impl<'a> TransformCtx<'a> {
             // Why would you write "`x${9}z`" when you can just write "`x9z`"?
             // Note: "`x${foo}`" *can* have side effects if `foo` is an object with a `toString` method.
             Expression::TemplateLiteral(lit) if lit.expressions.is_empty() => {
-                let references = create_array(|| {
+                let references = array::from_fn(|_| {
                     ctx.ast.expression_template_literal(
                         lit.span,
                         ctx.ast.vec_from_iter(lit.quasis.iter().cloned()),
@@ -147,29 +143,8 @@ impl<'a> TransformCtx<'a> {
             expr,
         );
 
-        let references = create_array(|| temp_var_binding.create_read_expression(ctx));
+        let references = array::from_fn(|_| temp_var_binding.create_read_expression(ctx));
 
         (assignment, references)
     }
-}
-
-/// Create array of length `N`, with each item initialized with provided function `init`.
-///
-/// Implementation based on:
-/// * <https://github.com/rust-lang/rust/issues/62875#issuecomment-513834029>
-/// * <https://github.com/rust-lang/rust/issues/61956>
-//
-// `#[inline]` so compiler can inline `init()`, and it may unroll the loop if `init` is simple enough.
-#[inline]
-fn create_array<const N: usize, T, I: FnMut() -> T>(mut init: I) -> [T; N] {
-    let mut array: [MaybeUninit<T>; N] = [const { MaybeUninit::uninit() }; N];
-    for elem in &mut array {
-        elem.write(init());
-    }
-    // Wrapping in `ManuallyDrop` should not be necessary because `MaybeUninit` does not impl `Drop`,
-    // but do it anyway just to make sure, as it's mentioned in issues above.
-    let mut array = ManuallyDrop::new(array);
-    // SAFETY: All elements of array are initialized.
-    // `[MaybeUninit<T>; N]` and `[T; N]` have same layout.
-    unsafe { ptr::from_mut(&mut array).cast::<[T; N]>().read() }
 }

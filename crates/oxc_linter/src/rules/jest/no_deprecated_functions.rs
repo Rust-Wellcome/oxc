@@ -4,7 +4,8 @@ use oxc_ast::ast::Expression;
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, Span};
-use phf::{Map, phf_map};
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 use crate::{context::LintContext, rule::Rule};
 
@@ -13,16 +14,26 @@ fn deprecated_function(deprecated: &str, new: &str, span: Span) -> OxcDiagnostic
         .with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
 pub struct JestConfig {
+    /// The version of Jest being used.
     version: String,
+}
+
+impl Default for JestConfig {
+    fn default() -> Self {
+        Self { version: "29".to_string() }
+    }
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct NoDeprecatedFunctions(Box<NoDeprecatedFunctionsConfig>);
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
 pub struct NoDeprecatedFunctionsConfig {
+    /// Jest configuration options.
     jest: JestConfig,
 }
 
@@ -41,26 +52,32 @@ declare_oxc_lint!(
     /// either been renamed for clarity, or replaced with more powerful APIs.
     ///
     /// This rule can also autofix a number of these deprecations for you.
+    ///
     /// #### `jest.resetModuleRegistry`
+    ///
     /// This function was renamed to `resetModules` in Jest 15 and removed in Jest 27.
     ///
     /// #### `jest.addMatchers`
+    ///
     /// This function was replaced with `expect.extend` in Jest 17 and removed in Jest 27.
     ///
     /// #### `require.requireActual` & `require.requireMock`
+    ///
     /// These functions were replaced in Jest 21 and removed in Jest 26.
     ///
-    /// Originally, the `requireActual` & `requireMock` the `requireActual`&
-    /// `requireMock` functions were placed onto the `require` function.
+    /// Originally, the `requireActual` and `requireMock` functions were placed
+    /// onto the `require` function.
     ///
     /// These functions were later moved onto the `jest` object in order to be easier
     /// for type checkers to handle, and their use via `require` deprecated. Finally,
     /// the release of Jest 26 saw them removed from the `require` function altogether.
     ///
     /// #### `jest.runTimersToTime`
+    ///
     /// This function was renamed to `advanceTimersByTime` in Jest 22 and removed in Jest 27.
     ///
     /// #### `jest.genMockFromModule`
+    ///
     /// This function was renamed to `createMockFromModule` in Jest 26, and is scheduled for removal in Jest 30.
     ///
     /// ### Why is this bad?
@@ -78,20 +95,23 @@ declare_oxc_lint!(
     NoDeprecatedFunctions,
     jest,
     style,
-    fix
+    fix,
+    config = NoDeprecatedFunctionsConfig,
 );
 
-const DEPRECATED_FUNCTIONS_MAP: Map<&'static str, (usize, &'static str)> = phf_map! {
-    "jest.resetModuleRegistry" => (15, "jest.resetModules"),
-    "jest.addMatchers" => (17, "expect.extend"),
-    "require.requireMock" => (21, "jest.requireMock"),
-    "require.requireActual" => (21, "jest.requireMock"),
-    "jest.runTimersToTime" => (22, "jest.advanceTimersByTime"),
-    "jest.genMockFromModule" => (26, "jest.createMockFromModule"),
-};
+fn deprecated_functions_map(deprecated_fn: &str) -> Option<(usize, &'static str)> {
+    match deprecated_fn {
+        "jest.resetModuleRegistry" => Some((15, "jest.resetModules")),
+        "jest.addMatchers" => Some((17, "expect.extend")),
+        "require.requireMock" | "require.requireActual" => Some((21, "jest.requireMock")),
+        "jest.runTimersToTime" => Some((22, "jest.advanceTimersByTime")),
+        "jest.genMockFromModule" => Some((26, "jest.createMockFromModule")),
+        _ => None,
+    }
+}
 
 impl Rule for NoDeprecatedFunctions {
-    fn from_configuration(value: serde_json::Value) -> Self {
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
         let version = value
             .get(0)
             .and_then(|v| v.get("jest"))
@@ -105,9 +125,9 @@ impl Rule for NoDeprecatedFunctions {
 
         let major: Vec<&str> = version.split('.').collect();
 
-        Self(Box::new(NoDeprecatedFunctionsConfig {
+        Ok(Self(Box::new(NoDeprecatedFunctionsConfig {
             jest: JestConfig { version: major[0].to_string() },
-        }))
+        })))
     }
 
     fn run<'a>(&self, node: &oxc_semantic::AstNode<'a>, ctx: &LintContext<'a>) {
@@ -127,13 +147,13 @@ impl Rule for NoDeprecatedFunctions {
         // Todo: read from configuration
         let jest_version_num: usize = self.jest.version.parse().unwrap_or(29);
 
-        if let Some((base_version, replacement)) = DEPRECATED_FUNCTIONS_MAP.get(&node_name) {
-            if jest_version_num >= *base_version {
-                ctx.diagnostic_with_fix(
-                    deprecated_function(&node_name, replacement, mem_expr.span()),
-                    |fixer| fixer.replace(mem_expr.span(), *replacement),
-                );
-            }
+        if let Some((base_version, replacement)) = deprecated_functions_map(&node_name)
+            && jest_version_num >= base_version
+        {
+            ctx.diagnostic_with_fix(
+                deprecated_function(&node_name, replacement, mem_expr.span()),
+                |fixer| fixer.replace(mem_expr.span(), replacement),
+            );
         }
     }
 }

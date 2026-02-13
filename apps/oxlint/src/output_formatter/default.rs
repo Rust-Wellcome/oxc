@@ -6,16 +6,17 @@ use oxc_diagnostics::{
     reporter::{DiagnosticReporter, DiagnosticResult},
 };
 use oxc_linter::table::RuleTable;
+use rustc_hash::FxHashSet;
 
 #[derive(Debug)]
 pub struct DefaultOutputFormatter;
 
 impl InternalFormatter for DefaultOutputFormatter {
-    fn all_rules(&self) -> Option<String> {
+    fn all_rules(&self, enabled_rules: FxHashSet<&str>) -> Option<String> {
         let mut output = String::new();
         let table = RuleTable::default();
-        for section in table.sections {
-            output.push_str(section.render_markdown_table(None).as_str());
+        for section in &table.sections {
+            output.push_str(&section.render_markdown_table_cli(&enabled_rules));
             output.push('\n');
         }
         output.push_str(format!("Default: {}\n", table.turned_on_by_default_count).as_str());
@@ -40,12 +41,12 @@ impl InternalFormatter for DefaultOutputFormatter {
         }
     }
 
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "testing")))]
     fn get_diagnostic_reporter(&self) -> Box<dyn DiagnosticReporter> {
         Box::new(GraphicalReporter::default())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     fn get_diagnostic_reporter(&self) -> Box<dyn DiagnosticReporter> {
         use crate::output_formatter::default::test_implementation::GraphicalReporterTester;
 
@@ -63,6 +64,7 @@ impl DefaultOutputFormatter {
 /// Pretty-prints diagnostics. Primarily meant for human-readable output in a terminal.
 ///
 /// See [`GraphicalReportHandler`] for how to configure colors, context lines, etc.
+#[cfg_attr(all(not(test), feature = "testing"), expect(dead_code))]
 struct GraphicalReporter {
     handler: GraphicalReportHandler,
 }
@@ -113,7 +115,7 @@ fn get_diagnostic_result_output(result: &DiagnosticResult) -> String {
     output
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 mod test_implementation {
     use oxc_diagnostics::{
         Error, GraphicalReportHandler, GraphicalTheme,
@@ -129,11 +131,15 @@ mod test_implementation {
 
     impl DiagnosticReporter for GraphicalReporterTester {
         fn finish(&mut self, result: &DiagnosticResult) -> Option<String> {
-            let handler = GraphicalReportHandler::new_themed(GraphicalTheme::none());
+            let handler = GraphicalReportHandler::new_themed(GraphicalTheme::none())
+                // links print ansi escape codes, which makes snapshots harder to read
+                .with_links(false);
             let mut output = String::new();
 
-            self.diagnostics.sort_by_key(|diagnostic| Info::new(diagnostic).filename);
-            self.diagnostics.sort_by_key(|diagnostic| Info::new(diagnostic).start.line);
+            self.diagnostics.sort_by_cached_key(|diagnostic| {
+                let info = Info::new(diagnostic);
+                (info.filename, info.start, info.end, info.rule_id, info.message)
+            });
 
             for diagnostic in &self.diagnostics {
                 handler.render_report(&mut output, diagnostic.as_ref()).unwrap();
@@ -160,11 +166,12 @@ mod test {
         default::{DefaultOutputFormatter, GraphicalReporter},
     };
     use oxc_diagnostics::reporter::{DiagnosticReporter, DiagnosticResult};
+    use rustc_hash::FxHashSet;
 
     #[test]
     fn all_rules() {
         let formatter = DefaultOutputFormatter;
-        let result = formatter.all_rules();
+        let result = formatter.all_rules(FxHashSet::default());
 
         assert!(result.is_some());
     }

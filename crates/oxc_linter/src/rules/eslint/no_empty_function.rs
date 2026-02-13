@@ -85,8 +85,10 @@ impl TryFrom<&str> for Allowed {
             "getters" | "getter" => Ok(Self::Getters),
             "setters" | "setter" => Ok(Self::Setters),
             "constructors" | "constructor" => Ok(Self::Constructors),
-            "private-constructors" | "privateConstructors" => Ok(Self::PrivateConstructor),
-            "protected-constructors" | "protectedConstructors" => Ok(Self::ProtectedConstructor),
+            "asyncFunctions" | "async-functions" => Ok(Self::AsyncFunctions),
+            "asyncMethods" | "async-methods" => Ok(Self::AsyncMethods),
+            "privateConstructors" | "private-constructors" => Ok(Self::PrivateConstructor),
+            "protectedConstructors" | "protected-constructors" => Ok(Self::ProtectedConstructor),
             "decoratedFunctions" | "decorated-functions" => Ok(Self::DecoratedFunction),
             "overrideMethods" | "override-methods" => Ok(Self::OverrideMethod),
             _ => Err(()),
@@ -104,15 +106,22 @@ declare_oxc_lint!(
     /// Empty functions can reduce readability because readers need to guess whether it's
     /// intentional or not. So writing a clear comment for empty functions is a good practice.
     ///
-    /// ### Configuration
-    /// You may pass an object containing a list of `allow`ed function kinds.
-    /// For example:
+    /// ### Options
+    ///
+    /// #### allow
+    ///
+    /// `{ type: string[], default: [] }`
+    ///
+    /// You may pass a list of allowed function kinds, which will allow functions of
+    /// these kinds to be empty.
+    ///
+    /// Example:
     /// ```json
-    /// // oxlint.json
     /// {
-    ///     "rules": {
-    ///         "no-empty-function": ["error", { "allow": ["functions"] }]
-    ///     }
+    ///   "no-empty-function": [
+    ///     "error",
+    ///     { "allow": ["functions"] }
+    ///   ]
     /// }
     /// ```
     ///
@@ -155,7 +164,7 @@ declare_oxc_lint!(
     /// }
     ///
     /// function foo() {
-    ///     return;
+    ///   return;
     /// }
     /// const add = (a, b) => a + b
     ///
@@ -172,18 +181,21 @@ declare_oxc_lint!(
     NoEmptyFunction,
     eslint,
     restriction,
+    // TODO: Replace this with an actual config struct. This is a dummy value to
+    // indicate that this rule has configuration and avoid errors.
+    config = Value,
 );
 
 impl Rule for NoEmptyFunction {
-    fn from_configuration(value: Value) -> Self {
+    fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
         let config = match value {
             Value::Object(ref obj) => Some(obj),
             Value::Array(ref arr) => arr.first().and_then(Value::as_object),
             _ => None,
         };
-        let Some(config) = config else { return NoEmptyFunction::default() };
+        let Some(config) = config else { return Ok(NoEmptyFunction::default()) };
         let Some(allow) = config.get("allow").and_then(Value::as_array) else {
-            return NoEmptyFunction::default();
+            return Ok(NoEmptyFunction::default());
         };
         let mut allow_option = Allowed::None;
         for allowed in allow {
@@ -192,7 +204,7 @@ impl Rule for NoEmptyFunction {
             allow_option |= allowed;
         }
 
-        Self { allow: allow_option }
+        Ok(Self { allow: allow_option })
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -225,15 +237,41 @@ impl NoEmptyFunction {
         node: &AstNode<'a>,
         ctx: &LintContext<'a>,
     ) -> ViolationInfo<'a> {
-        for parent in ctx.nodes().ancestor_kinds(node.id()).skip(1) {
+        for parent in ctx.nodes().ancestor_kinds(node.id()) {
             match parent {
                 AstKind::Function(f) => {
                     if let Some(name) = f.name() {
-                        let kind = if f.generator { "generator function" } else { "function" };
+                        let is_generator = f.generator;
+                        let is_async = f.r#async;
+
+                        if is_generator && self.allow.contains(Allowed::GeneratorFunctions) {
+                            return ViolationInfo::default();
+                        }
+                        if is_async && self.allow.contains(Allowed::AsyncFunctions) {
+                            return ViolationInfo::default();
+                        }
+                        if !is_generator && !is_async && self.allow.contains(Allowed::Function) {
+                            return ViolationInfo::default();
+                        }
+
+                        let kind = if is_async {
+                            "async function"
+                        } else if is_generator {
+                            "generator function"
+                        } else {
+                            "function"
+                        };
                         return (kind, Some(name.into())).into();
                     }
                 }
-                AstKind::ArrowFunctionExpression(_) => {}
+                AstKind::ArrowFunctionExpression(arrow) => {
+                    if self.allow.contains(Allowed::ArrowFunction) {
+                        return ViolationInfo::default();
+                    }
+                    if arrow.r#async && self.allow.contains(Allowed::AsyncFunctions) {
+                        return ViolationInfo::default();
+                    }
+                }
                 AstKind::IdentifierName(IdentifierName { name, .. })
                 | AstKind::IdentifierReference(IdentifierReference { name, .. }) => {
                     return ("function", Some(Cow::Borrowed(name.as_str()))).into();
@@ -301,6 +339,11 @@ impl NoEmptyFunction {
             MethodDefinitionKind::Get => self.allow.contains(Allowed::Getters),
             MethodDefinitionKind::Set => self.allow.contains(Allowed::Setters),
             MethodDefinitionKind::Method => {
+                if method.value.r#async && self.allow.contains(Allowed::AsyncMethods)
+                    || method.value.generator && self.allow.contains(Allowed::GeneratorMethods)
+                {
+                    return true;
+                }
                 self.allow.contains(Allowed::Methods)
                     || (method.r#override && self.allow.contains(Allowed::OverrideMethod))
             }
@@ -434,6 +477,18 @@ fn test() {
             "class Foo extends Base { override foo() {} }",
             Some(serde_json::json!([{ "allow": ["overrideMethods"] }])),
         ),
+        // Test allow option for functions and arrow functions
+        ("function foo() {}", Some(serde_json::json!([{ "allow": ["functions"] }]))),
+        ("const bar = () => {};", Some(serde_json::json!([{ "allow": ["arrowFunctions"] }]))),
+        (
+            "const foo = () => {}; function bar() {}",
+            Some(serde_json::json!([{ "allow": ["arrowFunctions", "functions"] }])),
+        ),
+        ("function* gen() {}", Some(serde_json::json!([{ "allow": ["generatorFunctions"] }]))),
+        ("async function foo() {}", Some(serde_json::json!([{ "allow": ["asyncFunctions"] }]))),
+        ("const foo = async () => {};", Some(serde_json::json!([{ "allow": ["asyncFunctions"] }]))),
+        ("class Foo { async bar() {} }", Some(serde_json::json!([{ "allow": ["asyncMethods"] }]))),
+        ("class Foo { *gen() {} }", Some(serde_json::json!([{ "allow": ["generatorMethods"] }]))),
         // extras added by oxc team
         ("declare function foo(x: number): void;", None),
     ];

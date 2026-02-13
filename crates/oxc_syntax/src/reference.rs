@@ -1,35 +1,22 @@
 #![expect(missing_docs)] // fixme
 use bitflags::bitflags;
-use nonmax::NonMaxU32;
-use oxc_index::Idx;
+use oxc_index::define_nonmax_u32_index_type;
 #[cfg(feature = "serialize")]
-use serde::{Serialize, Serializer};
+use serde::Serialize;
 
 use oxc_allocator::{Allocator, CloneIn};
 
-use crate::{node::NodeId, symbol::SymbolId};
+use crate::{node::NodeId, scope::ScopeId, symbol::SymbolId};
 
 use oxc_ast_macros::ast;
 
-#[ast]
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
-#[builder(default)]
-#[clone_in(default)]
-#[content_eq(skip)]
-#[estree(skip)]
-pub struct ReferenceId(NonMaxU32);
-
-impl Idx for ReferenceId {
-    #[expect(clippy::cast_possible_truncation)]
-    fn from_usize(idx: usize) -> Self {
-        assert!(idx < u32::MAX as usize);
-        // SAFETY: We just checked `idx` is a legal value for `NonMaxU32`
-        Self(unsafe { NonMaxU32::new_unchecked(idx as u32) })
-    }
-
-    fn index(self) -> usize {
-        self.0.get() as usize
-    }
+define_nonmax_u32_index_type! {
+    #[ast]
+    #[builder(default)]
+    #[clone_in(default)]
+    #[content_eq(skip)]
+    #[estree(skip)]
+    pub struct ReferenceId;
 }
 
 impl<'alloc> CloneIn<'alloc> for ReferenceId {
@@ -44,13 +31,6 @@ impl<'alloc> CloneIn<'alloc> for ReferenceId {
     #[inline(always)]
     fn clone_in_with_semantic_ids(&self, _: &'alloc Allocator) -> Self {
         *self
-    }
-}
-
-#[cfg(feature = "serialize")]
-impl Serialize for ReferenceId {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_u32(self.0.get())
     }
 }
 
@@ -131,6 +111,13 @@ bitflags! {
         const Type = 1 << 2;
         /// A value symbol is used in a type context, such as in `typeof` expressions.
         const ValueAsType = 1 << 3;
+        /// Reference must resolve to a namespace (module, namespace, enum).
+        ///
+        /// Used for the left side of qualified names like `Database.Table`.
+        /// This ensures the reference resolves to a namespace/module rather than
+        /// a type parameter that might shadow it, since type parameters cannot
+        /// have member access.
+        const Namespace = 1 << 4;
         /// The symbol being referenced is a value.
         ///
         /// Note that this does not necessarily indicate the reference is used
@@ -208,6 +195,12 @@ impl ReferenceFlags {
     pub const fn is_value(self) -> bool {
         self.intersects(Self::Value)
     }
+
+    /// Checks if the reference must resolve to a namespace.
+    #[inline]
+    pub const fn is_namespace(self) -> bool {
+        self.contains(Self::Namespace)
+    }
 }
 
 impl<'alloc> CloneIn<'alloc> for ReferenceFlags {
@@ -247,6 +240,8 @@ pub struct Reference {
     /// the reference's scope tree. Usually this indicates a global variable or
     /// a reference to a non-existent symbol.
     symbol_id: Option<SymbolId>,
+    /// The scope in which this reference occurs.
+    scope_id: ScopeId,
     /// Describes how this referenced is used by other AST nodes. References can
     /// be reads, writes, or both.
     flags: ReferenceFlags,
@@ -255,14 +250,19 @@ pub struct Reference {
 impl Reference {
     /// Create a new unresolved reference.
     #[inline]
-    pub fn new(node_id: NodeId, flags: ReferenceFlags) -> Self {
-        Self { node_id, symbol_id: None, flags }
+    pub fn new(node_id: NodeId, scope_id: ScopeId, flags: ReferenceFlags) -> Self {
+        Self { node_id, symbol_id: None, scope_id, flags }
     }
 
     /// Create a new resolved reference on a symbol.
     #[inline]
-    pub fn new_with_symbol_id(node_id: NodeId, symbol_id: SymbolId, flags: ReferenceFlags) -> Self {
-        Self { node_id, symbol_id: Some(symbol_id), flags }
+    pub fn new_with_symbol_id(
+        node_id: NodeId,
+        symbol_id: SymbolId,
+        scope_id: ScopeId,
+        flags: ReferenceFlags,
+    ) -> Self {
+        Self { node_id, symbol_id: Some(symbol_id), scope_id, flags }
     }
 
     /// Get the id of the node that is referencing the symbol.
@@ -282,6 +282,12 @@ impl Reference {
     #[inline]
     pub fn set_symbol_id(&mut self, symbol_id: SymbolId) {
         self.symbol_id = Some(symbol_id);
+    }
+
+    /// Get the id of the scope in which this reference occurs.
+    #[inline]
+    pub fn scope_id(&self) -> ScopeId {
+        self.scope_id
     }
 
     #[inline]

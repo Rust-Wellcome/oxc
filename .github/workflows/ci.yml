@@ -6,19 +6,11 @@ on:
   workflow_dispatch:
   pull_request:
     types: [opened, synchronize]
-    paths-ignore:
-      - "**/*.md"
-      - "**/*.yml"
-      - "!.github/workflows/ci.yml"
-      - "!.github/actions/clone-submodules/action.yml"
+    branches-ignore:
+      - "**/graphite-base/**"
   push:
     branches:
       - main
-    paths-ignore:
-      - "**/*.md"
-      - "**/*.yml"
-      - "!.github/workflows/ci.yml"
-      - "!.github/actions/clone-submodules/action.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.event.pull_request.number || github.sha }}
@@ -29,8 +21,9 @@ jobs:
     name: Test Linux
     runs-on: ubuntu-latest
     steps:
-      - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
-      - uses: oxc-project/setup-rust@cd82e1efec7fef815e2c23d296756f31c7cdc03d # v1.0.0
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
+      - uses: oxc-project/setup-node@8958a8e040102244b619c4a94fccb657a44b1c21 # v1.0.6
+      - uses: oxc-project/setup-rust@c8224157c0bf235aabc633e8cd50d344f087a7de # v1.0.12
         with:
           save-cache: ${{ github.ref_name == 'main' }}
           cache-key: warm
@@ -38,14 +31,29 @@ jobs:
       - run: cargo test --all-features
       - run: git diff --exit-code # Must commit everything
 
-  # Separate job to save a job on PRs
-  test-mac:
+  test-ubuntu-aarch64:
+    if: ${{ github.ref_name == 'main' }}
+    name: Test Linux ARM64
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
+      - uses: oxc-project/setup-node@8958a8e040102244b619c4a94fccb657a44b1c21 # v1.0.6
+      - uses: oxc-project/setup-rust@c8224157c0bf235aabc633e8cd50d344f087a7de # v1.0.12
+        with:
+          save-cache: ${{ github.ref_name == 'main' }}
+          cache-key: warm-aarch64
+      - run: cargo ck
+      - run: cargo test --all-features
+      - run: git diff --exit-code # Must commit everything
+
+  test-mac: # Separate job to save a job on PRs
+    if: ${{ github.ref_name == 'main' }}
     name: Test Mac
     runs-on: macos-latest
-    if: ${{ github.ref_name == 'main' }}
     steps:
-      - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
-      - uses: oxc-project/setup-rust@cd82e1efec7fef815e2c23d296756f31c7cdc03d # v1.0.0
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
+      - uses: oxc-project/setup-node@8958a8e040102244b619c4a94fccb657a44b1c21 # v1.0.6
+      - uses: oxc-project/setup-rust@c8224157c0bf235aabc633e8cd50d344f087a7de # v1.0.12
         with:
           save-cache: ${{ github.ref_name == 'main' }}
           cache-key: warm
@@ -54,15 +62,16 @@ jobs:
       - run: git diff --exit-code # Must commit everything
 
   test-windows:
-    name: Test Windows
     if: ${{ github.ref_name == 'main' }}
+    name: Test Windows
     runs-on: windows-latest
     steps:
-      - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
-      # Unsung heros of the internet, who led me here to speed up window's slowness:
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
+      # Unsung heroes of the internet, who led me here to speed up Windows' slowness:
       # https://github.com/actions/cache/issues/752#issuecomment-1847036770
       # https://github.com/astral-sh/uv/blob/502e04200d52de30d3159894833b3db4f0d6644d/.github/workflows/ci.yml#L158
-      - uses: samypr100/setup-dev-drive@b9079d2711b01ed39de859c79c96484bfd80e078 # v3.4.1
+      - uses: oxc-project/setup-node@8958a8e040102244b619c4a94fccb657a44b1c21 # v1.0.6
+      - uses: samypr100/setup-dev-drive@30f0f98ae5636b2b6501e181dfb3631b9974818d # v4.0.0
         with:
           workspace-copy: true
           drive-size: 8GB
@@ -85,54 +94,73 @@ jobs:
           rustup show
           git restore .
 
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           workspaces: ${{ env.DEV_DRIVE_WORKSPACE }}
           save-if: ${{ github.ref_name == 'main' }}
           shared-key: windows-latest
 
-      - run: cargo test --all-features # cargo ck # no need to `cargo ck` because it's already checked in linux
+      - name: Run tests
+        # No need for `cargo ck` because it's already checked in linux
+        # Run `website` tests separately to avoid feature unification problems with `oxlint`
+        run: cargo test --all-features
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE }}
         shell: bash
 
   test-big-endian:
-    name: Test big-endian # s390x-unknown-linux-gnu is a big-endian
     if: ${{ github.ref_name == 'main' }}
+    name: Test big-endian # s390x-unknown-linux-gnu is a big-endian
     runs-on: ubuntu-latest
     steps:
-      - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
-      - uses: oxc-project/setup-rust@cd82e1efec7fef815e2c23d296756f31c7cdc03d # v1.0.0
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
+      - uses: oxc-project/setup-node@8958a8e040102244b619c4a94fccb657a44b1c21 # v1.0.6
+      - uses: oxc-project/setup-rust@c8224157c0bf235aabc633e8cd50d344f087a7de # v1.0.12
         with:
           save-cache: ${{ github.ref_name == 'main' }}
           cache-key: s390x-unknown-linux-gnu
           tools: cross
-      - run: cross test --target s390x-unknown-linux-gnu
+      # `--lib --bins --tests` to skip doctests which are very slow to run via `cross`.
+      # https://github.com/cross-rs/cross/issues/1703
+      - run: cross test --lib --bins --tests --all-features --target s390x-unknown-linux-gnu
+
+  test-32bit:
+    if: ${{ github.ref_name == 'main' }}
+    name: Test 32-bit # armv7-unknown-linux-gnueabihf is a 32-bit target
+    runs-on: ubuntu-latest
+    steps:
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
+      - uses: oxc-project/setup-rust@c8224157c0bf235aabc633e8cd50d344f087a7de # v1.0.12
+        with:
+          save-cache: ${{ github.ref_name == 'main' }}
+          cache-key: armv7-unknown-linux-gnueabihf
+          tools: cross
+      # `--lib --bins --tests` to skip doctests which are very slow to run via `cross`.
+      # https://github.com/cross-rs/cross/issues/1703
+      - run: cross test --workspace --lib --bins --tests --all-features --exclude oxc_language_server --exclude oxc_linter --exclude oxlint --target armv7-unknown-linux-gnueabihf
 
   test-wasm32-wasip1-threads:
     name: Test wasm32-wasip1-threads
     runs-on: ubuntu-latest
     steps:
-      - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         id: filter
         with:
           filters: |
             src:
               - '!crates/oxc_linter/**'
-      - uses: oxc-project/setup-rust@cd82e1efec7fef815e2c23d296756f31c7cdc03d # v1.0.0
+      - uses: oxc-project/setup-rust@c8224157c0bf235aabc633e8cd50d344f087a7de # v1.0.12
         if: steps.filter.outputs.src == 'true'
         with:
           cache-key: wasi
           save-cache: ${{ github.ref_name == 'main' }}
-      - uses: oxc-project/setup-node@f42e3bda950c7454575e78ee4eaac880a077700c # v1.0.0
+      - uses: oxc-project/setup-node@8958a8e040102244b619c4a94fccb657a44b1c21 # v1.0.6
         if: steps.filter.outputs.src == 'true'
       - name: Build
         if: steps.filter.outputs.src == 'true'
         run: |
           rustup target add wasm32-wasip1-threads
-          pnpm napi build --target wasm32-wasip1-threads --cwd ./napi/parser
-          pnpm napi build --target wasm32-wasip1-threads --cwd ./napi/transform
-          pnpm napi build --target wasm32-wasip1-threads --cwd ./napi/minify
+          pnpm run build-wasm-dev
           git diff --exit-code # Must commit everything
       - name: Test wasi in browser
         if: steps.filter.outputs.src == 'true'
@@ -141,6 +169,7 @@ jobs:
           rm -rf *.wasm
           pnpm exec playwright install chromium
           pnpm run build-wasi
+          pnpm run build-wasm-dev
           pnpm run build-npm-dir
           pnpm run test-browser
           pnpm build-browser-bundle --npmDir npm-dir
@@ -149,7 +178,7 @@ jobs:
     name: Test NAPI
     runs-on: ubuntu-latest
     steps:
-      - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         id: filter
         with:
@@ -159,20 +188,70 @@ jobs:
               - '!crates/oxc_linter/**'
               - '!crates/oxc_language_server/**'
               - '!editors/**'
-      - uses: ./.github/actions/clone-submodules
-        if: steps.filter.outputs.src == 'true'
-      - uses: oxc-project/setup-rust@cd82e1efec7fef815e2c23d296756f31c7cdc03d # v1.0.0
+      - uses: oxc-project/setup-rust@c8224157c0bf235aabc633e8cd50d344f087a7de # v1.0.12
         if: steps.filter.outputs.src == 'true'
         with:
           cache-key: napi
           save-cache: ${{ github.ref_name == 'main' }}
-      - uses: oxc-project/setup-node@f42e3bda950c7454575e78ee4eaac880a077700c # v1.0.0
+      - uses: oxc-project/setup-node@8958a8e040102244b619c4a94fccb657a44b1c21 # v1.0.6
         if: steps.filter.outputs.src == 'true'
+      - uses: ./.github/actions/clone-submodules
+        if: steps.filter.outputs.src == 'true'
+        with:
+          babel: false
+          prettier: false
       - if: steps.filter.outputs.src == 'true'
         name: Run tests in workspace
+        env:
+          RUN_RAW_RANGE_TESTS: "true"
         run: |
           rustup target add wasm32-wasip1-threads
-          pnpm run build
+          pnpm run build-test
+          pnpm run test
+      - if: steps.filter.outputs.src == 'true'
+        name: Run e2e tests
+        working-directory: tasks/e2e
+        run: pnpm run test
+      - if: steps.filter.outputs.src == 'true'
+        run: |
+          git diff --exit-code # Must commit everything
+
+  test-napi-windows:
+    name: Test NAPI (windows)
+    runs-on: windows-latest
+    if: ${{ github.ref_name == 'main' }}
+    steps:
+      - name: Enable long paths on Windows
+        run: git config --system core.longpaths true
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          predicate-quantifier: "every"
+          filters: |
+            src:
+              - '!crates/oxc_linter/**'
+              - '!crates/oxc_language_server/**'
+              - '!editors/**'
+      - uses: oxc-project/setup-rust@c8224157c0bf235aabc633e8cd50d344f087a7de # v1.0.12
+        if: steps.filter.outputs.src == 'true'
+        with:
+          cache-key: napi
+          save-cache: ${{ github.ref_name == 'main' }}
+      - uses: oxc-project/setup-node@8958a8e040102244b619c4a94fccb657a44b1c21 # v1.0.6
+        if: steps.filter.outputs.src == 'true'
+      - uses: ./.github/actions/clone-submodules
+        if: steps.filter.outputs.src == 'true'
+        with:
+          babel: false
+          prettier: false
+      - if: steps.filter.outputs.src == 'true'
+        name: Run tests in workspace
+        env:
+          RUN_RAW_RANGE_TESTS: "true"
+        run: |
+          rustup target add wasm32-wasip1-threads
+          pnpm run build-test
           pnpm run test
       - if: steps.filter.outputs.src == 'true'
         name: Run e2e tests
@@ -186,76 +265,53 @@ jobs:
 
   typos:
     name: Spell Check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     steps:
-      - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
-      - uses: crate-ci/typos@b1ae8d918b6e85bd611117d3d9a3be4f903ee5e4 # v1.33.1
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
+      - uses: crate-ci/typos@ad3053d3adbcce7f2e3c60fd4ddfc239787d1eff # v1.43.2
         with:
           files: .
 
   lint:
-    name: Clippy
+    name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
-      - uses: oxc-project/setup-rust@cd82e1efec7fef815e2c23d296756f31c7cdc03d # v1.0.0
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
+      - uses: oxc-project/setup-node@8958a8e040102244b619c4a94fccb657a44b1c21 # v1.0.6
+      - uses: oxc-project/setup-rust@c8224157c0bf235aabc633e8cd50d344f087a7de # v1.0.12
         with:
           save-cache: ${{ github.ref_name == 'main' }}
           cache-key: clippy
-          components: clippy
+          components: clippy rust-docs
       - run: cargo lint -- -D warnings
       - run: cargo lint --profile dev-no-debug-assertions -- -D warnings
-      # Waiting for https://github.com/rust-lang/rust-clippy/pull/13435
-      - name: Check Char and Byte Offset
-        run: |
-          npm i @ast-grep/cli -g
-          output=$(sg -p '$A.chars().enumerate()' -r '$A.char_indices()' -l rs)
-          echo "Output: $output"
-          if [ -n "$output" ]; then
-            echo "Error: Unexpected output detected"
-            exit 1
-          fi
-
-  doc:
-    name: Doc
-    runs-on: ubuntu-latest
-    steps:
-      - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
-      - uses: oxc-project/setup-rust@cd82e1efec7fef815e2c23d296756f31c7cdc03d # v1.0.0
-        with:
-          cache-key: warm
-          components: rust-docs
       - run: RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --document-private-items
+      - run: pnpm --filter oxlint-app build-js
+      - run: pnpm --filter oxfmt-app build-js
+      - run: node --run lint
 
   conformance:
     name: Conformance
     runs-on: ubuntu-latest
     steps:
-      - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
 
-      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+      - name: Check if conformance should run
         id: filter
-        with:
-          predicate-quantifier: "every"
-          filters: |
-            src:
-              - '!.github/**'
-              - '!.vscode/**'
-              - '!apps/**'
-              - '!editors/**'
-              - '!napi/**'
-              - '!npm/**'
-              - '!crates/oxc_linter/**'
-              - '!crates/oxc_language_server/**'
-              - '!tasks/**'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          SHOULD_RUN=$(node .github/scripts/check-conformance-changes.js)
+          echo "src=$SHOULD_RUN" >> $GITHUB_OUTPUT
 
       - uses: ./.github/actions/clone-submodules
         if: steps.filter.outputs.src == 'true'
 
-      - uses: oxc-project/setup-node@f42e3bda950c7454575e78ee4eaac880a077700c # v1.0.0
+      - uses: oxc-project/setup-node@8958a8e040102244b619c4a94fccb657a44b1c21 # v1.0.6
         if: steps.filter.outputs.src == 'true'
 
-      - uses: oxc-project/setup-rust@cd82e1efec7fef815e2c23d296756f31c7cdc03d # v1.0.0
+      - uses: oxc-project/setup-rust@c8224157c0bf235aabc633e8cd50d344f087a7de # v1.0.12
         if: steps.filter.outputs.src == 'true'
         with:
           cache-key: conformance
@@ -273,7 +329,7 @@ jobs:
     name: Minification Size
     runs-on: ubuntu-latest
     steps:
-      - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
 
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         id: filter
@@ -285,7 +341,7 @@ jobs:
               - 'crates/oxc_codegen/**'
               - 'tasks/minsize/**'
 
-      - uses: oxc-project/setup-rust@cd82e1efec7fef815e2c23d296756f31c7cdc03d # v1.0.0
+      - uses: oxc-project/setup-rust@c8224157c0bf235aabc633e8cd50d344f087a7de # v1.0.12
         if: steps.filter.outputs.src == 'true'
         with:
           cache-key: minsize
@@ -297,30 +353,59 @@ jobs:
           cargo minsize
           git diff --exit-code
 
+  allocs:
+    name: Allocations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            src:
+              - '.github/workflows/ci.yml'
+              - 'crates/oxc_ast/**'
+              - 'crates/oxc_data_structures/**'
+              - 'crates/oxc_parser/**'
+              - 'crates/oxc_minifier/**'
+              - 'crates/oxc_mangler/**'
+              - 'crates/oxc_allocator/**'
+              - 'crates/oxc_semantic/**'
+              - 'tasks/track_memory_allocations/**'
+
+      - uses: oxc-project/setup-rust@c8224157c0bf235aabc633e8cd50d344f087a7de # v1.0.12
+        if: steps.filter.outputs.src == 'true'
+        with:
+          cache-key: allocs
+          save-cache: ${{ github.ref_name == 'main' }}
+
+      - name: Check allocations
+        if: steps.filter.outputs.src == 'true'
+        run: |
+          cargo allocs
+          git diff --exit-code ||
+          (echo 'Allocations have changed. Run the `cargo allocs` command to update the allocation snapshot, otherwise please fix the regression.' && exit 1)
+
   ast_changes:
     name: AST Changes
     runs-on: ubuntu-latest
     steps:
-      - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
 
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         id: filter
         with:
           filters: ".github/generated/ast_changes_watch_list.yml"
 
-      - uses: oxc-project/setup-rust@cd82e1efec7fef815e2c23d296756f31c7cdc03d # v1.0.0
+      - uses: oxc-project/setup-rust@c8224157c0bf235aabc633e8cd50d344f087a7de # v1.0.12
         if: steps.filter.outputs.src == 'true'
         with:
           components: rustfmt
-          tools: dprint
           cache-key: ast_changes
           save-cache: ${{ github.ref_name == 'main' }}
 
-      - name: Restore dprint plugin cache
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          key: dprint-${{ hashFiles('dprint.json') }}
-          path: ~/.cache/dprint
+      - uses: oxc-project/setup-node@8958a8e040102244b619c4a94fccb657a44b1c21 # v1.0.6
+        if: steps.filter.outputs.src == 'true'
 
       - name: Check AST Changes
         if: steps.filter.outputs.src == 'true'
@@ -328,3 +413,31 @@ jobs:
           cargo run -p oxc_ast_tools
           git diff --exit-code ||
           (echo 'AST changes caused the "generated" code to get outdated. Have you forgotten to run the `just ast` command and/or commit generated codes?' && exit 1)
+
+  lintgen:
+    name: Linter changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            src:
+              - '.github/workflows/ci.yml'
+              - 'crates/oxc_linter/**'
+              - 'tasks/linter_codegen/**'
+
+      - uses: oxc-project/setup-rust@c8224157c0bf235aabc633e8cd50d344f087a7de # v1.0.12
+        if: steps.filter.outputs.src == 'true'
+        with:
+          components: rustfmt
+          cache-key: lintgen
+          save-cache: ${{ github.ref_name == 'main' }}
+
+      - name: Check linter changes
+        if: steps.filter.outputs.src == 'true'
+        run: |
+          cargo lintgen
+          git diff --exit-code ||
+          (echo 'Linter codegen has changed. Run the `cargo lintgen` command to update the linter code generated and commit it.' && exit 1)

@@ -28,7 +28,7 @@ pub struct TestRunnerOptions {
     pub debug: bool,
     pub filter: Option<String>,
     pub exec: bool,
-    /// If it's true, will override the output of dismatch test cases,
+    /// If it's true, will override the output of mismatch test cases,
     /// and write it down to `overrides` folder
     pub r#override: bool,
 }
@@ -106,12 +106,13 @@ impl TestRunner {
                 .into_iter()
                 .filter_map(Result::ok)
                 .filter(|e| {
-                    if let Some(filter) = &options.filter {
-                        if !e.path().to_string_lossy().contains(filter) {
-                            return false;
-                        }
+                    if let Some(filter) = &options.filter
+                        && !e.path().to_string_lossy().contains(filter)
+                    {
+                        false
+                    } else {
+                        true
                     }
-                    true
                 })
                 .filter_map(|e| TestCase::new(cwd, e.path()))
                 .filter(|test_case| !test_case.skip_test_case())

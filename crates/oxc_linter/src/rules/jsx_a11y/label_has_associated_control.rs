@@ -1,6 +1,5 @@
 use std::ops::Deref;
 
-use globset::{Glob, GlobSet, GlobSetBuilder};
 use oxc_ast::{
     AstKind,
     ast::{JSXAttributeItem, JSXAttributeValue, JSXChild, JSXElement},
@@ -8,6 +7,8 @@ use oxc_ast::{
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{CompactStr, Span};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     AstNode,
@@ -31,20 +32,31 @@ fn label_has_associated_control_diagnostic_no_label(span: Span) -> OxcDiagnostic
 #[derive(Debug, Default, Clone)]
 pub struct LabelHasAssociatedControl(Box<LabelHasAssociatedControlConfig>);
 
-#[derive(Debug, Clone)]
+const DEFAULT_CONTROL_COMPONENTS: [&str; 6] =
+    ["input", "meter", "output", "progress", "select", "textarea"];
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
 pub struct LabelHasAssociatedControlConfig {
+    /// Maximum depth to search for a nested control.
     depth: u8,
+    /// The type of association required between the label and the control.
     assert: Assert,
+    /// Custom JSX components to be treated as labels.
     label_components: Vec<CompactStr>,
+    /// Attributes to check for accessible label text.
     label_attributes: Vec<CompactStr>,
-    control_components: GlobSet,
+    /// Custom JSX components to be treated as form controls.
+    control_components: Vec<CompactStr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 enum Assert {
     HtmlFor,
     Nesting,
     Both,
+    #[default]
     Either,
 }
 
@@ -58,20 +70,12 @@ impl Deref for LabelHasAssociatedControl {
 
 impl Default for LabelHasAssociatedControlConfig {
     fn default() -> Self {
-        let mut control_builder = GlobSetBuilder::new();
-        control_builder.add(Glob::new("input").unwrap());
-        control_builder.add(Glob::new("meter").unwrap());
-        control_builder.add(Glob::new("output").unwrap());
-        control_builder.add(Glob::new("progress").unwrap());
-        control_builder.add(Glob::new("select").unwrap());
-        control_builder.add(Glob::new("textarea").unwrap());
-
         Self {
             depth: 2,
             assert: Assert::Either,
             label_components: vec!["label".into()],
             label_attributes: vec!["alt".into(), "aria-label".into(), "aria-labelledby".into()],
-            control_components: control_builder.build().unwrap(),
+            control_components: Vec::default(),
         }
     }
 }
@@ -116,14 +120,15 @@ declare_oxc_lint!(
     LabelHasAssociatedControl,
     jsx_a11y,
     correctness,
+    config = LabelHasAssociatedControlConfig
 );
 
 impl Rule for LabelHasAssociatedControl {
-    fn from_configuration(value: serde_json::Value) -> Self {
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
         let mut config = LabelHasAssociatedControlConfig::default();
 
         let Some(options) = value.get(0) else {
-            return Self(Box::new(config));
+            return Ok(Self(Box::new(config)));
         };
 
         if let Some(depth) = options.get("depth").and_then(serde_json::Value::as_u64) {
@@ -141,59 +146,35 @@ impl Rule for LabelHasAssociatedControl {
 
         if let Some(label_components) =
             options.get("labelComponents").and_then(serde_json::Value::as_array)
-        {
-            if let Some(mut components) = label_components
+            && let Some(mut components) = label_components
                 .iter()
                 .map(serde_json::Value::as_str)
                 .map(|component| component.map(CompactStr::from))
                 .collect::<Option<Vec<CompactStr>>>()
-            {
-                config.label_components.append(&mut components);
-            }
+        {
+            config.label_components.append(&mut components);
         }
 
         if let Some(label_attributes) =
             options.get("labelAttributes").and_then(serde_json::Value::as_array)
-        {
-            if let Some(mut attributes) = label_attributes
+            && let Some(mut attributes) = label_attributes
                 .iter()
                 .map(serde_json::Value::as_str)
                 .map(|attribute| attribute.map(CompactStr::from))
                 .collect::<Option<Vec<CompactStr>>>()
-            {
-                config.label_attributes.append(&mut attributes);
-            }
+        {
+            config.label_attributes.append(&mut attributes);
         }
-
-        let mut control_builder = GlobSetBuilder::new();
-        control_builder.add(Glob::new("input").unwrap());
-        control_builder.add(Glob::new("meter").unwrap());
-        control_builder.add(Glob::new("output").unwrap());
-        control_builder.add(Glob::new("progress").unwrap());
-        control_builder.add(Glob::new("select").unwrap());
-        control_builder.add(Glob::new("textarea").unwrap());
 
         if let Some(control_components) =
             options.get("controlComponents").and_then(serde_json::Value::as_array)
         {
-            control_components.iter().map(serde_json::Value::as_str).for_each(|component| {
-                let Some(component) = component else {
-                    return;
-                };
-
-                let Ok(glob) = Glob::new(component) else {
-                    return;
-                };
-
-                control_builder.add(glob);
-            });
+            config.control_components = control_components
+                .iter()
+                .map(serde_json::Value::as_str)
+                .filter_map(|component| component.map(CompactStr::from))
+                .collect::<Vec<CompactStr>>();
         }
-
-        config.control_components = if let Ok(controls) = control_builder.build() {
-            controls
-        } else {
-            control_builder.build().unwrap()
-        };
 
         config.label_components.sort_unstable();
         config.label_components.dedup();
@@ -201,7 +182,7 @@ impl Rule for LabelHasAssociatedControl {
         config.label_attributes.sort_unstable();
         config.label_attributes.dedup();
 
-        Self(Box::new(config))
+        Ok(Self(Box::new(config)))
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -215,7 +196,14 @@ impl Rule for LabelHasAssociatedControl {
             return;
         }
 
-        let has_html_for = has_jsx_prop(&element.opening_element, "htmlFor").is_some();
+        let has_html_for = if let Some(attributes) = ctx.settings().jsx_a11y.attributes.get("for") {
+            attributes
+                .iter()
+                .any(|attr| has_jsx_prop(&element.opening_element, attr.as_str()).is_some())
+        } else {
+            has_jsx_prop(&element.opening_element, "htmlFor").is_some()
+        };
+
         let has_control = self.has_nested_control(element, ctx);
 
         if !self.has_accessible_label(element, ctx) {
@@ -253,6 +241,14 @@ impl Rule for LabelHasAssociatedControl {
 }
 
 impl LabelHasAssociatedControl {
+    fn is_match_control_components(&self, name: &str) -> bool {
+        DEFAULT_CONTROL_COMPONENTS.contains(&name)
+            || self
+                .control_components
+                .iter()
+                .any(|component| fast_glob::glob_match(component.as_str(), name))
+    }
+
     fn has_accessible_label<'a>(&self, root: &JSXElement<'a>, ctx: &LintContext<'a>) -> bool {
         if root.opening_element.attributes.iter().any(|attribute| match attribute {
             JSXAttributeItem::Attribute(attr) => {
@@ -297,7 +293,7 @@ impl LabelHasAssociatedControl {
             JSXChild::ExpressionContainer(_) => true,
             JSXChild::Element(element) => {
                 let element_type = get_element_type(ctx, &element.opening_element);
-                if self.control_components.is_match(element_type.to_string()) {
+                if self.is_match_control_components(element_type.as_ref()) {
                     return true;
                 }
 
@@ -361,7 +357,7 @@ impl LabelHasAssociatedControl {
                 if element.children.is_empty() {
                     let name = get_element_type(ctx, &element.opening_element);
                     if is_react_component_name(&name)
-                        && !self.control_components.is_match(name.to_string())
+                        && !self.is_match_control_components(name.as_ref())
                     {
                         return true;
                     }
@@ -400,6 +396,18 @@ fn test() {
                     "components": {
                         "CustomInput": "input",
                         "CustomLabel": "label",
+                    }
+                }
+            }
+        })
+    }
+
+    fn attributes_settings() -> serde_json::Value {
+        serde_json::json!({
+            "settings": {
+                "jsx-a11y": {
+                    "attributes": {
+                        "for": ["htmlFor", "for"]
                     }
                 }
             }
@@ -933,6 +941,32 @@ fn test() {
                </label>"#,
             None,
             None,
+        ),
+        // Test for 'for' attribute with attributes setting
+        (
+            r#"<label for="js_id">A label</label>"#,
+            Some(serde_json::json!([{ "assert": "htmlFor" }])),
+            Some(attributes_settings()),
+        ),
+        (
+            r#"<label for="js_id" aria-label="A label" />"#,
+            Some(serde_json::json!([{ "assert": "htmlFor" }])),
+            Some(attributes_settings()),
+        ),
+        (
+            r#"<label for="js_id">A label</label>"#,
+            Some(serde_json::json!([{ "assert": "either" }])),
+            Some(attributes_settings()),
+        ),
+        (
+            r#"<label for="js_id" aria-label="A label" />"#,
+            Some(serde_json::json!([{ "assert": "either" }])),
+            Some(attributes_settings()),
+        ),
+        (
+            r#"<label for="js_id" aria-label="A label"><input /></label>"#,
+            Some(serde_json::json!([{ "assert": "both" }])),
+            Some(attributes_settings()),
         ),
     ];
 
@@ -1609,6 +1643,16 @@ fn test() {
             Some(serde_json::json!([{
                 "labelComponents": ["FilesContext.Provider"],
             }])),
+            None,
+        ),
+        (
+            r#"<label for="js_id">A label</label>"#,
+            Some(serde_json::json!([{ "assert": ["htmlFor"] }])),
+            None,
+        ),
+        (
+            r#"<label for="js_id" aria-label="A label" />"#,
+            Some(serde_json::json!([{ "assert": ["htmlFor"] }])),
             None,
         ),
     ];

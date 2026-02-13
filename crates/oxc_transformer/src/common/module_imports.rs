@@ -159,10 +159,10 @@ impl<'a> ModuleImportsStore<'a> {
 
     /// Insert `import` / `require` statements at top of program.
     fn insert_into_program(&self, transform_ctx: &TransformCtx<'a>, ctx: &mut TraverseCtx<'a>) {
-        if transform_ctx.source_type.is_script() {
-            self.insert_require_statements(transform_ctx, ctx);
-        } else {
+        if transform_ctx.source_type.is_module() {
             self.insert_import_statements(transform_ctx, ctx);
+        } else {
+            self.insert_require_statements(transform_ctx, ctx);
         }
     }
 
@@ -242,7 +242,7 @@ impl<'a> ModuleImportsStore<'a> {
         let var_kind = VariableDeclarationKind::Var;
         let decl = {
             let init = ctx.ast.expression_call(SPAN, callee, NONE, args, false);
-            let decl = ctx.ast.variable_declarator(SPAN, var_kind, id, Some(init), false);
+            let decl = ctx.ast.variable_declarator(SPAN, var_kind, id, NONE, Some(init), false);
             ctx.ast.vec1(decl)
         };
         Statement::from(ctx.ast.declaration_variable(SPAN, var_kind, decl, false))

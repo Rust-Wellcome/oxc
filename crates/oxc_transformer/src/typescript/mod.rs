@@ -81,6 +81,7 @@ impl<'a> Traverse<'a, TransformState<'a>> for TypeScript<'a, '_> {
         } else {
             program.source_type = program.source_type.with_javascript(true);
             self.namespace.enter_program(program, ctx);
+            self.module.enter_program(program, ctx);
         }
     }
 
@@ -106,10 +107,6 @@ impl<'a> Traverse<'a, TransformState<'a>> for TypeScript<'a, '_> {
         self.annotations.enter_variable_declarator(decl, ctx);
     }
 
-    fn enter_binding_pattern(&mut self, pat: &mut BindingPattern<'a>, ctx: &mut TraverseCtx<'a>) {
-        self.annotations.enter_binding_pattern(pat, ctx);
-    }
-
     fn enter_call_expression(&mut self, expr: &mut CallExpression<'a>, ctx: &mut TraverseCtx<'a>) {
         self.annotations.enter_call_expression(expr, ctx);
     }
@@ -131,11 +128,13 @@ impl<'a> Traverse<'a, TransformState<'a>> for TypeScript<'a, '_> {
     }
 
     fn exit_class(&mut self, class: &mut Class<'a>, ctx: &mut TraverseCtx<'a>) {
-        self.transform_class_on_exit(class, ctx);
-    }
+        self.annotations.exit_class(class, ctx);
 
-    fn enter_class_body(&mut self, body: &mut ClassBody<'a>, ctx: &mut TraverseCtx<'a>) {
-        self.annotations.enter_class_body(body, ctx);
+        // Avoid converting class fields when class-properties plugin is enabled, that plugin has covered all
+        // this transformation does.
+        if !self.ctx.is_class_properties_plugin_enabled {
+            self.transform_class_on_exit(class, ctx);
+        }
     }
 
     fn enter_expression(&mut self, expr: &mut Expression<'a>, ctx: &mut TraverseCtx<'a>) {
@@ -280,6 +279,18 @@ impl<'a> Traverse<'a, TransformState<'a>> for TypeScript<'a, '_> {
         self.annotations.enter_jsx_fragment(elem, ctx);
     }
 
+    fn enter_variable_declaration(
+        &mut self,
+        decl: &mut VariableDeclaration<'a>,
+        ctx: &mut TraverseCtx<'a>,
+    ) {
+        self.annotations.enter_variable_declaration(decl, ctx);
+    }
+
+    fn enter_function(&mut self, func: &mut Function<'a>, ctx: &mut TraverseCtx<'a>) {
+        self.annotations.enter_function(func, ctx);
+    }
+
     fn enter_declaration(&mut self, node: &mut Declaration<'a>, ctx: &mut TraverseCtx<'a>) {
         self.module.enter_declaration(node, ctx);
     }
@@ -312,5 +323,17 @@ impl<'a> Traverse<'a, TransformState<'a>> for TypeScript<'a, '_> {
         if let Some(rewrite_extensions) = &mut self.rewrite_extensions {
             rewrite_extensions.enter_export_named_declaration(node, ctx);
         }
+    }
+
+    fn enter_formal_parameter_rest(
+        &mut self,
+        node: &mut FormalParameterRest<'a>,
+        ctx: &mut oxc_traverse::TraverseCtx<'a, TransformState<'a>>,
+    ) {
+        self.annotations.enter_formal_parameter_rest(node, ctx);
+    }
+
+    fn enter_catch_parameter(&mut self, node: &mut CatchParameter<'a>, ctx: &mut TraverseCtx<'a>) {
+        self.annotations.enter_catch_parameter(node, ctx);
     }
 }

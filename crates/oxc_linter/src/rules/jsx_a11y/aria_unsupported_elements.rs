@@ -14,10 +14,15 @@ use crate::{
 declare_oxc_lint!(
     /// ### What it does
     ///
+    /// Enforces that reserved DOM elements do not contain ARIA roles, states,
+    /// or properties.
+    ///
+    /// ### Why is this bad?
+    ///
     /// Certain reserved DOM elements do not support ARIA roles, states and
     /// properties. This is often because they are not visible, for example
-    /// `meta`, `html`, `script`, `style`. This rule enforces that these DOM
-    /// elements do not contain the `role` and/or `aria-*` props.
+    /// `meta`, `html`, `script`, `style`. Adding ARIA attributes to these
+    /// elements is meaningless and can create confusion for screen readers.
     ///
     /// ### Examples
     ///
@@ -28,7 +33,7 @@ declare_oxc_lint!(
     ///
     /// Examples of **correct** code for this rule:
     /// ```jsx
-    ///	<meta charset="UTF-8" />
+    /// <meta charset="UTF-8" />
     /// ```
     AriaUnsupportedElements,
     jsx_a11y,
@@ -40,7 +45,7 @@ declare_oxc_lint!(
 pub struct AriaUnsupportedElements;
 
 fn aria_unsupported_elements_diagnostic(span: Span, attr_name: &str) -> OxcDiagnostic {
-    OxcDiagnostic::warn("This element does not support ARIA roles, states and properties.")
+    OxcDiagnostic::warn("This element does not support ARIA roles, states, or properties.")
         .with_help(format!("Try removing the prop `{attr_name}`."))
         .with_label(span)
 }
@@ -378,7 +383,6 @@ fn test() {
     ];
 
     Tester::new(AriaUnsupportedElements::NAME, AriaUnsupportedElements::PLUGIN, pass, fail)
-        .with_jsx_a11y_plugin(true)
         .expect_fix(fix)
         .test_and_snapshot();
 }

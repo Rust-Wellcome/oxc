@@ -30,9 +30,15 @@ enum TypeOptions {
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// Prefers use of [`Math.min()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math/min)
-    /// and [`Math.max()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math/max) instead of
-    /// ternary expressions when performing simple comparisons for more concise, easier to understand, and less prone to errors.
+    /// Prefers use of `Math.min()` and `Math.max()` instead of ternary
+    /// expressions when performing simple comparisons.
+    ///
+    /// ### Why is this bad?
+    ///
+    /// Using `Math.min()` and `Math.max()` for simple comparisons is more
+    /// concise, easier to understand, and less prone to errors than ternary
+    /// expressions. They clearly express the intent to find the minimum or
+    /// maximum value.
     ///
     /// ### Examples
     ///
@@ -100,12 +106,12 @@ fn get_expr_value(expr: &Expression) -> Option<String> {
             let mut unary_str: String = String::from(lit.operator.as_str());
 
             let Some(unary_lit) = get_expr_value(&lit.argument) else {
-                return Some(unary_str.to_string());
+                return Some(unary_str.clone());
             };
 
             unary_str.push_str(unary_lit.as_str());
 
-            Some(unary_str.to_string())
+            Some(unary_str.clone())
         }
         Expression::Identifier(identifier) => Some(identifier.name.to_string()),
         _ => None,
@@ -184,66 +190,37 @@ fn test() {
     ];
 
     let fix = vec![
-        (r"const foo = height < 100 ? height : 100;", r"const foo = Math.min(height, 100);", None),
-        (
-            r"const foo = height <= -100 ? height : -100;",
-            r"const foo = Math.min(height, -100);",
-            None,
-        ),
+        (r"const foo = height < 100 ? height : 100;", r"const foo = Math.min(height, 100);"),
+        (r"const foo = height <= -100 ? height : -100;", r"const foo = Math.min(height, -100);"),
         (
             r"const foo = 150.34 < height ? 150.34 : height;",
             r"const foo = Math.min(150.34, height);",
-            None,
         ),
-        (
-            r"const foo = -0.34 <= height ? -0.34 : height;",
-            r"const foo = Math.min(-0.34, height);",
-            None,
-        ),
-        (
-            r"const foo = height > 10e3 ? 10e3 : height;",
-            r"const foo = Math.min(10e3, height);",
-            None,
-        ),
-        (
-            r"const foo = height >= -10e3 ? -10e3 : height;",
-            r"const foo = Math.min(-10e3, height);",
-            None,
-        ),
-        (
-            r"const foo = 10e3 > height ? height : 10e3;",
-            r"const foo = Math.min(height, 10e3);",
-            None,
-        ),
-        (
-            r"const foo = 10e3 >= height ? height : 10e3;",
-            r"const foo = Math.min(height, 10e3);",
-            None,
-        ),
-        ("return height > 100 ? height : 100;", "return Math.max(height, 100);", None),
-        ("return height >= 50 ? height : 50;", "return Math.max(height, 50);", None),
+        (r"const foo = -0.34 <= height ? -0.34 : height;", r"const foo = Math.min(-0.34, height);"),
+        (r"const foo = height > 10e3 ? 10e3 : height;", r"const foo = Math.min(10e3, height);"),
+        (r"const foo = height >= -10e3 ? -10e3 : height;", r"const foo = Math.min(-10e3, height);"),
+        (r"const foo = 10e3 > height ? height : 10e3;", r"const foo = Math.min(height, 10e3);"),
+        (r"const foo = 10e3 >= height ? height : 10e3;", r"const foo = Math.min(height, 10e3);"),
+        ("return height > 100 ? height : 100;", "return Math.max(height, 100);"),
+        ("return height >= 50 ? height : 50;", "return Math.max(height, 50);"),
         (
             "return (10e3 > height ? 10e3 : height) || 200;",
             "return (Math.max(10e3, height)) || 200;",
-            None,
         ),
         (
             "return (-10e3 >= height ? -10e3 : height) || 200;",
             "return (Math.max(-10e3, height)) || 200;",
-            None,
         ),
         (
             "return (height < 2.99 ? 2.99 : height) || 0.99;",
             "return (Math.max(2.99, height)) || 0.99;",
-            None,
         ),
         (
             "return (height <= -0.99 ? -0.99 : height) || -3.99;",
             "return (Math.max(-0.99, height)) || -3.99;",
-            None,
         ),
-        ("return 10e6 < height ? height : 10e6;", "return Math.max(height, 10e6);", None),
-        ("return -10e4 <= height ? height : -10e4;", "return Math.max(height, -10e4);", None),
+        ("return 10e6 < height ? height : 10e6;", "return Math.max(height, 10e6);"),
+        ("return -10e4 <= height ? height : -10e4;", "return Math.max(height, -10e4);"),
     ];
 
     Tester::new(PreferMathMinMax::NAME, PreferMathMinMax::PLUGIN, pass, fail)

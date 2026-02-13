@@ -1,11 +1,12 @@
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::{
     context::LintContext,
-    rule::Rule,
+    rule::{DefaultRuleConfig, Rule},
     utils::{should_ignore_as_internal, should_ignore_as_private},
 };
 
@@ -13,8 +14,8 @@ fn check_tag_names_diagnostic(span: Span, x1: &str) -> OxcDiagnostic {
     OxcDiagnostic::warn("Invalid tag name found.").with_help(x1.to_string()).with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct CheckTagNames(Box<CheckTagnamesConfig>);
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct CheckTagNames(Box<CheckTagNamesConfig>);
 
 declare_oxc_lint!(
     /// ### What it does
@@ -44,7 +45,7 @@ declare_oxc_lint!(
     /// /** @param */
     /// ```
     ///
-    /// ### Options
+    /// ### Settings
     ///
     /// Configuration for allowed tags is done via [`settings.jsdoc.tagNamePreference`](/docs/guide/usage/linter/config-file-reference.html#settings-jsdoc-tagnamepreference).
     /// There is no CLI-only parameter for this rule.
@@ -79,16 +80,22 @@ declare_oxc_lint!(
     /// ```
     CheckTagNames,
     jsdoc,
-    correctness
+    correctness,
+    config = CheckTagNamesConfig,
 );
 
-#[derive(Debug, Default, Clone, Deserialize)]
-struct CheckTagnamesConfig {
-    #[serde(default, rename = "definedTags")]
+#[derive(Debug, Default, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+struct CheckTagNamesConfig {
+    /// Additional tag names to allow.
     defined_tags: Vec<String>,
-    #[serde(default, rename = "jsxTags")]
+    /// Whether to allow JSX-related tags:
+    /// - `jsx`
+    /// - `jsxFrag`
+    /// - `jsxImportSource`
+    /// - `jsxRuntime`
     jsx_tags: bool,
-    #[serde(default)]
+    /// If typed is `true`, disallow tags that are unnecessary/duplicative of TypeScript functionality.
     typed: bool,
 }
 
@@ -224,12 +231,8 @@ const OUTSIDE_AMBIENT_INVALID_TAGS_IF_TYPED: [&str; 27] = [
 ];
 
 impl Rule for CheckTagNames {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        value
-            .as_array()
-            .and_then(|arr| arr.first())
-            .and_then(|value| serde_json::from_value(value.clone()).ok())
-            .map_or_else(Self::default, |value| Self(Box::new(value)))
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run_once(&self, ctx: &LintContext) {
@@ -607,12 +610,44 @@ fn test() {
           Some(serde_json::json!([ { "definedTags": [] } ])),
           None,
       ),
+       // https://github.com/oxc-project/oxc/issues/13570
+        (
+          "
+          /**
+           * @import { Page } from '@playwright/test';
+           */
+          function quux (foo) { }
+      ",
+          Some(serde_json::json!([ { "definedTags": [] } ])),
+          None,
+      ),
         (
           "
           /**
            * @see [[[[]@foo]
            */
           function quux (foo) { }
+      ",
+          None,
+          None,
+      ),
+      (
+          "
+          /**
+           * @license bcrypt.js (c) 2013 Daniel Wirtz <dcode@dcode.io>
+           * Released under the Apache License, Version 2.0
+           */
+          function quux () { }
+      ",
+          None,
+          None,
+      ),
+      (
+          "
+          /**
+           * @see Uses @vue/shared package
+           */
+          function quux () { }
       ",
           None,
           None,
@@ -1094,7 +1129,7 @@ fn test() {
         ),
     ];
 
-    let dts_pass = vec![
+    let dts_pass: Vec<(&'static str, Option<serde_json::Value>, Option<serde_json::Value>)> = vec![
         (
             "
         			        /** @default 0 */
@@ -1158,14 +1193,15 @@ fn test() {
             None,
         ),
     ];
-    let dts_fail = vec![(
-        "
+    let dts_fail: Vec<(&'static str, Option<serde_json::Value>, Option<serde_json::Value>)> =
+        vec![(
+            "
         			        /** @typoo {string} (fail: invalid name) */
         			        let a;
         			      ",
-        None,
-        None,
-    )];
+            None,
+            None,
+        )];
 
     Tester::new(CheckTagNames::NAME, CheckTagNames::PLUGIN, pass, fail).test_and_snapshot();
     // Currently only 1 snapshot can be saved under a rule name

@@ -73,7 +73,7 @@ impl<'a> Visit<'a> for ChildScopeCollector {
             Expression::TSTypeAssertion(it) => self.visit_ts_type_assertion(it),
             Expression::TSNonNullExpression(it) => self.visit_ts_non_null_expression(it),
             Expression::TSInstantiationExpression(it) => self.visit_ts_instantiation_expression(it),
-            Expression::V8IntrinsicExpression(it) => self.visit_v_8_intrinsic_expression(it),
+            Expression::V8IntrinsicExpression(it) => self.visit_v8_intrinsic_expression(it),
             Expression::ComputedMemberExpression(it) => self.visit_computed_member_expression(it),
             Expression::StaticMemberExpression(it) => self.visit_static_member_expression(it),
             Expression::PrivateFieldExpression(it) => self.visit_private_field_expression(it),
@@ -175,7 +175,7 @@ impl<'a> Visit<'a> for ChildScopeCollector {
                 self.visit_ts_instantiation_expression(it)
             }
             ArrayExpressionElement::V8IntrinsicExpression(it) => {
-                self.visit_v_8_intrinsic_expression(it)
+                self.visit_v8_intrinsic_expression(it)
             }
             ArrayExpressionElement::ComputedMemberExpression(it) => {
                 self.visit_computed_member_expression(it)
@@ -255,7 +255,7 @@ impl<'a> Visit<'a> for ChildScopeCollector {
             PropertyKey::TSInstantiationExpression(it) => {
                 self.visit_ts_instantiation_expression(it)
             }
-            PropertyKey::V8IntrinsicExpression(it) => self.visit_v_8_intrinsic_expression(it),
+            PropertyKey::V8IntrinsicExpression(it) => self.visit_v8_intrinsic_expression(it),
             PropertyKey::ComputedMemberExpression(it) => self.visit_computed_member_expression(it),
             PropertyKey::StaticMemberExpression(it) => self.visit_static_member_expression(it),
             PropertyKey::PrivateFieldExpression(it) => self.visit_private_field_expression(it),
@@ -375,7 +375,7 @@ impl<'a> Visit<'a> for ChildScopeCollector {
             Argument::TSTypeAssertion(it) => self.visit_ts_type_assertion(it),
             Argument::TSNonNullExpression(it) => self.visit_ts_non_null_expression(it),
             Argument::TSInstantiationExpression(it) => self.visit_ts_instantiation_expression(it),
-            Argument::V8IntrinsicExpression(it) => self.visit_v_8_intrinsic_expression(it),
+            Argument::V8IntrinsicExpression(it) => self.visit_v8_intrinsic_expression(it),
             Argument::ComputedMemberExpression(it) => self.visit_computed_member_expression(it),
             Argument::StaticMemberExpression(it) => self.visit_static_member_expression(it),
             Argument::PrivateFieldExpression(it) => self.visit_private_field_expression(it),
@@ -615,6 +615,7 @@ impl<'a> Visit<'a> for ChildScopeCollector {
             Statement::TSInterfaceDeclaration(it) => self.visit_ts_interface_declaration(it),
             Statement::TSEnumDeclaration(it) => self.visit_ts_enum_declaration(it),
             Statement::TSModuleDeclaration(it) => self.visit_ts_module_declaration(it),
+            Statement::TSGlobalDeclaration(it) => self.visit_ts_global_declaration(it),
             Statement::ExportDefaultDeclaration(it) => self.visit_export_default_declaration(it),
             Statement::ExportNamedDeclaration(it) => self.visit_export_named_declaration(it),
             Statement::TSExportAssignment(it) => self.visit_ts_export_assignment(it),
@@ -659,6 +660,7 @@ impl<'a> Visit<'a> for ChildScopeCollector {
             Declaration::TSInterfaceDeclaration(it) => self.visit_ts_interface_declaration(it),
             Declaration::TSEnumDeclaration(it) => self.visit_ts_enum_declaration(it),
             Declaration::TSModuleDeclaration(it) => self.visit_ts_module_declaration(it),
+            Declaration::TSGlobalDeclaration(it) => self.visit_ts_global_declaration(it),
             _ => {
                 // Remaining variants do not contain scopes:
                 // `TSImportEqualsDeclaration`
@@ -674,6 +676,9 @@ impl<'a> Visit<'a> for ChildScopeCollector {
     #[inline]
     fn visit_variable_declarator(&mut self, it: &VariableDeclarator<'a>) {
         self.visit_binding_pattern(&it.id);
+        if let Some(type_annotation) = &it.type_annotation {
+            self.visit_ts_type_annotation(type_annotation);
+        }
         if let Some(init) = &it.init {
             self.visit_expression(init);
         }
@@ -758,7 +763,7 @@ impl<'a> Visit<'a> for ChildScopeCollector {
             ForStatementInit::TSInstantiationExpression(it) => {
                 self.visit_ts_instantiation_expression(it)
             }
-            ForStatementInit::V8IntrinsicExpression(it) => self.visit_v_8_intrinsic_expression(it),
+            ForStatementInit::V8IntrinsicExpression(it) => self.visit_v8_intrinsic_expression(it),
             ForStatementInit::ComputedMemberExpression(it) => {
                 self.visit_computed_member_expression(it)
             }
@@ -831,7 +836,7 @@ impl<'a> Visit<'a> for ChildScopeCollector {
     #[inline]
     fn visit_with_statement(&mut self, it: &WithStatement<'a>) {
         self.visit_expression(&it.object);
-        self.visit_statement(&it.body);
+        self.add_scope(&it.scope_id);
     }
 
     #[inline]
@@ -877,6 +882,9 @@ impl<'a> Visit<'a> for ChildScopeCollector {
     #[inline]
     fn visit_catch_parameter(&mut self, it: &CatchParameter<'a>) {
         self.visit_binding_pattern(&it.pattern);
+        if let Some(type_annotation) = &it.type_annotation {
+            self.visit_ts_type_annotation(type_annotation);
+        }
     }
 
     #[inline(always)]
@@ -886,18 +894,10 @@ impl<'a> Visit<'a> for ChildScopeCollector {
 
     #[inline]
     fn visit_binding_pattern(&mut self, it: &BindingPattern<'a>) {
-        self.visit_binding_pattern_kind(&it.kind);
-        if let Some(type_annotation) = &it.type_annotation {
-            self.visit_ts_type_annotation(type_annotation);
-        }
-    }
-
-    #[inline]
-    fn visit_binding_pattern_kind(&mut self, it: &BindingPatternKind<'a>) {
         match it {
-            BindingPatternKind::ObjectPattern(it) => self.visit_object_pattern(it),
-            BindingPatternKind::ArrayPattern(it) => self.visit_array_pattern(it),
-            BindingPatternKind::AssignmentPattern(it) => self.visit_assignment_pattern(it),
+            BindingPattern::ObjectPattern(it) => self.visit_object_pattern(it),
+            BindingPattern::ArrayPattern(it) => self.visit_array_pattern(it),
+            BindingPattern::AssignmentPattern(it) => self.visit_assignment_pattern(it),
             _ => {
                 // Remaining variants do not contain scopes:
                 // `BindingIdentifier`
@@ -949,7 +949,7 @@ impl<'a> Visit<'a> for ChildScopeCollector {
     fn visit_formal_parameters(&mut self, it: &FormalParameters<'a>) {
         self.visit_formal_parameter_list(&it.items);
         if let Some(rest) = &it.rest {
-            self.visit_binding_rest_element(rest);
+            self.visit_formal_parameter_rest(rest);
         }
     }
 
@@ -957,6 +957,21 @@ impl<'a> Visit<'a> for ChildScopeCollector {
     fn visit_formal_parameter(&mut self, it: &FormalParameter<'a>) {
         self.visit_decorators(&it.decorators);
         self.visit_binding_pattern(&it.pattern);
+        if let Some(type_annotation) = &it.type_annotation {
+            self.visit_ts_type_annotation(type_annotation);
+        }
+        if let Some(initializer) = &it.initializer {
+            self.visit_expression(initializer);
+        }
+    }
+
+    #[inline]
+    fn visit_formal_parameter_rest(&mut self, it: &FormalParameterRest<'a>) {
+        self.visit_decorators(&it.decorators);
+        self.visit_binding_rest_element(&it.rest);
+        if let Some(type_annotation) = &it.type_annotation {
+            self.visit_ts_type_annotation(type_annotation);
+        }
     }
 
     #[inline]
@@ -1190,7 +1205,7 @@ impl<'a> Visit<'a> for ChildScopeCollector {
                 self.visit_ts_instantiation_expression(it)
             }
             ExportDefaultDeclarationKind::V8IntrinsicExpression(it) => {
-                self.visit_v_8_intrinsic_expression(it)
+                self.visit_v8_intrinsic_expression(it)
             }
             ExportDefaultDeclarationKind::ComputedMemberExpression(it) => {
                 self.visit_computed_member_expression(it)
@@ -1223,7 +1238,7 @@ impl<'a> Visit<'a> for ChildScopeCollector {
     }
 
     #[inline]
-    fn visit_v_8_intrinsic_expression(&mut self, it: &V8IntrinsicExpression<'a>) {
+    fn visit_v8_intrinsic_expression(&mut self, it: &V8IntrinsicExpression<'a>) {
         self.visit_arguments(&it.arguments);
     }
 
@@ -1354,7 +1369,7 @@ impl<'a> Visit<'a> for ChildScopeCollector {
             JSXExpression::TSInstantiationExpression(it) => {
                 self.visit_ts_instantiation_expression(it)
             }
-            JSXExpression::V8IntrinsicExpression(it) => self.visit_v_8_intrinsic_expression(it),
+            JSXExpression::V8IntrinsicExpression(it) => self.visit_v8_intrinsic_expression(it),
             JSXExpression::ComputedMemberExpression(it) => {
                 self.visit_computed_member_expression(it)
             }
@@ -1450,12 +1465,12 @@ impl<'a> Visit<'a> for ChildScopeCollector {
 
     #[inline]
     fn visit_ts_enum_declaration(&mut self, it: &TSEnumDeclaration<'a>) {
-        self.add_scope(&it.scope_id);
+        self.visit_ts_enum_body(&it.body);
     }
 
     #[inline]
     fn visit_ts_enum_body(&mut self, it: &TSEnumBody<'a>) {
-        self.visit_ts_enum_members(&it.members);
+        self.add_scope(&it.scope_id);
     }
 
     #[inline]
@@ -1799,16 +1814,7 @@ impl<'a> Visit<'a> for ChildScopeCollector {
 
     #[inline]
     fn visit_ts_call_signature_declaration(&mut self, it: &TSCallSignatureDeclaration<'a>) {
-        if let Some(type_parameters) = &it.type_parameters {
-            self.visit_ts_type_parameter_declaration(type_parameters);
-        }
-        if let Some(this_param) = &it.this_param {
-            self.visit_ts_this_parameter(this_param);
-        }
-        self.visit_formal_parameters(&it.params);
-        if let Some(return_type) = &it.return_type {
-            self.visit_ts_type_annotation(return_type);
-        }
+        self.add_scope(&it.scope_id);
     }
 
     #[inline]
@@ -1860,6 +1866,11 @@ impl<'a> Visit<'a> for ChildScopeCollector {
     }
 
     #[inline]
+    fn visit_ts_global_declaration(&mut self, it: &TSGlobalDeclaration<'a>) {
+        self.add_scope(&it.scope_id);
+    }
+
+    #[inline]
     fn visit_ts_module_block(&mut self, it: &TSModuleBlock<'a>) {
         self.visit_statements(&it.body);
     }
@@ -1890,19 +1901,29 @@ impl<'a> Visit<'a> for ChildScopeCollector {
                 // Remaining variants do not contain scopes:
                 // `IdentifierReference`
                 // `QualifiedName`
+                // `ThisExpression`
             }
         }
     }
 
     #[inline]
     fn visit_ts_import_type(&mut self, it: &TSImportType<'a>) {
-        self.visit_ts_type(&it.argument);
         if let Some(options) = &it.options {
             self.visit_object_expression(options);
         }
         if let Some(type_arguments) = &it.type_arguments {
             self.visit_ts_type_parameter_instantiation(type_arguments);
         }
+    }
+
+    #[inline(always)]
+    fn visit_ts_import_type_qualifier(&mut self, it: &TSImportTypeQualifier<'a>) {
+        // Enum does not contain a scope. Halt traversal.
+    }
+
+    #[inline(always)]
+    fn visit_ts_import_type_qualified_name(&mut self, it: &TSImportTypeQualifiedName<'a>) {
+        // Struct does not contain a scope. Halt traversal.
     }
 
     #[inline]
@@ -1912,11 +1933,7 @@ impl<'a> Visit<'a> for ChildScopeCollector {
 
     #[inline]
     fn visit_ts_constructor_type(&mut self, it: &TSConstructorType<'a>) {
-        if let Some(type_parameters) = &it.type_parameters {
-            self.visit_ts_type_parameter_declaration(type_parameters);
-        }
-        self.visit_formal_parameters(&it.params);
-        self.visit_ts_type_annotation(&it.return_type);
+        self.add_scope(&it.scope_id);
     }
 
     #[inline]

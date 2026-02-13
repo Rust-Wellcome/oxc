@@ -118,12 +118,8 @@ impl Rule for NoStaticOnlyClass {
                 return fixer.noop();
             }
 
-            let Some(parent) = ctx.nodes().parent_kind(node.id()) else {
-                return fixer.noop();
-            };
-
             if (matches!(
-                parent,
+                ctx.nodes().parent_kind(node.id()),
                 AstKind::ExportDefaultDeclaration(_) | AstKind::ReturnStatement(_)
             ) && class.id.is_some())
             {
@@ -210,14 +206,13 @@ impl Rule for NoStaticOnlyClass {
             }
 
             let start = class.span.start;
-            if class.id.is_none() {
-                // just remove the class keyword
-                rule_fixes.push(fixer.delete_range(Span::sized(start, 5)));
-            } else {
-                let id = class.id.as_ref().unwrap();
+            if let Some(id) = &class.id {
                 let target = Span::new(start, id.span.end);
                 let replacement = format!("const {} =", id.name.as_str());
                 rule_fixes.push(fixer.replace(target, replacement));
+            } else {
+                // just remove the class keyword
+                rule_fixes.push(fixer.delete_range(Span::sized(start, 5)));
             }
             rule_fixes
                 .with_message("Convert to an object instead of a class with only static members.")
@@ -248,8 +243,8 @@ fn test() {
         r"const A = class { static #a() {}; }",
         r"const A = class { static #a = 1; }",
         r"@decorator class A { static  a = 1; }",
-        r"class A { static public a = 1; }",
-        r"class A { static private a = 1; }",
+        r"class A { public static a = 1; }",
+        r"class A { private static a = 1; }",
         r"class A { static readonly a = 1; }",
         r"class A { static declare a = 1; }",
         r"class A { static {}; }",

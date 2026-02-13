@@ -15,8 +15,8 @@ use crate::{
 };
 
 fn require_render_return_diagnostic(span: Span) -> OxcDiagnostic {
-    OxcDiagnostic::warn("Your render method should have a return statement")
-        .with_help("When writing the `render` method in a component it is easy to forget to return the JSX content. This rule will warn if the return statement is missing.")
+    OxcDiagnostic::warn("Your `render` method should have a `return` statement.")
+        .with_help("When writing the `render` method in a component it is easy to forget to return the JSX content. This rule will warn if the `return` statement is missing.")
         .with_label(span)
 }
 
@@ -26,11 +26,15 @@ pub struct RequireRenderReturn;
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// Enforce ES5 or ES6 class for returning value in render function
+    /// Enforce ES5 or ES2015 class for returning value in the `render` function.
+    ///
+    /// This rule is not relevant for function components, and so can potentially be
+    /// disabled for modern React codebases.
     ///
     /// ### Why is this bad?
     ///
-    /// When writing the `render` method in a component it is easy to forget to return the JSX content. This rule will warn if the return statement is missing.
+    /// When writing the `render` method in a component it is easy to forget to return the
+    /// JSX content. This rule will warn if the `return` statement is missing.
     ///
     /// ### Examples
     ///
@@ -70,12 +74,12 @@ declare_oxc_lint!(
 
 impl Rule for RequireRenderReturn {
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
-        if !matches!(node.kind(), AstKind::ArrowFunctionExpression(_) | AstKind::Function(_)) {
-            return;
+        match node.kind() {
+            AstKind::ArrowFunctionExpression(_) | AstKind::Function(_) => {}
+            _ => return,
         }
-        let Some(parent) = ctx.nodes().parent_node(node.id()) else {
-            return;
-        };
+
+        let parent = ctx.nodes().parent_node(node.id());
         if !is_render_fn(parent) {
             return;
         }
@@ -118,7 +122,7 @@ fn contains_return_statement(node: &AstNode, ctx: &LintContext) -> bool {
     let cfg = ctx.cfg();
     let state = neighbors_filtered_by_edge_weight(
         cfg.graph(),
-        node.cfg_id(),
+        ctx.nodes().cfg_id(node.id()),
         &|edge| match edge {
             // We only care about normal edges having a return statement.
             EdgeType::Jump | EdgeType::Normal => None,
@@ -132,10 +136,10 @@ fn contains_return_statement(node: &AstNode, ctx: &LintContext) -> bool {
         },
         &mut |basic_block_id, _state_going_into_this_rule| {
             // If its an arrow function with an expression, marked as founded and stop walking.
-            if let AstKind::ArrowFunctionExpression(arrow_expr) = node.kind() {
-                if arrow_expr.expression {
-                    return (FoundReturn::Yes, STOP_WALKING_ON_THIS_PATH);
-                }
+            if let AstKind::ArrowFunctionExpression(arrow_expr) = node.kind()
+                && arrow_expr.expression
+            {
+                return (FoundReturn::Yes, STOP_WALKING_ON_THIS_PATH);
             }
 
             for Instruction { kind, .. } in cfg.basic_block(*basic_block_id).instructions() {
@@ -192,28 +196,23 @@ fn is_render_fn(node: &AstNode) -> bool {
 }
 
 fn is_in_es5_component<'a, 'b>(node: &'b AstNode<'a>, ctx: &'b LintContext<'a>) -> bool {
-    let Some(ancestors_0) = ctx.nodes().parent_node(node.id()) else { return false };
+    let ancestors_0 = ctx.nodes().parent_node(node.id());
     if !matches!(ancestors_0.kind(), AstKind::ObjectExpression(_)) {
         return false;
     }
 
-    let Some(ancestors_1) = ctx.nodes().parent_node(ancestors_0.id()) else { return false };
-    if !matches!(ancestors_1.kind(), AstKind::Argument(_)) {
-        return false;
-    }
+    let ancestors_1 = ctx.nodes().parent_node(ancestors_0.id());
 
-    let Some(ancestors_2) = ctx.nodes().parent_node(ancestors_1.id()) else { return false };
-
-    is_es5_component(ancestors_2)
+    is_es5_component(ancestors_1)
 }
 
 fn is_in_es6_component<'a, 'b>(node: &'b AstNode<'a>, ctx: &'b LintContext<'a>) -> bool {
-    let Some(parent) = ctx.nodes().parent_node(node.id()) else { return false };
+    let parent = ctx.nodes().parent_node(node.id());
     if !matches!(parent.kind(), AstKind::ClassBody(_)) {
         return false;
     }
 
-    let Some(grandparent) = ctx.nodes().parent_node(parent.id()) else { return false };
+    let grandparent = ctx.nodes().parent_node(parent.id());
     is_es6_component(grandparent)
 }
 
