@@ -2,6 +2,7 @@ use cow_utils::CowUtils;
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
+use schemars::JsonSchema;
 
 use crate::{context::LintContext, rule::Rule};
 
@@ -11,13 +12,13 @@ fn no_with_diagnostic(span: Span) -> OxcDiagnostic {
         .with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema)]
 pub struct NoWarningCommentsConfig {
     terms: Option<Vec<String>>,
     decorations: Option<Vec<String>>,
     location: Option<String>,
 }
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema)]
 pub struct NoWarningComments(Box<NoWarningCommentsConfig>);
 
 // See <https://github.com/oxc-project/oxc/issues/6050> for documentation details.
@@ -45,9 +46,10 @@ declare_oxc_lint!(
     eslint,
     nursery, // TODO: change category to `correctness`, `suspicious`, `pedantic`, `perf`, `restriction`, or `style`
              // See <https://oxc.rs/docs/contribute/linter.html#rule-category> for details
-    pending  // TODO: describe fix capabilities. Remove if no fix can be done,
+    pending,  // TODO: describe fix capabilities. Remove if no fix can be done,
              // keep at 'pending' if you think one could be added but don't know how.
              // Options are 'fix', 'fix_dangerous', 'suggestion', and 'conditional_fix_suggestion'
+     config = NoWarningCommentsConfig,
 );
 
 // Refactor this function to make it more Rusty
@@ -198,11 +200,11 @@ impl Rule for NoWarningComments {
         //     - takes the comment and splits it by spaces
         //     - adds the comment to the comment that will be displayed
         //     - if the line is longer than 40 characters it will be truncated with an ellipsis
-        //     - it will report the message to the context with messageId unexpectedCooment with the data being the matched term and the comment but if it is too long it is truncated to 40 characters with an ellipsis
+        //     - it will report the message to the context with messageId unexpected comment with the data being the matched term and the comment but if it is too long it is truncated to 40 characters with an ellipsis
     }
 
     // this could do with a tidy up.
-    fn from_configuration(value: serde_json::Value) -> Self {
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
         // Read the configuration for term, decoration and location from _value and then
         // return NoWarningComments {} struct with the attributes terms, decoration and locations.
 
@@ -236,7 +238,7 @@ impl Rule for NoWarningComments {
             }
         }
 
-        Self(Box::new(cfg))
+        Ok(Self(Box::new(cfg)))
     }
 }
 
