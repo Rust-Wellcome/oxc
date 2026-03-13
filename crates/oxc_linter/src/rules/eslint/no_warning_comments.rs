@@ -6,10 +6,9 @@ use schemars::JsonSchema;
 
 use crate::{context::LintContext, rule::Rule};
 
-fn no_with_diagnostic(span: Span) -> OxcDiagnostic {
-    OxcDiagnostic::warn("Unexpected use of `with` statement.")
-        .with_help("Do not use the `with` statement.")
-        .with_label(span)
+fn no_with_diagnostic(span: Span, term: &str, comment: &str) -> OxcDiagnostic {
+    //
+    OxcDiagnostic::warn(format!("Unexpected '{term}' comment: '{comment}'.")).with_label(span)
 }
 
 #[derive(Debug, Default, Clone, JsonSchema)]
@@ -105,11 +104,13 @@ impl Rule for NoWarningComments {
             let span = comment.span;
 
             let span_pointers: (u32, u32) = (span.start + 2, span.end);
-            let comment_text = ctx
+
+            let raw_comment = ctx
                 .source_text()
                 .get((span_pointers.0 as usize)..(span_pointers.1 as usize))
-                .unwrap()
-                .cow_to_lowercase();
+                .unwrap();
+
+            let comment_text = raw_comment.cow_to_lowercase();
 
             // it would be better to strip comments with no-warning-comments
             if comment_text.contains("no-warning-comments") {
@@ -145,7 +146,7 @@ impl Rule for NoWarningComments {
             if let Some(terms) = &self.0.terms {
                 for term in terms {
                     if any_word_matches_term(&words, term) {
-                        ctx.diagnostic(no_with_diagnostic(span));
+                        ctx.diagnostic(no_with_diagnostic(span, term, raw_comment));
                     }
                 }
             } else {
@@ -156,12 +157,12 @@ impl Rule for NoWarningComments {
                             if location == "start" {
                                 if words[0] != term.cow_to_lowercase() {}
                             } else if any_word_matches_term(&words, term) {
-                                ctx.diagnostic(no_with_diagnostic(span));
+                                ctx.diagnostic(no_with_diagnostic(span, term, raw_comment));
                             }
                         }
                         None => {
                             if words[0] == term.cow_to_lowercase() {
-                                ctx.diagnostic(no_with_diagnostic(span));
+                                ctx.diagnostic(no_with_diagnostic(span, term, raw_comment));
                             }
                         }
                     }

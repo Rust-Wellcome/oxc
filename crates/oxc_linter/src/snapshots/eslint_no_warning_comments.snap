@@ -1,380 +1,338 @@
 ---
 source: crates/oxc_linter/src/tester.rs
 ---
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+
+  ⚠ eslint(no-warning-comments): Unexpected 'fixme comment: ' fixme'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // fixme
    · ────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'fixme comment: ' any fixme'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // any fixme
    · ────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'fixme comment: ' any fixme'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // any fixme
    · ────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'fixme comment: ' any fixme'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // any FIXME
    · ────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'fixme comment: ' any fixme'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // any fIxMe
    · ────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'FIXME comment: ' any fixme */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* any fixme */
    · ───────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'FIXME comment: ' any fixme */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* any FIXME */
    · ───────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'FIXME comment: ' any fixme */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* any fIxMe */
    · ───────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'fixme comment: ' any fixme or todo'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // any fixme or todo
    · ────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo comment: ' any fixme or todo'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // any fixme or todo
    · ────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'fixme comment: ' any fixme or todo */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* any fixme or todo */
    · ───────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo comment: ' any fixme or todo */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* any fixme or todo */
    · ───────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo comment: ' any fixme or todo */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* any fixme or todo */
    · ───────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'fixme comment: ' any fixme or todo */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* any fixme or todo */
    · ───────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'fixme comment: ' fixme and todo */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* fixme and todo */
    · ────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo comment: ' fixme and todo */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* fixme and todo */
    · ────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'fixme comment: ' fixme and todo */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* fixme and todo */
    · ────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'fixme comment: ' any fixme */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* any fixme */
    · ───────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'fixme comment: ' fixme! */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* fixme! */
    · ────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected '[litera|$] comment: ' regex [litera|$]'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // regex [litera|$]
    · ───────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'eslint comment: ' eslint one-var: 2 */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* eslint one-var: 2 */
    · ───────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'one comment: ' eslint one-var: 2 */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* eslint one-var: 2 */
    · ───────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo comment: ' any block comment with todo, fixme or xxx */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* any block comment with TODO, FIXME or XXX */
    · ───────────────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'fixme comment: ' any block comment with todo, fixme or xxx */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* any block comment with TODO, FIXME or XXX */
    · ───────────────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'xxx comment: ' any block comment with todo, fixme or xxx */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* any block comment with TODO, FIXME or XXX */
    · ───────────────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo comment: ' any block comment with (todo, fixme's or xxx!) */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* any block comment with (TODO, FIXME's or XXX!) */
    · ────────────────────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'fixme comment: ' any block comment with (todo, fixme's or xxx!) */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* any block comment with (TODO, FIXME's or XXX!) */
    · ────────────────────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'xxx comment: ' any block comment with (todo, fixme's or xxx!) */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ /* any block comment with (TODO, FIXME's or XXX!) */
    · ────────────────────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo comment: '*
+  │         	 *any block comment
+  │         	*with (todo, fixme's or xxx!) **/'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ ╭─▶ /**
  2 │ │                *any block comment
  3 │ ╰─▶             *with (TODO, FIXME's or XXX!) **/
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'fixme comment: '*
+  │         	 *any block comment
+  │         	*with (todo, fixme's or xxx!) **/'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ ╭─▶ /**
  2 │ │                *any block comment
  3 │ ╰─▶             *with (TODO, FIXME's or XXX!) **/
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'xxx comment: '*
+  │         	 *any block comment
+  │         	*with (todo, fixme's or xxx!) **/'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ ╭─▶ /**
  2 │ │                *any block comment
  3 │ ╰─▶             *with (TODO, FIXME's or XXX!) **/
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo comment: ' any comment with todo, fixme or xxx'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // any comment with TODO, FIXME or XXX
    · ──────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'fixme comment: ' any comment with todo, fixme or xxx'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // any comment with TODO, FIXME or XXX
    · ──────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'xxx comment: ' any comment with todo, fixme or xxx'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // any comment with TODO, FIXME or XXX
    · ──────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo comment: ' todo: something small'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // TODO: something small
    · ────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo comment: ' todo: something really longer than 40 characters'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // TODO: something really longer than 40 characters
    · ───────────────────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo comment: ' todo: something
+  │         	 really longer than 40 characters
+  │         	 and also a new line */'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ ╭─▶ /* TODO: something
  2 │ │                really longer than 40 characters
  3 │ ╰─▶              and also a new line */
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo comment: ' todo: small'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // TODO: small
    · ──────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo comment: ' https://github.com/eslint/eslint/pull/13522#discussion_r470293411 todo'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // https://github.com/eslint/eslint/pull/13522#discussion_r470293411 TODO
    · ─────────────────────────────────────────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo comment: ' comment ending with term followed by punctuation todo!'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // Comment ending with term followed by punctuation TODO!
    · ─────────────────────────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo! comment: ' comment ending with term including punctuation todo!'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // Comment ending with term including punctuation TODO!
    · ───────────────────────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo! comment: ' comment ending with term including punctuation followed by more todo!!!'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // Comment ending with term including punctuation followed by more TODO!!!
    · ──────────────────────────────────────────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo comment: ' !todo comment starting with term preceded by punctuation'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // !TODO comment starting with term preceded by punctuation
    · ───────────────────────────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected '!todo comment: ' !todo comment starting with term including punctuation'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // !TODO comment starting with term including punctuation
    · ─────────────────────────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected '!todo comment: ' !!!todo comment starting with term including punctuation preceded by more'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // !!!TODO comment starting with term including punctuation preceded by more
    · ────────────────────────────────────────────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'FIX! comment: ' fix!term ending with punctuation followed word character'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // FIX!term ending with punctuation followed word character
    · ───────────────────────────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected '!FIX comment: ' term starting with punctuation preceded word character!fix'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ // Term starting with punctuation preceded word character!FIX
    · ─────────────────────────────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected '!xxx comment: '!xxx comment starting with no spaces (anywhere)'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ //!XXX comment starting with no spaces (anywhere)
    · ─────────────────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected '!xxx comment: '!xxx comment starting with no spaces (start)'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ //!XXX comment starting with no spaces (start)
    · ──────────────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo comment: '
+  │         	todo undecorated multi-line block comment (start)
+  │         	*/'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ ╭─▶ /*
  2 │ │               TODO undecorated multi-line block comment (start)
  3 │ ╰─▶             */
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo comment: ' todo decorated single-line comment with decoration array'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ ///// TODO decorated single-line comment with decoration array
    · ──────────────────────────────────────────────────────────────
  2 │              /////
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected 'todo comment: ' todo decorated single-line comment with multiple decoration characters (start)'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ ///*/*/ TODO decorated single-line comment with multiple decoration characters (start)
    · ──────────────────────────────────────────────────────────────────────────────────────
  2 │              /////
    ╰────
-  help: Do not use the `with` statement.
 
-  ⚠ eslint(no-warning-comments): Unexpected use of `with` statement.
+  ⚠ eslint(no-warning-comments): Unexpected '*todo comment: '*todo term starts with a decoration character'.
    ╭─[no_warning_comments.tsx:1:1]
  1 │ //**TODO term starts with a decoration character
    · ────────────────────────────────────────────────
    ╰────
-  help: Do not use the `with` statement.
