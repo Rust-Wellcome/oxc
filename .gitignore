@@ -19,13 +19,13 @@ target/
 /npm/*/node_modules
 /napi/*/npm-dir
 
+# vscode
+/editors/vscode/
+
+.vscode/settings.json
+
 # Cloned conformance repos
-tasks/coverage/babel/
-tasks/coverage/test262/
-tasks/coverage/typescript/
-tasks/coverage/estree-conformance/
-tasks/coverage/estree-conformance-diff/
-tasks/coverage/node-compat-table/
+tasks/coverage/
 tasks/prettier_conformance/prettier/
 
 # Ignore accidental files from the root
