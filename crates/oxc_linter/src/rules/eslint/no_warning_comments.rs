@@ -7,7 +7,6 @@ use schemars::JsonSchema;
 use crate::{context::LintContext, rule::Rule};
 
 fn no_with_diagnostic(span: Span, term: &str, comment: &str) -> OxcDiagnostic {
-    //
     OxcDiagnostic::warn(format!("Unexpected '{term}' comment: '{comment}'.")).with_label(span)
 }
 
@@ -20,27 +19,25 @@ pub struct NoWarningCommentsConfig {
 #[derive(Debug, Default, Clone, JsonSchema)]
 pub struct NoWarningComments(Box<NoWarningCommentsConfig>);
 
-// See <https://github.com/oxc-project/oxc/issues/6050> for documentation details.
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// Briefly describe the rule's purpose.
+    /// Disallow specified warning terms in comments
     ///
     /// ### Why is this bad?
     ///
-    /// Explain why violating this rule is problematic.
+    /// Developers often add comments to code which is not complete or needs review.
+    /// Most likely you want to fix or review the code, and then remove the comment,
+    /// before you consider the code to be production ready.
     ///
     /// ### Examples
     ///
     /// Examples of **incorrect** code for this rule:
     /// ```js
-    /// FIXME: Tests will fail if examples are missing or syntactically incorrect.
+    /// // TODO: do something
+    /// // FIXME: this is not a good idea
     /// ```
     ///
-    /// Examples of **correct** code for this rule:
-    /// ```js
-    /// FIXME: Tests will fail if examples are missing or syntactically incorrect.
-    /// ```
     NoWarningComments,
     eslint,
     nursery, // TODO: change category to `correctness`, `suspicious`, `pedantic`, `perf`, `restriction`, or `style`
@@ -51,7 +48,6 @@ declare_oxc_lint!(
      config = NoWarningCommentsConfig,
 );
 
-// Refactor this function to make it more Rusty
 fn trim_decorations_until_terms<'a>(
     s: &'a str,             // can accept string slice as input; not an owned String
     decorations: &[String], // slice of string slices
@@ -130,16 +126,11 @@ impl Rule for NoWarningComments {
                 None => &comment_text,
             };
 
-            // We have handled ("//!TODO ", Some(serde_json::json!([{ "decoration": ["*"] }])))
-            // But it made the following to fail: Some(serde_json::json!([{ "terms": ["[litera|$]"], "location": "anywhere" }])),
             let words = cleaned_text
                 .split_whitespace()
-                // .split(|c: char| !c.is_alphanumeric())
                 .filter(|w| !w.is_empty())
                 .map(|w| cow_utils::CowUtils::cow_to_lowercase(w).into_owned())
                 .collect::<Vec<String>>();
-
-            // performance might be an issue here with nested loops. Look at refactoring not with regex.
 
             // if the terms exist in the comment text then report a diagnostic
             // if there are no terms then use default terms
@@ -168,49 +159,12 @@ impl Rule for NoWarningComments {
                     }
                 }
             }
-            // 24/10/25 there is an issue with the location
-            // if you do not have location set to anywhere it will use the default of start
-            // if the location is start we should start with rather than contains
         });
-
-        // 1. create a copy of the source code x
-        // 2. create a copy of the decoration, location and terms. We can get these from the configuration using the from_config function x
-        // 3. escape the decoration special characters. Decoration can be a string or an array of strings. x
-        //    if it is a line comment, skip // first
-        //    if it is a block comment, skip /* first: we are not there yet.
-        //    escape each decoration character until you reach a non-decoration character or the term itself, e.g. *todo
-        // 4. creates a constant of /\bno-warning-comments\b/u
-        // 5. for each of the warning terms it converts the term to a regular expression:
-        //   - escape the term special characters
-        //   - create a constant of the word boundary which is \\b
-        //   - create a variable for the prefix
-        //   - if the location is "start" then it sets prefix to the escaped decoration `^[\\s${escapedDecoration}]*`
-        //   - tests /^\w/u against the term and if they match sets the prefix to the word boundary
-        //   - sets a constant for the suffix by running a test /\w$/u against the term if true sets suffix to word boundary otherwise sets suffix to an empty string
-        //   - creates a constant for flag of "iu"
-        //   - returns a regular expression with the prefix, term, and suffix passing in the flags
-        // 6. creates a constant comments which gets all of the comments from the source code using the ast comments. Gets all of the tree nodes that are comments.
-        // 7. for each comment:
-        //   - filters out any comments which start with shebang #!
-        //   - runs the check comment function.
-        // 8. check comment function:
-        //   - sets a constant for the comment text which is node.value
-        //   - if it is a directive comment e.g. eslint-disable-next-line or selfConfigRegEx it returns early
-        //   - creates a constant of the matches containing the warning terms. Which is a list of warning terms.
-        //   - for each match:
-        //     - takes the comment and splits it by spaces
-        //     - adds the comment to the comment that will be displayed
-        //     - if the line is longer than 40 characters it will be truncated with an ellipsis
-        //     - it will report the message to the context with messageId unexpected comment with the data being the matched term and the comment but if it is too long it is truncated to 40 characters with an ellipsis
     }
 
-    // this could do with a tidy up.
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
         // Read the configuration for term, decoration and location from _value and then
         // return NoWarningComments {} struct with the attributes terms, decoration and locations.
-
-        // TODO: Create. NoWarningCommentsConfig struct and box it inside the return struct NoWarningCommentsConfig
-        // See crates/oxc_linter/src/rules/eslint/default_case.rs.
 
         let mut cfg = NoWarningCommentsConfig::default();
 
@@ -243,8 +197,6 @@ impl Rule for NoWarningComments {
     }
 }
 
-// cargo insta accept
-// cargo test -p oxc_linter -- --nocapture no_warning_comments
 #[test]
 fn test() {
     use crate::tester::Tester;
@@ -381,7 +333,6 @@ fn test() {
             "// Comment ending with term followed by punctuation TODO!",
             Some(serde_json::json!([{ "terms": ["todo"], "location": "anywhere" }])),
         ),
-        // // this test is now failing ...
         (
             "// Comment ending with term including punctuation TODO!",
             Some(serde_json::json!([{ "terms": ["todo!"], "location": "anywhere" }])),
