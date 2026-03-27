@@ -10,11 +10,24 @@ fn no_with_diagnostic(span: Span, term: &str, comment: &str) -> OxcDiagnostic {
     OxcDiagnostic::warn(format!("Unexpected '{term}' comment: '{comment}'.")).with_label(span)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, JsonSchema, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Location {
+    Start,
+    Anywhere,
+}
+
+impl Default for Location {
+    fn default() -> Self {
+        Location::Start
+    }
+}
+
 #[derive(Debug, Default, Clone, JsonSchema)]
 pub struct NoWarningCommentsConfig {
     terms: Option<Vec<String>>,
     decorations: Option<Vec<String>>,
-    location: Option<String>,
+    location: Location,
 }
 #[derive(Debug, Default, Clone, JsonSchema)]
 pub struct NoWarningComments(Box<NoWarningCommentsConfig>);
@@ -144,15 +157,13 @@ impl Rule for NoWarningComments {
                 let default_terms = vec!["todo", "fixme", "xxx"];
                 for term in default_terms {
                     match &self.0.location {
-                        Some(location) => {
-                            if location == "start" {
-                                if words[0] != term.cow_to_lowercase() {}
-                            } else if any_word_matches_term(&words, term) {
+                        Location::Start => {
+                            if words[0] == term.cow_to_lowercase() {
                                 ctx.diagnostic(no_with_diagnostic(span, term, raw_comment));
                             }
                         }
-                        None => {
-                            if words[0] == term.cow_to_lowercase() {
+                        Location::Anywhere => {
+                            if any_word_matches_term(&words, term) {
                                 ctx.diagnostic(no_with_diagnostic(span, term, raw_comment));
                             }
                         }
@@ -186,10 +197,9 @@ impl Rule for NoWarningComments {
             }
 
             if let Some(location_config) = config.get("location") {
-                cfg.location = location_config.as_str().map(std::string::ToString::to_string);
-            } else {
-                // Default to "start" if location is not provided
-                cfg.location = Some("start".to_string());
+                if let Ok(loc) = serde_json::from_value::<Location>(location_config.clone()) {
+                    cfg.location = loc;
+                }
             }
         }
 
