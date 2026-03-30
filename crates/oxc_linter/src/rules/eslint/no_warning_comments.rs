@@ -62,28 +62,26 @@ declare_oxc_lint!(
 );
 
 fn trim_decorations_until_terms<'a>(
-    s: &'a str,             // can accept string slice as input; not an owned String
-    decorations: &[String], // slice of string slices
-    terms: &[String],       // slice of string slices
+    s: &'a str,
+    decorations: &[String],
+    terms: &[String],
 ) -> &'a str {
-    // return a slice of the original string (&'a str) without copying
-    let mut i = 0;
-    let s_len = s.len();
-    while i < s_len {
-        if terms.is_empty() {
+    if terms.is_empty() {
+        return s;
+    }
+    let mut offset = 0;
+    for (i, c) in s.char_indices() {
+        if terms.iter().any(|t| s[i..].starts_with(t.as_str())) {
             break;
         }
-        if terms.iter().any(|term| s[i..].starts_with(term)) {
-            break; // stop if a term matches
-        }
-        let c = s[i..].chars().next().unwrap();
-        if decorations.iter().any(|d| *d == c.to_string()) {
-            i += c.len_utf8(); // keep going with the loop
+        let c_str = c.to_string();
+        if decorations.iter().any(|d| d == &c_str) {
+            offset = i + c.len_utf8();
         } else {
-            break; // stop if non-decoration
+            break;
         }
     }
-    &s[i..] // new slice from position i
+    &s[offset..]
 }
 
 /// Checks if any word matches the term, including non-alphanumeric characters.
@@ -94,11 +92,7 @@ fn trim_decorations_until_terms<'a>(
 /// --- "/* eslint one-var: 2 */" ---
 fn any_word_matches_term(words: &[String], term: &str) -> bool {
     let term_lower = term.cow_to_lowercase();
-    // let is_term_alnum = term_lower.chars().all(|c| c.is_alphanumeric());
     words.iter().any(|word| {
-        // term is alphanumeric, word is alphanumeric, check for exact match ; todo && todoMVC => todo == todoMVC
-        // term is alphanumeric, word is not alphanumeric, check for contains ; todo && todo! => todo! contains todo
-
         let word_lower = word.cow_to_lowercase();
         let is_word_alnum = word_lower.chars().all(char::is_alphanumeric);
         if is_word_alnum { word_lower == term_lower } else { word_lower.contains(&*term_lower) }
