@@ -6,6 +6,13 @@ use schemars::JsonSchema;
 
 use crate::{context::LintContext, rule::Rule};
 
+fn parse_string_array(config: &serde_json::Value, key: &str) -> Option<Vec<String>> {
+    config
+        .get(key)?
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+}
+
 fn no_with_diagnostic(span: Span, term: &str, comment: &str) -> OxcDiagnostic {
     OxcDiagnostic::warn(format!("Unexpected '{term}' comment: '{comment}'.")).with_label(span)
 }
@@ -174,21 +181,8 @@ impl Rule for NoWarningComments {
         let mut cfg = NoWarningCommentsConfig::default();
 
         if let Some(config) = value.get(0) {
-            if let Some(terms_config) = config.get("terms") {
-                cfg.terms = terms_config.as_array().map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
-                        .collect::<Vec<String>>()
-                });
-            }
-
-            if let Some(decorations_config) = config.get("decoration") {
-                cfg.decorations = decorations_config.as_array().map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
-                        .collect::<Vec<String>>()
-                });
-            }
+            cfg.terms = parse_string_array(config, "terms");
+            cfg.decorations = parse_string_array(config, "decoration");
 
             if let Some(location_config) = config.get("location") {
                 if let Ok(loc) = serde_json::from_value::<Location>(location_config.clone()) {
