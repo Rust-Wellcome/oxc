@@ -123,14 +123,11 @@ impl Rule for NoWarningComments {
 
             // If there are no decorations it returns none so we need to match it otherwise it panics
             let cleaned_text = match &self.0.decorations {
-                Some(decorations) => {
-                    let empty_vec: Vec<String> = Vec::new();
-                    trim_decorations_until_terms(
-                        &comment_text,
-                        decorations,
-                        self.0.terms.as_ref().unwrap_or(&empty_vec),
-                    )
-                }
+                Some(decorations) => trim_decorations_until_terms(
+                    &comment_text,
+                    decorations,
+                    self.0.terms.as_ref().unwrap_or(&vec![]),
+                ),
                 None => &comment_text,
             };
 
@@ -139,6 +136,31 @@ impl Rule for NoWarningComments {
                 .filter(|w| !w.is_empty())
                 .map(|w| cow_utils::CowUtils::cow_to_lowercase(w).into_owned())
                 .collect::<Vec<String>>();
+
+            //copilot suggestion which is correct but failing tests
+            // 1 test case expected to fail, but passed:
+            //    1. /* fixme! */
+            //    config: [{"terms":["fixme"]}]
+            // let default_terms: &[&str] = &["todo", "fixme", "xxx"];
+            // let terms: Box<dyn Iterator<Item = &str>> = match &self.0.terms {
+            //     Some(t) => Box::new(t.iter().map(String::as_str)),
+            //     None => Box::new(default_terms.iter().copied()),
+            // };
+
+            // for term in terms {
+            //     match &self.0.location {
+            //         Location::Start => {
+            //             if words.first().map_or(false, |w| w == term) {
+            //                 ctx.diagnostic(no_with_diagnostic(span, term, raw_comment));
+            //             }
+            //         }
+            //         Location::Anywhere => {
+            //             if any_word_matches_term(&words, term) {
+            //                 ctx.diagnostic(no_with_diagnostic(span, term, raw_comment));
+            //             }
+            //         }
+            //     }
+            // }
 
             // if the terms exist in the comment text then report a diagnostic
             // if there are no terms then use default terms
@@ -153,7 +175,7 @@ impl Rule for NoWarningComments {
                 for term in default_terms {
                     match &self.0.location {
                         Location::Start => {
-                            if words[0] == term.cow_to_lowercase() {
+                            if words.first().map_or(false, |w| w == term) {
                                 ctx.diagnostic(no_with_diagnostic(span, term, raw_comment));
                             }
                         }
