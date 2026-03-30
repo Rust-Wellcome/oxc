@@ -113,13 +113,7 @@ impl Rule for NoWarningComments {
         ctx.semantic().comments().iter().for_each(|comment| {
             let span = comment.span;
 
-            let span_pointers: (u32, u32) = (span.start + 2, span.end);
-
-            let raw_comment = ctx
-                .source_text()
-                .get((span_pointers.0 as usize)..(span_pointers.1 as usize))
-                .unwrap();
-
+            let raw_comment = &ctx.source_text()[(span.start as usize + 2)..(span.end as usize)];
             let comment_text = raw_comment.cow_to_lowercase();
 
             // it would be better to strip comments with no-warning-comments
