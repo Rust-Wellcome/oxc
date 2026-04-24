@@ -106,6 +106,15 @@ fn any_word_matches_term(words: &[String], term: &str) -> bool {
     })
 }
 
+fn first_word_matches_term(words: &[String], term: &str) -> bool {
+    let term_lower = term.cow_to_lowercase();
+    words.first().map_or(false, |word| {
+        let word_lower = word.cow_to_lowercase();
+        let trimmed = word_lower.trim_end_matches(|c: char| !c.is_alphanumeric());
+        trimmed == term_lower
+    })
+}
+
 // https://eslint.org/docs/latest/rules/no-warning-comments#options
 // if location is "start" then ignore decorators, if "anywhere" then do not ignore decorators. If location is not provided then default to "start".
 impl Rule for NoWarningComments {
@@ -137,52 +146,22 @@ impl Rule for NoWarningComments {
                 .map(|w| cow_utils::CowUtils::cow_to_lowercase(w).into_owned())
                 .collect::<Vec<String>>();
 
-            //copilot suggestion which is correct but failing tests
-            // 1 test case expected to fail, but passed:
-            //    1. /* fixme! */
-            //    config: [{"terms":["fixme"]}]
-            // let default_terms: &[&str] = &["todo", "fixme", "xxx"];
-            // let terms: Box<dyn Iterator<Item = &str>> = match &self.0.terms {
-            //     Some(t) => Box::new(t.iter().map(String::as_str)),
-            //     None => Box::new(default_terms.iter().copied()),
-            // };
+            let default_terms: &[&str] = &["todo", "fixme", "xxx"];
+            let terms: Box<dyn Iterator<Item = &str>> = match &self.0.terms {
+                Some(t) => Box::new(t.iter().map(String::as_str)),
+                None => Box::new(default_terms.iter().copied()),
+            };
 
-            // for term in terms {
-            //     match &self.0.location {
-            //         Location::Start => {
-            //             if words.first().map_or(false, |w| w == term) {
-            //                 ctx.diagnostic(no_with_diagnostic(span, term, raw_comment));
-            //             }
-            //         }
-            //         Location::Anywhere => {
-            //             if any_word_matches_term(&words, term) {
-            //                 ctx.diagnostic(no_with_diagnostic(span, term, raw_comment));
-            //             }
-            //         }
-            //     }
-            // }
-
-            // if the terms exist in the comment text then report a diagnostic
-            // if there are no terms then use default terms
-            if let Some(terms) = &self.0.terms {
-                for term in terms {
-                    if any_word_matches_term(&words, term) {
-                        ctx.diagnostic(no_with_diagnostic(span, term, raw_comment));
-                    }
-                }
-            } else {
-                let default_terms = vec!["todo", "fixme", "xxx"];
-                for term in default_terms {
-                    match &self.0.location {
-                        Location::Start => {
-                            if words.first().map_or(false, |w| w == term) {
-                                ctx.diagnostic(no_with_diagnostic(span, term, raw_comment));
-                            }
+            for term in terms {
+                match &self.0.location {
+                    Location::Start => {
+                        if first_word_matches_term(&words, term) {
+                            ctx.diagnostic(no_with_diagnostic(span, term, raw_comment));
                         }
-                        Location::Anywhere => {
-                            if any_word_matches_term(&words, term) {
-                                ctx.diagnostic(no_with_diagnostic(span, term, raw_comment));
-                            }
+                    }
+                    Location::Anywhere => {
+                        if any_word_matches_term(&words, term) {
+                            ctx.diagnostic(no_with_diagnostic(span, term, raw_comment));
                         }
                     }
                 }
