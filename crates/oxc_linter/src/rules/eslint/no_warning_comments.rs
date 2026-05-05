@@ -30,7 +30,7 @@ impl Default for Location {
     }
 }
 
-#[derive(Debug, Default, Clone, JsonSchema)]
+#[derive(Debug, Clone, JsonSchema)]
 pub struct NoWarningCommentsConfig {
     terms: Option<Vec<String>>,
     decorations: Option<Vec<String>>,
@@ -38,6 +38,26 @@ pub struct NoWarningCommentsConfig {
 }
 #[derive(Debug, Default, Clone, JsonSchema)]
 pub struct NoWarningComments(Box<NoWarningCommentsConfig>);
+
+impl Default for NoWarningCommentsConfig {
+    fn default() -> Self {
+        Self {
+            terms: Some(vec!["todo".to_string(), "fixme".to_string(), "xxx".to_string()]),
+            decorations: None,
+            location: Location::default(),
+        }
+    }
+}
+
+impl NoWarningCommentsConfig {
+    pub fn new(
+        terms: Option<Vec<String>>,
+        decorations: Option<Vec<String>>,
+        location: Location,
+    ) -> Self {
+        Self { terms, decorations, location }
+    }
+}
 
 declare_oxc_lint!(
     /// ### What it does
@@ -146,13 +166,13 @@ impl Rule for NoWarningComments {
                 .map(|w| cow_utils::CowUtils::cow_to_lowercase(w).into_owned())
                 .collect::<Vec<String>>();
 
-            let default_terms: &[&str] = &["todo", "fixme", "xxx"];
-            let terms: Box<dyn Iterator<Item = &str>> = match &self.0.terms {
-                Some(t) => Box::new(t.iter().map(String::as_str)),
-                None => Box::new(default_terms.iter().copied()),
-            };
+            // let default_terms: &[&str] = &["todo", "fixme", "xxx"];
+            // let terms: Box<dyn Iterator<Item = &str>> = match &self.0.terms {
+            //     Some(t) => Box::new(t.iter().map(String::as_str)),
+            //     None => Box::new(default_terms.iter().copied()),
+            // };
 
-            for term in terms {
+            for term in self.0.terms.as_ref().unwrap() {
                 match &self.0.location {
                     Location::Start => {
                         if first_word_matches_term(&words, term) {
