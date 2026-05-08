@@ -3,6 +3,7 @@ use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
 use schemars::JsonSchema;
+use serde_json::Value;
 
 use crate::{context::LintContext, rule::Rule};
 
@@ -56,30 +57,36 @@ impl NoWarningCommentsConfig {
         let mut location = Location::default();
         let default_terms = vec!["todo".to_string(), "fixme".to_string(), "xxx".to_string()];
 
-        if let Some(config) = value.get(0) {
-            let extracted_terms = parse_string_array(config, "terms");
+        return match value {
+            Value::Null => Self { terms: Some(default_terms), decorations, location },
+            val => {
+                if let Some(config) = val.get(0) {
+                    let extracted_terms = parse_string_array(config, "terms");
 
-            terms = match extracted_terms {
-                Some(t) => {
-                    if t.is_empty() {
-                        default_terms
-                    } else {
-                        t
+                    terms = match extracted_terms {
+                        Some(t) => {
+                            if t.is_empty() {
+                                default_terms
+                            } else {
+                                t
+                            }
+                        }
+                        None => default_terms,
+                    };
+
+                    decorations = parse_string_array(config, "decoration");
+
+                    if let Some(location_config) = config.get("location") {
+                        if let Ok(loc) = serde_json::from_value::<Location>(location_config.clone())
+                        {
+                            location = loc;
+                        }
                     }
                 }
-                None => default_terms,
-            };
 
-            decorations = parse_string_array(config, "decoration");
-
-            if let Some(location_config) = config.get("location") {
-                if let Ok(loc) = serde_json::from_value::<Location>(location_config.clone()) {
-                    location = loc;
-                }
+                return Self { terms: Some(terms), decorations, location };
             }
-        }
-
-        Self { terms: Some(terms), decorations, location }
+        };
     }
 }
 
