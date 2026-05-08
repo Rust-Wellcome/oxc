@@ -33,7 +33,7 @@ impl Default for Location {
 
 #[derive(Debug, Clone, JsonSchema)]
 pub struct NoWarningCommentsConfig {
-    terms: Option<Vec<String>>,
+    terms: Vec<String>,
     decorations: Option<Vec<String>>,
     location: Location,
 }
@@ -43,7 +43,7 @@ pub struct NoWarningComments(Box<NoWarningCommentsConfig>);
 impl Default for NoWarningCommentsConfig {
     fn default() -> Self {
         Self {
-            terms: Some(vec!["todo".to_string(), "fixme".to_string(), "xxx".to_string()]),
+            terms: vec!["todo".to_string(), "fixme".to_string(), "xxx".to_string()],
             decorations: None,
             location: Location::default(),
         }
@@ -52,13 +52,13 @@ impl Default for NoWarningCommentsConfig {
 
 impl NoWarningCommentsConfig {
     pub fn new(value: serde_json::Value) -> Self {
-        let mut terms: Vec<String> = vec![];
+        let mut terms: Vec<String> =
+            vec!["todo".to_string(), "fixme".to_string(), "xxx".to_string()];
         let mut decorations = Some(vec![]);
         let mut location = Location::default();
-        let default_terms = vec!["todo".to_string(), "fixme".to_string(), "xxx".to_string()];
 
         return match value {
-            Value::Null => Self { terms: Some(default_terms), decorations, location },
+            Value::Null => Self { terms, decorations, location },
             val => {
                 if let Some(config) = val.get(0) {
                     let extracted_terms = parse_string_array(config, "terms");
@@ -66,12 +66,12 @@ impl NoWarningCommentsConfig {
                     terms = match extracted_terms {
                         Some(t) => {
                             if t.is_empty() {
-                                default_terms
+                                terms
                             } else {
                                 t
                             }
                         }
-                        None => default_terms,
+                        None => terms,
                     };
 
                     decorations = parse_string_array(config, "decoration");
@@ -84,7 +84,7 @@ impl NoWarningCommentsConfig {
                     }
                 }
 
-                return Self { terms: Some(terms), decorations, location };
+                return Self { terms, decorations, location };
             }
         };
     }
@@ -183,11 +183,9 @@ impl Rule for NoWarningComments {
 
             // If there are no decorations it returns none so we need to match it otherwise it panics
             let cleaned_text = match &self.0.decorations {
-                Some(decorations) => trim_decorations_until_terms(
-                    &comment_text,
-                    decorations,
-                    self.0.terms.as_ref().unwrap_or(&vec![]),
-                ),
+                Some(decorations) => {
+                    trim_decorations_until_terms(&comment_text, decorations, &self.0.terms)
+                }
                 None => &comment_text,
             };
 
@@ -203,7 +201,7 @@ impl Rule for NoWarningComments {
             //     None => Box::new(default_terms.iter().copied()),
             // };
 
-            for term in self.0.terms.as_ref().unwrap() {
+            for term in &self.0.terms {
                 match &self.0.location {
                     Location::Start => {
                         if first_word_matches_term(&words, term) {
