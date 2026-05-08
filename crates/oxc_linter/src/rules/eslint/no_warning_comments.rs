@@ -34,7 +34,7 @@ impl Default for Location {
 #[derive(Debug, Clone, JsonSchema)]
 pub struct NoWarningCommentsConfig {
     terms: Vec<String>,
-    decorations: Option<Vec<String>>,
+    decorations: Vec<String>,
     location: Location,
 }
 #[derive(Debug, Default, Clone, JsonSchema)]
@@ -44,7 +44,7 @@ impl Default for NoWarningCommentsConfig {
     fn default() -> Self {
         Self {
             terms: vec!["todo".to_string(), "fixme".to_string(), "xxx".to_string()],
-            decorations: None,
+            decorations: vec![],
             location: Location::default(),
         }
     }
@@ -54,7 +54,7 @@ impl NoWarningCommentsConfig {
     pub fn new(value: serde_json::Value) -> Self {
         let mut terms: Vec<String> =
             vec!["todo".to_string(), "fixme".to_string(), "xxx".to_string()];
-        let mut decorations = Some(vec![]);
+        let mut decorations = vec![];
         let mut location = Location::default();
 
         return match value {
@@ -74,7 +74,8 @@ impl NoWarningCommentsConfig {
                         None => terms,
                     };
 
-                    decorations = parse_string_array(config, "decoration");
+                    // TODO: This is the line that's failing. unwrap() is panicing.
+                    decorations = parse_string_array(config, "decoration").unwrap();
 
                     if let Some(location_config) = config.get("location") {
                         if let Ok(loc) = serde_json::from_value::<Location>(location_config.clone())
@@ -182,12 +183,15 @@ impl Rule for NoWarningComments {
             }
 
             // If there are no decorations it returns none so we need to match it otherwise it panics
-            let cleaned_text = match &self.0.decorations {
-                Some(decorations) => {
-                    trim_decorations_until_terms(&comment_text, decorations, &self.0.terms)
-                }
-                None => &comment_text,
-            };
+            // let cleaned_text = match &self.0.decorations {
+            //     Some(decorations) => {
+            //         trim_decorations_until_terms(&comment_text, decorations, &self.0.terms)
+            //     }
+            //     None => &comment_text,
+            // };
+
+            let cleaned_text =
+                trim_decorations_until_terms(&comment_text, &self.0.decorations, &self.0.terms);
 
             let words = cleaned_text
                 .split_whitespace()
