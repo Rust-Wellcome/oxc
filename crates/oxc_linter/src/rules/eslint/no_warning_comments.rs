@@ -50,12 +50,36 @@ impl Default for NoWarningCommentsConfig {
 }
 
 impl NoWarningCommentsConfig {
-    pub fn new(
-        terms: Option<Vec<String>>,
-        decorations: Option<Vec<String>>,
-        location: Location,
-    ) -> Self {
-        Self { terms, decorations, location }
+    pub fn new(value: serde_json::Value) -> Self {
+        let mut terms: Vec<String> = vec![];
+        let mut decorations = Some(vec![]);
+        let mut location = Location::default();
+        let default_terms = vec!["todo".to_string(), "fixme".to_string(), "xxx".to_string()];
+
+        if let Some(config) = value.get(0) {
+            let extracted_terms = parse_string_array(config, "terms");
+
+            terms = match extracted_terms {
+                Some(t) => {
+                    if t.is_empty() {
+                        default_terms
+                    } else {
+                        t
+                    }
+                }
+                None => default_terms,
+            };
+
+            decorations = parse_string_array(config, "decoration");
+
+            if let Some(location_config) = config.get("location") {
+                if let Ok(loc) = serde_json::from_value::<Location>(location_config.clone()) {
+                    location = loc;
+                }
+            }
+        }
+
+        Self { terms: Some(terms), decorations, location }
     }
 }
 
@@ -192,21 +216,7 @@ impl Rule for NoWarningComments {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
         // Read the configuration for term, decoration and location from _value and then
         // return NoWarningComments {} struct with the attributes terms, decoration and locations.
-
-        let mut cfg = NoWarningCommentsConfig::default();
-
-        if let Some(config) = value.get(0) {
-            cfg.terms = parse_string_array(config, "terms");
-            cfg.decorations = parse_string_array(config, "decoration");
-
-            if let Some(location_config) = config.get("location") {
-                if let Ok(loc) = serde_json::from_value::<Location>(location_config.clone()) {
-                    cfg.location = loc;
-                }
-            }
-        }
-
-        Ok(Self(Box::new(cfg)))
+        Ok(Self(Box::new(NoWarningCommentsConfig::new(value))))
     }
 }
 
