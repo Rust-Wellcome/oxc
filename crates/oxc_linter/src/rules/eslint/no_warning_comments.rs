@@ -75,7 +75,7 @@ impl NoWarningCommentsConfig {
                     };
 
                     // TODO: This is the line that's failing. unwrap() is panicing.
-                    decorations = parse_string_array(config, "decoration").unwrap();
+                    decorations = parse_string_array(config, "decoration").unwrap_or_default();
 
                     if let Some(location_config) = config.get("location") {
                         if let Ok(loc) = serde_json::from_value::<Location>(location_config.clone())
