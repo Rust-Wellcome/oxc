@@ -52,42 +52,52 @@ impl Default for NoWarningCommentsConfig {
 
 impl NoWarningCommentsConfig {
     pub fn new(value: serde_json::Value) -> Self {
-        let mut terms: Vec<String> =
-            vec!["todo".to_string(), "fixme".to_string(), "xxx".to_string()];
-        let mut decorations = vec![];
-        let mut location = Location::default();
+        let mut cfg = NoWarningCommentsConfig::default();
 
-        return match value {
-            Value::Null => Self { terms, decorations, location },
-            val => {
-                if let Some(config) = val.get(0) {
-                    let extracted_terms = parse_string_array(config, "terms");
-
-                    terms = match extracted_terms {
-                        Some(t) => {
-                            if t.is_empty() {
-                                terms
-                            } else {
-                                t
-                            }
-                        }
-                        None => terms,
-                    };
-
-                    // TODO: This is the line that's failing. unwrap() is panicing.
-                    decorations = parse_string_array(config, "decoration").unwrap_or_default();
-
-                    if let Some(location_config) = config.get("location") {
-                        if let Ok(loc) = serde_json::from_value::<Location>(location_config.clone())
-                        {
-                            location = loc;
-                        }
+        if let Value::Array(arr) = value {
+            if let Some(config) = arr.get(0) {
+                if let Some(t) = parse_string_array(config, "terms") {
+                    if !t.is_empty() {
+                        cfg.terms = t;
                     }
                 }
 
-                return Self { terms, decorations, location };
+                cfg.decorations = parse_string_array(config, "decoration").unwrap_or_default();
+
+                if let Some(location_config) = config.get("location") {
+                    if let Ok(loc) = serde_json::from_value::<Location>(location_config.clone()) {
+                        cfg.location = loc;
+                    }
+                }
             }
-        };
+        }
+
+        cfg
+    }
+}
+
+struct Comment {
+    raw: String,
+    cleaned: String,
+    words: Vec<String>,
+}
+
+impl Comment {
+    pub fn from_raw(raw: &str, cfg: &NoWarningCommentsConfig) -> Self {
+        // lowercase the raw comment for matching
+        let comment_text = raw.cow_to_lowercase();
+        // strip leading decoration chars up to the first term
+        let cleaned_slice =
+            trim_decorations_until_terms(&comment_text, &cfg.decorations, &cfg.terms);
+        let cleaned = cleaned_slice.to_string();
+
+        let words = cleaned
+            .split_whitespace()
+            .filter(|w| !w.is_empty())
+            .map(|w| cow_utils::CowUtils::cow_to_lowercase(w).into_owned())
+            .collect::<Vec<String>>();
+
+        Self { raw: raw.to_string(), cleaned, words }
     }
 }
 
@@ -171,49 +181,28 @@ fn first_word_matches_term(words: &[String], term: &str) -> bool {
 // if location is "start" then ignore decorators, if "anywhere" then do not ignore decorators. If location is not provided then default to "start".
 impl Rule for NoWarningComments {
     fn run_once(&self, ctx: &LintContext) {
+        let cfg = self.0.as_ref();
+
         ctx.semantic().comments().iter().for_each(|comment| {
             let span = comment.span;
 
             let raw_comment = &ctx.source_text()[(span.start as usize + 2)..(span.end as usize)];
-            let comment_text = raw_comment.cow_to_lowercase();
 
-            // it would be better to strip comments with no-warning-comments
-            if comment_text.contains("no-warning-comments") {
+            if raw_comment.cow_to_lowercase().contains("no-warning-comments") {
                 return;
             }
 
-            // If there are no decorations it returns none so we need to match it otherwise it panics
-            // let cleaned_text = match &self.0.decorations {
-            //     Some(decorations) => {
-            //         trim_decorations_until_terms(&comment_text, decorations, &self.0.terms)
-            //     }
-            //     None => &comment_text,
-            // };
+            let comment = Comment::from_raw(raw_comment, cfg);
 
-            let cleaned_text =
-                trim_decorations_until_terms(&comment_text, &self.0.decorations, &self.0.terms);
-
-            let words = cleaned_text
-                .split_whitespace()
-                .filter(|w| !w.is_empty())
-                .map(|w| cow_utils::CowUtils::cow_to_lowercase(w).into_owned())
-                .collect::<Vec<String>>();
-
-            // let default_terms: &[&str] = &["todo", "fixme", "xxx"];
-            // let terms: Box<dyn Iterator<Item = &str>> = match &self.0.terms {
-            //     Some(t) => Box::new(t.iter().map(String::as_str)),
-            //     None => Box::new(default_terms.iter().copied()),
-            // };
-
-            for term in &self.0.terms {
-                match &self.0.location {
+            for term in &cfg.terms {
+                match &cfg.location {
                     Location::Start => {
-                        if first_word_matches_term(&words, term) {
+                        if first_word_matches_term(&comment.words, term) {
                             ctx.diagnostic(no_with_diagnostic(span, term, raw_comment));
                         }
                     }
                     Location::Anywhere => {
-                        if any_word_matches_term(&words, term) {
+                        if any_word_matches_term(&comment.words, term) {
                             ctx.diagnostic(no_with_diagnostic(span, term, raw_comment));
                         }
                     }
@@ -223,7 +212,7 @@ impl Rule for NoWarningComments {
     }
 
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        // Read the configuration for term, decoration and location from _value and then
+        // Read the configuration for term, decoration and location from value and then
         // return NoWarningComments {} struct with the attributes terms, decoration and locations.
         Ok(Self(Box::new(NoWarningCommentsConfig::new(value))))
     }
