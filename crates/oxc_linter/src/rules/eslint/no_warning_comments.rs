@@ -77,13 +77,19 @@ impl NoWarningCommentsConfig {
 }
 
 struct Comment {
+    span: Span,
     raw: String,
-    cleaned: String,
     words: Vec<String>,
 }
 
+// TODO
+// - move trim_decorations_unit_terms into comment and fix constructor
+// - create a term struct to and look at matches_terms functions
+// - can we add some tests for structs
+// - documentation
+
 impl Comment {
-    pub fn from_raw(raw: &str, cfg: &NoWarningCommentsConfig) -> Self {
+    pub fn from_raw(raw: &str, cfg: &NoWarningCommentsConfig) -> Vec<String> {
         // lowercase the raw comment for matching
         let comment_text = raw.cow_to_lowercase();
         // strip leading decoration chars up to the first term
@@ -97,7 +103,50 @@ impl Comment {
             .map(|w| cow_utils::CowUtils::cow_to_lowercase(w).into_owned())
             .collect::<Vec<String>>();
 
-        Self { raw: raw.to_string(), cleaned, words }
+        words
+    }
+
+    pub fn new(span: Span, source_text: &str, cfg: &NoWarningCommentsConfig) -> Self {
+        let raw = &source_text[(span.start as usize + 2)..(span.end as usize)];
+        let words = Self::from_raw(raw, cfg);
+        Self { span, raw: raw.to_string(), words }
+    }
+
+    pub fn allow(&self) -> bool {
+        self.raw.cow_to_lowercase().contains("no-warning-comments")
+    }
+
+    pub fn contains_term(&self, term: &str, location: &Location, ctx: &LintContext) {
+        match location {
+            Location::Start => {
+                if self.first_word_matches_term(term) {
+                    ctx.diagnostic(no_with_diagnostic(self.span, term, &self.raw));
+                }
+            }
+            Location::Anywhere => {
+                if self.any_word_matches_term(term) {
+                    ctx.diagnostic(no_with_diagnostic(self.span, term, &self.raw));
+                }
+            }
+        }
+    }
+
+    fn any_word_matches_term(&self, term: &str) -> bool {
+        let term_lower = term.cow_to_lowercase();
+        self.words.iter().any(|word| {
+            let word_lower = word.cow_to_lowercase();
+            let is_word_alnum = word_lower.chars().all(char::is_alphanumeric);
+            if is_word_alnum { word_lower == term_lower } else { word_lower.contains(&*term_lower) }
+        })
+    }
+
+    fn first_word_matches_term(&self, term: &str) -> bool {
+        let term_lower = term.cow_to_lowercase();
+        self.words.first().map_or(false, |word| {
+            let word_lower = word.cow_to_lowercase();
+            let trimmed = word_lower.trim_end_matches(|c: char| !c.is_alphanumeric());
+            trimmed == term_lower
+        })
     }
 }
 
@@ -159,23 +208,6 @@ fn trim_decorations_until_terms<'a>(
 /// if word is todoMVC and term is todo it will not match.
 /// This function is not working correctly so we need to go through the various options.
 /// --- "/* eslint one-var: 2 */" ---
-fn any_word_matches_term(words: &[String], term: &str) -> bool {
-    let term_lower = term.cow_to_lowercase();
-    words.iter().any(|word| {
-        let word_lower = word.cow_to_lowercase();
-        let is_word_alnum = word_lower.chars().all(char::is_alphanumeric);
-        if is_word_alnum { word_lower == term_lower } else { word_lower.contains(&*term_lower) }
-    })
-}
-
-fn first_word_matches_term(words: &[String], term: &str) -> bool {
-    let term_lower = term.cow_to_lowercase();
-    words.first().map_or(false, |word| {
-        let word_lower = word.cow_to_lowercase();
-        let trimmed = word_lower.trim_end_matches(|c: char| !c.is_alphanumeric());
-        trimmed == term_lower
-    })
-}
 
 // https://eslint.org/docs/latest/rules/no-warning-comments#options
 // if location is "start" then ignore decorators, if "anywhere" then do not ignore decorators. If location is not provided then default to "start".
@@ -184,29 +216,14 @@ impl Rule for NoWarningComments {
         let cfg = self.0.as_ref();
 
         ctx.semantic().comments().iter().for_each(|comment| {
-            let span = comment.span;
+            let comment = Comment::new(comment.span, ctx.source_text(), cfg);
 
-            let raw_comment = &ctx.source_text()[(span.start as usize + 2)..(span.end as usize)];
-
-            if raw_comment.cow_to_lowercase().contains("no-warning-comments") {
+            if comment.allow() {
                 return;
             }
 
-            let comment = Comment::from_raw(raw_comment, cfg);
-
             for term in &cfg.terms {
-                match &cfg.location {
-                    Location::Start => {
-                        if first_word_matches_term(&comment.words, term) {
-                            ctx.diagnostic(no_with_diagnostic(span, term, raw_comment));
-                        }
-                    }
-                    Location::Anywhere => {
-                        if any_word_matches_term(&comment.words, term) {
-                            ctx.diagnostic(no_with_diagnostic(span, term, raw_comment));
-                        }
-                    }
-                }
+                comment.contains_term(term, &cfg.location, ctx);
             }
         });
     }
