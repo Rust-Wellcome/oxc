@@ -85,8 +85,9 @@ struct Comment {
 // TODO
 // - move trim_decorations_unit_terms into comment and fix constructor [DONE]
 // - create a term struct to and look at matches_terms functions [DONE]
-// - can we add some tests for structs
+// - can we add some tests for structs [Done test_init_comment, test_allow. test_word_matches_term and test_trim_decorations_until_terms are left to do.]
 // - documentation
+// - Run the final code through copilot to see if it offers any further refactoring opportunities.
 
 impl Comment {
     pub fn from_raw(raw: &str, cfg: &NoWarningCommentsConfig) -> Vec<String> {
