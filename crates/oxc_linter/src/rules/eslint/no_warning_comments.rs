@@ -93,8 +93,9 @@ impl Comment {
         // lowercase the raw comment for matching
         let comment_text = raw.cow_to_lowercase();
         // strip leading decoration chars up to the first term
+
         let cleaned_slice =
-            trim_decorations_until_terms(&comment_text, &cfg.decorations, &cfg.terms);
+            Self::trim_decorations_until_terms(&comment_text, &cfg.decorations, &cfg.terms);
         let cleaned = cleaned_slice.to_string();
 
         let words = cleaned
@@ -148,6 +149,29 @@ impl Comment {
             trimmed == term_lower
         })
     }
+
+    fn trim_decorations_until_terms<'a>(
+        s: &'a str,
+        decorations: &[String],
+        terms: &[String],
+    ) -> &'a str {
+        if terms.is_empty() {
+            return s;
+        }
+        let mut offset = 0;
+        for (i, c) in s.char_indices() {
+            if terms.iter().any(|t| s[i..].starts_with(t.as_str())) {
+                break;
+            }
+            let c_str = c.to_string();
+            if decorations.iter().any(|d| d == &c_str) {
+                offset = i + c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        &s[offset..]
+    }
 }
 
 declare_oxc_lint!(
@@ -178,29 +202,6 @@ declare_oxc_lint!(
              // Options are 'fix', 'fix_dangerous', 'suggestion', and 'conditional_fix_suggestion'
      config = NoWarningCommentsConfig,
 );
-
-fn trim_decorations_until_terms<'a>(
-    s: &'a str,
-    decorations: &[String],
-    terms: &[String],
-) -> &'a str {
-    if terms.is_empty() {
-        return s;
-    }
-    let mut offset = 0;
-    for (i, c) in s.char_indices() {
-        if terms.iter().any(|t| s[i..].starts_with(t.as_str())) {
-            break;
-        }
-        let c_str = c.to_string();
-        if decorations.iter().any(|d| d == &c_str) {
-            offset = i + c.len_utf8();
-        } else {
-            break;
-        }
-    }
-    &s[offset..]
-}
 
 /// Checks if any word matches the term, including non-alphanumeric characters.
 /// if term is "todo", it matches "todo", "todo!", "(todo)", etc.
