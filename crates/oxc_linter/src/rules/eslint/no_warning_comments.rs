@@ -84,7 +84,7 @@ struct Comment {
 
 // TODO
 // - move trim_decorations_unit_terms into comment and fix constructor [DONE]
-// - create a term struct to and look at matches_terms functions
+// - create a term struct to and look at matches_terms functions [DONE]
 // - can we add some tests for structs
 // - documentation
 
@@ -124,27 +124,22 @@ impl Comment {
     }
 
     fn word_matches_term(&self, location: Location, term: &str) -> bool {
+        let term_lower = term.cow_to_lowercase();
         match location {
-            Location::Start => {
-                let term_lower = term.cow_to_lowercase();
-                self.words.first().map_or(false, |word| {
-                    let word_lower = word.cow_to_lowercase();
-                    let trimmed = word_lower.trim_end_matches(|c: char| !c.is_alphanumeric());
-                    trimmed == term_lower
-                })
-            }
-            Location::Anywhere => {
-                let term_lower = term.cow_to_lowercase();
-                self.words.iter().any(|word| {
-                    let word_lower = word.cow_to_lowercase();
-                    let is_word_alnum = word_lower.chars().all(char::is_alphanumeric);
-                    if is_word_alnum {
-                        word_lower == term_lower
-                    } else {
-                        word_lower.contains(&*term_lower)
-                    }
-                })
-            }
+            Location::Start => self.words.first().map_or(false, |word| {
+                let word_lower = word.cow_to_lowercase();
+                let trimmed = word_lower.trim_end_matches(|c: char| !c.is_alphanumeric());
+                trimmed == term_lower
+            }),
+            Location::Anywhere => self.words.iter().any(|word| {
+                let word_lower = word.cow_to_lowercase();
+                let is_word_alnum = word_lower.chars().all(char::is_alphanumeric);
+                if is_word_alnum {
+                    word_lower == term_lower
+                } else {
+                    word_lower.contains(&*term_lower)
+                }
+            }),
         }
     }
 
@@ -436,3 +431,39 @@ fn test() {
 
     Tester::new(NoWarningComments::NAME, NoWarningComments::PLUGIN, pass, fail).test_and_snapshot();
 }
+
+#[test]
+fn test_init_comment() {
+    let source_text = r"
+        var x = 10;
+        //TODO: Remove this comment
+        var y = 15;
+        ";
+    let span = Span::new(19, 56);
+    let cfg = NoWarningCommentsConfig::default();
+    let comment = Comment::new(span, source_text, &cfg);
+    assert!(comment.words == vec!["//todo:", "remove", "this", "comment"]);
+    assert!(comment.raw == "        //TODO: Remove this comment")
+}
+
+#[test]
+fn test_allow() {
+    let source_text = r#"/*eslint no-warning-comments: [2, { "terms": ["todo", "fixme", "any other term"], "location": "anywhere" }]*/
+
+        	var x = 10;
+        	"#;
+    let span = Span::new(1, source_text.len() as u32);
+    let cfg = NoWarningCommentsConfig::default();
+    let comment = Comment::new(span, source_text, &cfg);
+    assert!(comment.allow())
+}
+
+// #[test]
+// fn test_word_matches_term() {
+//     assert!(false)
+// }
+
+// #[test]
+// fn test_trim_decorations_until_terms() {
+//     assert!(false)
+// }
