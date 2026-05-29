@@ -83,7 +83,7 @@ struct Comment {
 }
 
 // TODO
-// - move trim_decorations_unit_terms into comment and fix constructor
+// - move trim_decorations_unit_terms into comment and fix constructor [DONE]
 // - create a term struct to and look at matches_terms functions
 // - can we add some tests for structs
 // - documentation
@@ -118,36 +118,34 @@ impl Comment {
     }
 
     pub fn contains_term(&self, term: &str, location: &Location, ctx: &LintContext) {
-        match location {
-            Location::Start => {
-                if self.first_word_matches_term(term) {
-                    ctx.diagnostic(no_with_diagnostic(self.span, term, &self.raw));
-                }
-            }
-            Location::Anywhere => {
-                if self.any_word_matches_term(term) {
-                    ctx.diagnostic(no_with_diagnostic(self.span, term, &self.raw));
-                }
-            }
+        if self.word_matches_term(*location, term) {
+            ctx.diagnostic(no_with_diagnostic(self.span, term, &self.raw));
         }
     }
 
-    fn any_word_matches_term(&self, term: &str) -> bool {
-        let term_lower = term.cow_to_lowercase();
-        self.words.iter().any(|word| {
-            let word_lower = word.cow_to_lowercase();
-            let is_word_alnum = word_lower.chars().all(char::is_alphanumeric);
-            if is_word_alnum { word_lower == term_lower } else { word_lower.contains(&*term_lower) }
-        })
-    }
-
-    fn first_word_matches_term(&self, term: &str) -> bool {
-        let term_lower = term.cow_to_lowercase();
-        self.words.first().map_or(false, |word| {
-            let word_lower = word.cow_to_lowercase();
-            let trimmed = word_lower.trim_end_matches(|c: char| !c.is_alphanumeric());
-            trimmed == term_lower
-        })
+    fn word_matches_term(&self, location: Location, term: &str) -> bool {
+        match location {
+            Location::Start => {
+                let term_lower = term.cow_to_lowercase();
+                self.words.first().map_or(false, |word| {
+                    let word_lower = word.cow_to_lowercase();
+                    let trimmed = word_lower.trim_end_matches(|c: char| !c.is_alphanumeric());
+                    trimmed == term_lower
+                })
+            }
+            Location::Anywhere => {
+                let term_lower = term.cow_to_lowercase();
+                self.words.iter().any(|word| {
+                    let word_lower = word.cow_to_lowercase();
+                    let is_word_alnum = word_lower.chars().all(char::is_alphanumeric);
+                    if is_word_alnum {
+                        word_lower == term_lower
+                    } else {
+                        word_lower.contains(&*term_lower)
+                    }
+                })
+            }
+        }
     }
 
     fn trim_decorations_until_terms<'a>(
