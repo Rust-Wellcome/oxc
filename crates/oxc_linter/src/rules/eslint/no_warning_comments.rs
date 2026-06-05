@@ -76,6 +76,7 @@ impl NoWarningCommentsConfig {
     }
 }
 
+#[derive(Debug)]
 struct Comment {
     span: Span,
     raw: String,
@@ -85,8 +86,11 @@ struct Comment {
 // TODO
 // - move trim_decorations_unit_terms into comment and fix constructor [DONE]
 // - create a term struct to and look at matches_terms functions [DONE]
-// - can we add some tests for structs [Done test_init_comment, test_allow. test_word_matches_term and test_trim_decorations_until_terms are left to do.]
+// - can we add some tests for structs [Done test_init_comment, test_allow. test_word_matches_term] and test_trim_decorations_until_terms are left to do.
 // - documentation
+// - The test_word_matches_term test revelaed that we are passing the Location unnecessarily to the word_matches_term function,
+//   which shoud have been used from the configuration.
+// - Linting
 // - Run the final code through copilot to see if it offers any further refactoring opportunities.
 
 impl Comment {
@@ -457,10 +461,27 @@ fn test_allow() {
     assert!(comment.allow())
 }
 
-// #[test]
-// fn test_word_matches_term() {
-//     assert!(false)
-// }
+#[test]
+fn test_word_matches_term() {
+    let mut source_text = r"//!XXX comment starting with no spaces (start)";
+    let mut span = Span::new(0, source_text.len() as u32);
+    let mut cfg = NoWarningCommentsConfig::new(
+        serde_json::json!([{ "terms": ["!xxx"], "location": "anywhere" }]),
+    );
+    let mut comment = Comment::new(span, source_text, &cfg);
+    println!("comment: {:?}", comment);
+    assert!(comment.word_matches_term(Location::Anywhere, "!xxx"));
+    assert!(comment.word_matches_term(Location::Start, "!xxx"));
+
+    source_text = r"//comment starting with no spaces !XXX (anywhere)";
+    span = Span::new(0, source_text.len() as u32);
+    cfg = NoWarningCommentsConfig::new(
+        serde_json::json!([{ "terms": ["!xxx"], "location": "anywhere" }]),
+    );
+    comment = Comment::new(span, source_text, &cfg);
+    assert!(comment.word_matches_term(Location::Anywhere, "!xxx"));
+    assert!(!comment.word_matches_term(Location::Start, "!xxx"));
+}
 
 // #[test]
 // fn test_trim_decorations_until_terms() {
