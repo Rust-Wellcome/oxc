@@ -99,13 +99,11 @@ impl Comment {
             Self::trim_decorations_until_terms(&comment_text, &cfg.decorations, &cfg.terms);
         let cleaned = cleaned_slice.to_string();
 
-        let words = cleaned
+        cleaned
             .split_whitespace()
             .filter(|w| !w.is_empty())
             .map(|w| cow_utils::CowUtils::cow_to_lowercase(w).into_owned())
-            .collect::<Vec<String>>();
-
-        words
+            .collect::<Vec<String>>()
     }
 
     pub fn new(span: Span, source_text: &str, cfg: &NoWarningCommentsConfig) -> Self {
