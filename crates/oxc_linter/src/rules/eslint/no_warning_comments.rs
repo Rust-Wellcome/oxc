@@ -31,13 +31,13 @@ impl Default for Location {
     }
 }
 
-#[derive(Debug, Clone, JsonSchema)]
+#[derive(Debug, Clone, JsonSchema, PartialEq, Eq)]
 pub struct NoWarningCommentsConfig {
     terms: Vec<String>,
     decorations: Vec<String>,
     location: Location,
 }
-#[derive(Debug, Default, Clone, JsonSchema)]
+#[derive(Debug, Default, Clone, JsonSchema, PartialEq, Eq)]
 pub struct NoWarningComments(Box<NoWarningCommentsConfig>);
 
 impl Default for NoWarningCommentsConfig {
@@ -81,15 +81,16 @@ struct Comment {
     span: Span,
     raw: String,
     words: Vec<String>,
+    cfg: NoWarningCommentsConfig,
 }
 
 // TODO
 // - move trim_decorations_unit_terms into comment and fix constructor [DONE]
 // - create a term struct to and look at matches_terms functions [DONE]
-// - can we add some tests for structs [Done test_init_comment, test_allow. test_word_matches_term] and test_trim_decorations_until_terms are left to do.
+// - can we add some tests for structs [Done test_init_comment, test_allow,  test_word_matches_term, test_trim_decorations_until_terms]. [done]
 // - documentation
-// - The test_word_matches_term test revelaed that we are passing the Location unnecessarily to the word_matches_term function,
-//   which shoud have been used from the configuration.
+// - The test_word_matches_term test revealed that we are passing the Location unnecessarily to the word_matches_term function,
+//   which should have been used from the configuration. [done]
 // - Linting
 // - Run the final code through copilot to see if it offers any further refactoring opportunities.
 
@@ -113,22 +114,22 @@ impl Comment {
     pub fn new(span: Span, source_text: &str, cfg: &NoWarningCommentsConfig) -> Self {
         let raw = &source_text[(span.start as usize + 2)..(span.end as usize)];
         let words = Self::from_raw(raw, cfg);
-        Self { span, raw: raw.to_string(), words }
+        Self { span, raw: raw.to_string(), words, cfg: cfg.clone() }
     }
 
     pub fn allow(&self) -> bool {
         self.raw.cow_to_lowercase().contains("no-warning-comments")
     }
 
-    pub fn contains_term(&self, term: &str, location: &Location, ctx: &LintContext) {
-        if self.word_matches_term(*location, term) {
+    pub fn contains_term(&self, term: &str, ctx: &LintContext) {
+        if self.word_matches_term(term) {
             ctx.diagnostic(no_with_diagnostic(self.span, term, &self.raw));
         }
     }
 
-    fn word_matches_term(&self, location: Location, term: &str) -> bool {
+    fn word_matches_term(&self, term: &str) -> bool {
         let term_lower = term.cow_to_lowercase();
-        match location {
+        match self.cfg.location {
             Location::Start => self.words.first().map_or(false, |word| {
                 let word_lower = word.cow_to_lowercase();
                 let trimmed = word_lower.trim_end_matches(|c: char| !c.is_alphanumeric());
@@ -220,7 +221,7 @@ impl Rule for NoWarningComments {
             }
 
             for term in &cfg.terms {
-                comment.contains_term(term, &cfg.location, ctx);
+                comment.contains_term(term, ctx);
             }
         });
     }
@@ -446,7 +447,8 @@ fn test_init_comment() {
     let cfg = NoWarningCommentsConfig::default();
     let comment = Comment::new(span, source_text, &cfg);
     assert!(comment.words == vec!["//todo:", "remove", "this", "comment"]);
-    assert!(comment.raw == "        //TODO: Remove this comment")
+    assert!(comment.raw == "        //TODO: Remove this comment");
+    assert!(comment.cfg == NoWarningCommentsConfig::default());
 }
 
 #[test]
@@ -465,25 +467,39 @@ fn test_allow() {
 fn test_word_matches_term() {
     let mut source_text = r"//!XXX comment starting with no spaces (start)";
     let mut span = Span::new(0, source_text.len() as u32);
-    let mut cfg = NoWarningCommentsConfig::new(
+    let cfg_location_anywhere = NoWarningCommentsConfig::new(
         serde_json::json!([{ "terms": ["!xxx"], "location": "anywhere" }]),
     );
-    let mut comment = Comment::new(span, source_text, &cfg);
-    println!("comment: {:?}", comment);
-    assert!(comment.word_matches_term(Location::Anywhere, "!xxx"));
-    assert!(comment.word_matches_term(Location::Start, "!xxx"));
+    let cfg_location_start = NoWarningCommentsConfig::new(
+        serde_json::json!([{ "terms": ["!xxx"], "location": "start" }]),
+    );
+    let mut comment = Comment::new(span, source_text, &cfg_location_anywhere);
+    assert!(comment.word_matches_term("!xxx"));
+    comment = Comment::new(span, source_text, &cfg_location_start);
+    assert!(comment.word_matches_term("!xxx"));
 
     source_text = r"//comment starting with no spaces !XXX (anywhere)";
     span = Span::new(0, source_text.len() as u32);
-    cfg = NoWarningCommentsConfig::new(
-        serde_json::json!([{ "terms": ["!xxx"], "location": "anywhere" }]),
-    );
-    comment = Comment::new(span, source_text, &cfg);
-    assert!(comment.word_matches_term(Location::Anywhere, "!xxx"));
-    assert!(!comment.word_matches_term(Location::Start, "!xxx"));
+    comment = Comment::new(span, source_text, &cfg_location_anywhere);
+    assert!(comment.word_matches_term("!xxx"));
+    comment = Comment::new(span, source_text, &cfg_location_start);
+    assert!(!comment.word_matches_term("!xxx"));
 }
 
-// #[test]
-// fn test_trim_decorations_until_terms() {
-//     assert!(false)
-// }
+#[test]
+fn test_trim_decorations_until_terms() {
+    let source_text = r"!TODO comment starting with no spaces (start)";
+    let decorations = vec!["!".to_string()];
+    let mut terms = vec![];
+
+    assert!(
+        Comment::trim_decorations_until_terms(&source_text, &decorations, &terms)
+            == "!TODO comment starting with no spaces (start)"
+    );
+
+    terms = vec!["TODO".to_string()];
+    assert!(
+        Comment::trim_decorations_until_terms(&source_text, &decorations, &terms)
+            == "TODO comment starting with no spaces (start)"
+    );
+}
