@@ -20,27 +20,40 @@ fn no_with_diagnostic(span: Span, term: &str, comment: &str) -> OxcDiagnostic {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, JsonSchema, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
+/// Controls where configured warning terms are matched within a comment.
 pub enum Location {
+    /// Match only the first logical word in the comment after optional decorations.
     Start,
+    /// Match any word position in the comment.
     Anywhere,
 }
 
 impl Default for Location {
+    /// Defaults to `Location::Start`, matching ESLint behavior.
     fn default() -> Self {
         Location::Start
     }
 }
 
 #[derive(Debug, Clone, JsonSchema, PartialEq, Eq)]
+/// Parsed configuration for the `no-warning-comments` rule.
+///
+/// Mirrors ESLint's options while keeping values normalized for matching.
 pub struct NoWarningCommentsConfig {
+    /// Lowercased terms that trigger diagnostics when matched.
     terms: Vec<String>,
+    /// Leading one-character decorations to strip when `location` is `start`.
     decorations: Vec<String>,
+    /// Position strategy used when matching each term.
     location: Location,
 }
 #[derive(Debug, Default, Clone, JsonSchema, PartialEq, Eq)]
+/// Lint rule wrapper containing the resolved `NoWarningCommentsConfig`.
 pub struct NoWarningComments(Box<NoWarningCommentsConfig>);
 
 impl Default for NoWarningCommentsConfig {
+    /// Uses ESLint-compatible defaults:
+    /// `terms = ["todo", "fixme", "xxx"]`, no decorations, and `location = start`.
     fn default() -> Self {
         Self {
             terms: vec!["todo".to_string(), "fixme".to_string(), "xxx".to_string()],
@@ -51,6 +64,14 @@ impl Default for NoWarningCommentsConfig {
 }
 
 impl NoWarningCommentsConfig {
+    /// Builds a rule configuration from JSON rule options.
+    ///
+    /// Expected shape is an array where index `0` contains an object with:
+    /// - `terms: string[]`
+    /// - `decoration: string[]`
+    /// - `location: "start" | "anywhere"`
+    ///
+    /// Invalid or missing entries fall back to defaults.
     pub fn new(value: serde_json::Value) -> Self {
         let mut cfg = NoWarningCommentsConfig::default();
 
@@ -77,10 +98,15 @@ impl NoWarningCommentsConfig {
 }
 
 #[derive(Debug)]
+/// Normalized comment view used for matching configured warning terms.
 struct Comment {
+    /// Span of the original comment token in source text.
     span: Span,
+    /// Raw comment contents (without the `//` or `/*` prefix markers).
     raw: String,
+    /// Lowercased, whitespace-split words derived from `raw`.
     words: Vec<String>,
+    /// Snapshot of rule configuration used to parse and match this comment.
     cfg: NoWarningCommentsConfig,
 }
 
@@ -95,6 +121,10 @@ struct Comment {
 // - Run the final code through copilot to see if it offers any further refactoring opportunities.
 
 impl Comment {
+    /// Converts raw comment text into normalized words used by term matching.
+    ///
+    /// This lowercases input and strips leading decorations until a configured
+    /// term is encountered.
     pub fn from_raw(raw: &str, cfg: &NoWarningCommentsConfig) -> Vec<String> {
         // lowercase the raw comment for matching
         let comment_text = raw.cow_to_lowercase();
@@ -111,22 +141,27 @@ impl Comment {
             .collect::<Vec<String>>()
     }
 
+    /// Creates a `Comment` from a source span and active rule configuration.
     pub fn new(span: Span, source_text: &str, cfg: &NoWarningCommentsConfig) -> Self {
         let raw = &source_text[(span.start as usize + 2)..(span.end as usize)];
         let words = Self::from_raw(raw, cfg);
         Self { span, raw: raw.to_string(), words, cfg: cfg.clone() }
     }
 
+    /// Returns `true` when the comment explicitly disables this rule inline.
     pub fn allow(&self) -> bool {
         self.raw.cow_to_lowercase().contains("no-warning-comments")
     }
 
+    /// Emits a diagnostic when the provided term matches this comment.
     pub fn contains_term(&self, term: &str, ctx: &LintContext) {
         if self.word_matches_term(term) {
             ctx.diagnostic(no_with_diagnostic(self.span, term, &self.raw));
         }
     }
 
+    /// Checks whether any normalized word matches the provided term according to
+    /// the configured `location` strategy.
     fn word_matches_term(&self, term: &str) -> bool {
         let term_lower = term.cow_to_lowercase();
         match self.cfg.location {
@@ -147,6 +182,11 @@ impl Comment {
         }
     }
 
+    /// Trims leading decoration characters until the first configured term.
+    ///
+    /// This behavior is used for `location = start` semantics so leading comment
+    /// markers such as `*`, `!`, or custom decorations do not affect the first
+    /// term check.
     fn trim_decorations_until_terms<'a>(
         s: &'a str,
         decorations: &[String],
@@ -210,6 +250,7 @@ declare_oxc_lint!(
 // https://eslint.org/docs/latest/rules/no-warning-comments#options
 // if location is "start" then ignore decorators, if "anywhere" then do not ignore decorators. If location is not provided then default to "start".
 impl Rule for NoWarningComments {
+    /// Scans all parsed comments once and reports diagnostics for configured terms.
     fn run_once(&self, ctx: &LintContext) {
         let cfg = self.0.as_ref();
 
@@ -226,6 +267,7 @@ impl Rule for NoWarningComments {
         });
     }
 
+    /// Deserializes rule options into `NoWarningCommentsConfig`.
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
         // Read the configuration for term, decoration and location from value and then
         // return NoWarningComments {} struct with the attributes terms, decoration and locations.
