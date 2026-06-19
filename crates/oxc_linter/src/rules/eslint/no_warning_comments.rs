@@ -7,17 +7,6 @@ use serde_json::Value;
 
 use crate::{context::LintContext, rule::Rule};
 
-fn parse_string_array(config: &serde_json::Value, key: &str) -> Option<Vec<String>> {
-    config
-        .get(key)?
-        .as_array()
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
-}
-
-fn no_with_diagnostic(span: Span, term: &str, comment: &str) -> OxcDiagnostic {
-    OxcDiagnostic::warn(format!("Unexpected '{term}' comment: '{comment}'.")).with_label(span)
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, JsonSchema, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 /// Controls where configured warning terms are matched within a comment.
@@ -64,6 +53,12 @@ impl Default for NoWarningCommentsConfig {
 }
 
 impl NoWarningCommentsConfig {
+    fn parse_string_array(config: &serde_json::Value, key: &str) -> Option<Vec<String>> {
+        config
+            .get(key)?
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+    }
     /// Builds a rule configuration from JSON rule options.
     ///
     /// Expected shape is an array where index `0` contains an object with:
@@ -77,13 +72,14 @@ impl NoWarningCommentsConfig {
 
         if let Value::Array(arr) = value {
             if let Some(config) = arr.get(0) {
-                if let Some(t) = parse_string_array(config, "terms") {
+                if let Some(t) = Self::parse_string_array(config, "terms") {
                     if !t.is_empty() {
                         cfg.terms = t;
                     }
                 }
 
-                cfg.decorations = parse_string_array(config, "decoration").unwrap_or_default();
+                cfg.decorations =
+                    Self::parse_string_array(config, "decoration").unwrap_or_default();
 
                 if let Some(location_config) = config.get("location") {
                     if let Ok(loc) = serde_json::from_value::<Location>(location_config.clone()) {
@@ -156,7 +152,11 @@ impl Comment {
     /// Emits a diagnostic when the provided term matches this comment.
     pub fn contains_term(&self, term: &str, ctx: &LintContext) {
         if self.word_matches_term(term) {
-            ctx.diagnostic(no_with_diagnostic(self.span, term, &self.raw));
+            let raw = &self.raw;
+            ctx.diagnostic(
+                OxcDiagnostic::warn(format!("Unexpected '{term}' comment: '{raw}'."))
+                    .with_label(self.span),
+            );
         }
     }
 
