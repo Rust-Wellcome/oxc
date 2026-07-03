@@ -107,12 +107,19 @@ struct Comment {
 }
 
 // TODO
-// - move trim_decorations_unit_terms into comment and fix constructor [DONE]
-// - create a term struct to and look at matches_terms functions [DONE]
-// - can we add some tests for structs [Done test_init_comment, test_allow,  test_word_matches_term, test_trim_decorations_until_terms]. [done]
 // - documentation
-// - The test_word_matches_term test revealed that we are passing the Location unnecessarily to the word_matches_term function,
-//   which should have been used from the configuration. [done]
+// - Comment struct:
+//   - reword the description
+//   - For comment struct add code example
+//   - examples for the implementation code
+//   - for the new function we need to improve the description, e.g. parameters
+// - NoWarningComments struct:
+//   - reword the description
+//   - it doesn't show field information
+//   - no docs for parse_string_array
+//   - add example code initializing
+// - Review comments,e.g, "if term is "todo", it matches "todo", "todo!", "(todo)", etc."
+//
 // - Linting
 // - Run the final code through copilot to see if it offers any further refactoring opportunities.
 
