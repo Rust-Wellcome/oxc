@@ -53,6 +53,15 @@ impl Default for NoWarningCommentsConfig {
 }
 
 impl NoWarningCommentsConfig {
+    /// Reads a string array option from a JSON config object.
+    ///
+    /// Behavior:
+    /// - Returns `None` if `key` is missing or the value is not an array.
+    /// - Returns `Some(Vec<String>)` when the value is an array.
+    /// - Non-string items inside the array are ignored.
+    ///
+    /// This helper is used to parse rule options like `terms` and `decoration`
+    /// without failing on partially invalid user config.
     fn parse_string_array(config: &serde_json::Value, key: &str) -> Option<Vec<String>> {
         config
             .get(key)?
