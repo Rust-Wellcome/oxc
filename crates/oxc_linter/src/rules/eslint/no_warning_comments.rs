@@ -150,7 +150,7 @@ struct Comment {
 // - NoWarningComments struct:
 //   - reword the description
 //   - it doesn't show field information
-//   - no docs for parse_string_array
+//   - no docs for parse_string_array [DONE]
 //   - add example code initializing
 // - Review comments,e.g, "if term is "todo", it matches "todo", "todo!", "(todo)", etc."
 //
