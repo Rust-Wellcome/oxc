@@ -94,25 +94,50 @@ impl NoWarningCommentsConfig {
 }
 
 #[derive(Debug)]
-/// Normalized comment view used for matching configured warning terms.
+/// A processed representation of a single source comment used by this rule.
+///
+/// Comment keeps both:
+/// - the original extracted text (raw) for diagnostics, and
+/// - a normalized token list (words) for matching configured terms.
+///
+/// # Example
+///
+/// Normalizing comment text for matching:
+///```
+/// let cfg = NoWarningCommentsConfig::new(serde_json::json!([{
+///     "terms": ["todo"],
+///     "decoration": ["!"],
+///     "location": "start"
+/// }]));
+///
+/// let words = Comment::from_raw("!TODO: remove legacy path", &cfg);
+/// assert_eq!(words, vec!["todo:", "remove", "legacy", "path"]);
+/// ```
 struct Comment {
-    /// Span of the original comment token in source text.
+    /// Source span of the comment token, used to place diagnostics.
     span: Span,
-    /// Raw comment contents (without the `//` or `/*` prefix markers).
+
+    /// Comment text slice as extracted from source for this rule.
     raw: String,
-    /// Lowercased, whitespace-split words derived from `raw`.
+
+    /// Normalized tokens derived from `raw` (lowercased + whitespace-split).
+    ///
+    /// Matching logic uses this instead of reparsing `raw` every time.
     words: Vec<String>,
-    /// Snapshot of rule configuration used to parse and match this comment.
+
+    /// Effective rule options used when this `Comment` was created.
+    ///
+    /// Stored here so matching helpers can use a consistent config snapshot.
     cfg: NoWarningCommentsConfig,
 }
 
 // TODO
 // - documentation
 // - Comment struct:
-//   - reword the description
-//   - For comment struct add code example
-//   - examples for the implementation code
-//   - for the new function we need to improve the description, e.g. parameters
+//   - reword the description [DONE]
+//   - For comment struct add code example [DONE]
+//   - examples for the implementation code [DONE]
+//   - for the new function we need to improve the description, e.g. parameters [DONE]
 // - NoWarningComments struct:
 //   - reword the description
 //   - it doesn't show field information
@@ -144,7 +169,24 @@ impl Comment {
             .collect::<Vec<String>>()
     }
 
-    /// Creates a `Comment` from a source span and active rule configuration.
+    /// Builds a Comment from a parsed comment span and the active rule config.
+    ///
+    /// This constructor:
+    /// 1. Extracts the comment text from source_text using span.
+    /// 2. Skips the first two bytes of the token prefix (for example // or /*).
+    /// 3. Normalizes the extracted text into words via from_raw.
+    /// 4. Stores a cloned snapshot of cfg for later matching.
+    ///
+    /// Parameters:
+    /// - span: byte span of the comment token in source_text.
+    /// - source_text: full file source that contains the comment.
+    /// - cfg: resolved no-warning-comments options to apply.
+    ///
+    /// Returns:
+    /// A Comment with source location, extracted raw text, normalized words, and config.
+    ///
+    /// Note:
+    /// This assumes span points to a valid comment token and is in bounds.
     pub fn new(span: Span, source_text: &str, cfg: &NoWarningCommentsConfig) -> Self {
         let raw = &source_text[(span.start as usize + 2)..(span.end as usize)];
         let words = Self::from_raw(raw, cfg);
