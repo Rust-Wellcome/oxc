@@ -62,6 +62,23 @@ impl NoWarningCommentsConfig {
     ///
     /// This helper is used to parse rule options like `terms` and `decoration`
     /// without failing on partially invalid user config.
+    ///
+    /// # Example
+    /// ```rust
+    /// let config = serde_json::json!({
+    ///     "terms": ["todo", 1, "fixme"],
+    ///     "decoration": ["*", "!"]
+    /// });
+    ///
+    /// assert_eq!(
+    ///     NoWarningCommentsConfig::parse_string_array(&config, "terms"),
+    ///     Some(vec!["todo".to_string(), "fixme".to_string()])
+    /// );
+    /// assert_eq!(
+    ///     NoWarningCommentsConfig::parse_string_array(&config, "missing"),
+    ///     None
+    /// );
+    /// ```
     fn parse_string_array(config: &serde_json::Value, key: &str) -> Option<Vec<String>> {
         config
             .get(key)?
@@ -76,6 +93,21 @@ impl NoWarningCommentsConfig {
     /// - `location: "start" | "anywhere"`
     ///
     /// Invalid or missing entries fall back to defaults.
+    ///
+    /// # Example
+    /// ```rust
+    /// let cfg = NoWarningCommentsConfig::new(serde_json::json!([
+    ///     {
+    ///         "terms": ["todo", "fixme"],
+    ///         "decoration": ["!", "*"],
+    ///         "location": "anywhere"
+    ///     }
+    /// ]));
+    ///
+    /// assert_eq!(cfg.terms, vec!["todo".to_string(), "fixme".to_string()]);
+    /// assert_eq!(cfg.decorations, vec!["!".to_string(), "*".to_string()]);
+    /// assert_eq!(cfg.location, Location::Anywhere);
+    /// ```
     pub fn new(value: serde_json::Value) -> Self {
         let mut cfg = NoWarningCommentsConfig::default();
 
@@ -112,7 +144,7 @@ impl NoWarningCommentsConfig {
 /// # Example
 ///
 /// Normalizing comment text for matching:
-///```
+///```rust
 /// let cfg = NoWarningCommentsConfig::new(serde_json::json!([{
 ///     "terms": ["todo"],
 ///     "decoration": ["!"],
@@ -142,11 +174,6 @@ struct Comment {
 
 // TODO
 // - documentation
-// - Comment struct:
-//   - reword the description [DONE]
-//   - For comment struct add code example [DONE]
-//   - examples for the implementation code [DONE]
-//   - for the new function we need to improve the description, e.g. parameters [DONE]
 // - NoWarningComments struct:
 //   - reword the description
 //   - it doesn't show field information
@@ -234,6 +261,20 @@ impl Comment {
     }
 
     /// Emits a diagnostic when the provided term matches this comment.
+    ///
+    /// # Example
+    /// ```rust
+    /// use oxc_span::Span;
+    ///
+    /// let source_text = "// TODO: remove legacy path";
+    /// let span = Span::new(0, source_text.len() as u32);
+    /// let cfg = NoWarningCommentsConfig::default();
+    /// let comment = Comment::new(span, source_text, &cfg);
+    /// let ctx: &LintContext = todo!("create a lint context from a rule test or linter run");
+    ///
+    /// comment.contains_term("todo", ctx);
+    /// // Emits: Unexpected 'todo' comment: ' TODO: remove legacy path'.
+    /// ```
     pub fn contains_term(&self, term: &str, ctx: &LintContext) {
         if self.word_matches_term(term) {
             let raw = &self.raw;
@@ -246,6 +287,22 @@ impl Comment {
 
     /// Checks whether any normalized word matches the provided term according to
     /// the configured `location` strategy.
+    ///
+    /// # Example
+    /// ```rust
+    /// let cfg = NoWarningCommentsConfig::new(serde_json::json!([
+    ///     { "terms": ["todo"], "location": "start" }
+    /// ]));
+    /// let comment = Comment {
+    ///     span: Span::new(0, 0),
+    ///     raw: "TODO: remove legacy path".to_string(),
+    ///     words: vec!["todo:".to_string(), "remove".to_string()],
+    ///     cfg,
+    /// };
+    ///
+    /// assert!(comment.word_matches_term("todo"));
+    /// assert!(!comment.word_matches_term("fixme"));
+    /// ```
     fn word_matches_term(&self, term: &str) -> bool {
         let term_lower = term.cow_to_lowercase();
         match self.cfg.location {
@@ -271,6 +328,21 @@ impl Comment {
     /// This behavior is used for `location = start` semantics so leading comment
     /// markers such as `*`, `!`, or custom decorations do not affect the first
     /// term check.
+    ///
+    /// # Example
+    /// ```rust
+    /// let decorations = vec!["!".to_string(), "*".to_string()];
+    /// let terms = vec!["todo".to_string()];
+    ///
+    /// assert_eq!(
+    ///     Comment::trim_decorations_until_terms("!!todo remove legacy path", &decorations, &terms),
+    ///     "todo remove legacy path"
+    /// );
+    /// assert_eq!(
+    ///     Comment::trim_decorations_until_terms("note: remove legacy path", &decorations, &terms),
+    ///     "note: remove legacy path"
+    /// );
+    /// ```
     fn trim_decorations_until_terms<'a>(
         s: &'a str,
         decorations: &[String],
