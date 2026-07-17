@@ -196,6 +196,20 @@ impl Comment {
     ///
     /// Note:
     /// This assumes span points to a valid comment token and is in bounds.
+    ///
+    /// # Example
+    /// ```rust
+    /// use oxc_span::Span;
+    ///
+    /// let source_text = "//TODO: remove legacy path";
+    /// let span = Span::new(0, source_text.len() as u32);
+    /// let cfg = NoWarningCommentsConfig::default();
+    ///
+    /// let comment = Comment::new(span, source_text, &cfg);
+    ///
+    /// assert_eq!(comment.raw, "TODO: remove legacy path");
+    /// assert_eq!(comment.words, vec!["todo:", "remove", "legacy", "path"]);
+    /// ```
     pub fn new(span: Span, source_text: &str, cfg: &NoWarningCommentsConfig) -> Self {
         let raw = &source_text[(span.start as usize + 2)..(span.end as usize)];
         let words = Self::from_raw(raw, cfg);
@@ -203,6 +217,18 @@ impl Comment {
     }
 
     /// Returns `true` when the comment explicitly disables this rule inline.
+    ///
+    /// # Example
+    /// ```rust
+    /// use oxc_span::Span;
+    ///
+    /// let source_text = "/* eslint no-warning-comments: \"off\" */";
+    /// let span = Span::new(0, source_text.len() as u32);
+    /// let cfg = NoWarningCommentsConfig::default();
+    ///
+    /// let comment = Comment::new(span, source_text, &cfg);
+    /// assert!(comment.allow());
+    /// ```
     pub fn allow(&self) -> bool {
         self.raw.cow_to_lowercase().contains("no-warning-comments")
     }
