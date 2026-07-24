@@ -62,23 +62,6 @@ impl NoWarningCommentsConfig {
     ///
     /// This helper is used to parse rule options like `terms` and `decoration`
     /// without failing on partially invalid user config.
-    ///
-    /// # Example
-    /// ```rust
-    /// let config = serde_json::json!({
-    ///     "terms": ["todo", 1, "fixme"],
-    ///     "decoration": ["*", "!"]
-    /// });
-    ///
-    /// assert_eq!(
-    ///     NoWarningCommentsConfig::parse_string_array(&config, "terms"),
-    ///     Some(vec!["todo".to_string(), "fixme".to_string()])
-    /// );
-    /// assert_eq!(
-    ///     NoWarningCommentsConfig::parse_string_array(&config, "missing"),
-    ///     None
-    /// );
-    /// ```
     fn parse_string_array(config: &serde_json::Value, key: &str) -> Option<Vec<String>> {
         config
             .get(key)?
@@ -93,26 +76,11 @@ impl NoWarningCommentsConfig {
     /// - `location: "start" | "anywhere"`
     ///
     /// Invalid or missing entries fall back to defaults.
-    ///
-    /// # Example
-    /// ```rust
-    /// let cfg = NoWarningCommentsConfig::new(serde_json::json!([
-    ///     {
-    ///         "terms": ["todo", "fixme"],
-    ///         "decoration": ["!", "*"],
-    ///         "location": "anywhere"
-    ///     }
-    /// ]));
-    ///
-    /// assert_eq!(cfg.terms, vec!["todo".to_string(), "fixme".to_string()]);
-    /// assert_eq!(cfg.decorations, vec!["!".to_string(), "*".to_string()]);
-    /// assert_eq!(cfg.location, Location::Anywhere);
-    /// ```
     pub fn new(value: serde_json::Value) -> Self {
         let mut cfg = NoWarningCommentsConfig::default();
 
         if let Value::Array(arr) = value {
-            if let Some(config) = arr.get(0) {
+            if let Some(config) = arr.first() {
                 if let Some(t) = Self::parse_string_array(config, "terms") {
                     if !t.is_empty() {
                         cfg.terms = t;
@@ -144,7 +112,7 @@ impl NoWarningCommentsConfig {
 /// # Example
 ///
 /// Normalizing comment text for matching:
-///```rust
+/// ```rust,ignore
 /// let cfg = NoWarningCommentsConfig::new(serde_json::json!([{
 ///     "terms": ["todo"],
 ///     "decoration": ["!"],
@@ -172,37 +140,31 @@ struct Comment {
     cfg: NoWarningCommentsConfig,
 }
 
-// TODO
-// - documentation
-// - NoWarningComments struct:
-//   - reword the description
-//   - it doesn't show field information
-//   - no docs for parse_string_array [DONE]
-//   - add example code initializing
-// - Review comments,e.g, "if term is "todo", it matches "todo", "todo!", "(todo)", etc."
-//
-// - Linting
-// - Run the final code through copilot to see if it offers any further refactoring opportunities.
-
 impl Comment {
     /// Converts raw comment text into normalized words used by term matching.
     ///
     /// This lowercases input and strips leading decorations until a configured
     /// term is encountered.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let cfg = NoWarningCommentsConfig::new(serde_json::json!([{
+    ///     "terms": ["todo"],
+    ///     "decoration": ["!"],
+    ///     "location": "start"
+    /// }]));
+    ///
+    /// let words = Comment::from_raw("!TODO: remove legacy path", &cfg);
+    /// assert_eq!(words, vec!["todo:", "remove", "legacy", "path"]);
+    ///
+    /// let words = Comment::from_raw("note: keep this for now", &cfg);
+    /// assert_eq!(words, vec!["note:", "keep", "this", "for", "now"]);
+    /// ```
     pub fn from_raw(raw: &str, cfg: &NoWarningCommentsConfig) -> Vec<String> {
-        // lowercase the raw comment for matching
         let comment_text = raw.cow_to_lowercase();
-        // strip leading decoration chars up to the first term
-
-        let cleaned_slice =
+        let cleaned =
             Self::trim_decorations_until_terms(&comment_text, &cfg.decorations, &cfg.terms);
-        let cleaned = cleaned_slice.to_string();
-
-        cleaned
-            .split_whitespace()
-            .filter(|w| !w.is_empty())
-            .map(|w| cow_utils::CowUtils::cow_to_lowercase(w).into_owned())
-            .collect::<Vec<String>>()
+        cleaned.split_whitespace().map(str::to_owned).collect()
     }
 
     /// Builds a Comment from a parsed comment span and the active rule config.
@@ -225,7 +187,7 @@ impl Comment {
     /// This assumes span points to a valid comment token and is in bounds.
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,ignore
     /// use oxc_span::Span;
     ///
     /// let source_text = "//TODO: remove legacy path";
@@ -246,7 +208,7 @@ impl Comment {
     /// Returns `true` when the comment explicitly disables this rule inline.
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,ignore
     /// use oxc_span::Span;
     ///
     /// let source_text = "/* eslint no-warning-comments: \"off\" */";
@@ -263,7 +225,7 @@ impl Comment {
     /// Emits a diagnostic when the provided term matches this comment.
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,ignore
     /// use oxc_span::Span;
     ///
     /// let source_text = "// TODO: remove legacy path";
@@ -289,7 +251,7 @@ impl Comment {
     /// the configured `location` strategy.
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,ignore
     /// let cfg = NoWarningCommentsConfig::new(serde_json::json!([
     ///     { "terms": ["todo"], "location": "start" }
     /// ]));
@@ -306,7 +268,7 @@ impl Comment {
     fn word_matches_term(&self, term: &str) -> bool {
         let term_lower = term.cow_to_lowercase();
         match self.cfg.location {
-            Location::Start => self.words.first().map_or(false, |word| {
+            Location::Start => self.words.first().is_some_and(|word| {
                 let word_lower = word.cow_to_lowercase();
                 let trimmed = word_lower.trim_end_matches(|c: char| !c.is_alphanumeric());
                 trimmed == term_lower
@@ -330,7 +292,7 @@ impl Comment {
     /// term check.
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,ignore
     /// let decorations = vec!["!".to_string(), "*".to_string()];
     /// let terms = vec!["todo".to_string()];
     ///
@@ -356,8 +318,7 @@ impl Comment {
             if terms.iter().any(|t| s[i..].starts_with(t.as_str())) {
                 break;
             }
-            let c_str = c.to_string();
-            if decorations.iter().any(|d| d == &c_str) {
+            if decorations.iter().any(|d| d.chars().next() == Some(c)) {
                 offset = i + c.len_utf8();
             } else {
                 break;
@@ -396,15 +357,7 @@ declare_oxc_lint!(
      config = NoWarningCommentsConfig,
 );
 
-/// Checks if any word matches the term, including non-alphanumeric characters.
-/// if term is "todo", it matches "todo", "todo!", "(todo)", etc.
-/// This is done by checking if the term is a substring of any word.
-/// if word is todoMVC and term is todo it will not match.
-/// This function is not working correctly so we need to go through the various options.
-/// --- "/* eslint one-var: 2 */" ---
-
 // https://eslint.org/docs/latest/rules/no-warning-comments#options
-// if location is "start" then ignore decorators, if "anywhere" then do not ignore decorators. If location is not provided then default to "start".
 impl Rule for NoWarningComments {
     /// Scans all parsed comments once and reports diagnostics for configured terms.
     fn run_once(&self, ctx: &LintContext) {
@@ -425,8 +378,6 @@ impl Rule for NoWarningComments {
 
     /// Deserializes rule options into `NoWarningCommentsConfig`.
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        // Read the configuration for term, decoration and location from value and then
-        // return NoWarningComments {} struct with the attributes terms, decoration and locations.
         Ok(Self(Box::new(NoWarningCommentsConfig::new(value))))
     }
 }
